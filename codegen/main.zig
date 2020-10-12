@@ -274,6 +274,17 @@ pub fn main() !u8 {
     };
 }
 fn main2() !u8 {
+    const mainStartMillis = std.time.milliTimestamp();
+    var parseTimeMillis : i64 = 0;
+    var readTimeMillis : i64 = 0;
+    var generateTimeMillis : i64 = 0;
+    defer {
+        const totalMillis = std.time.milliTimestamp() - mainStartMillis;
+        std.debug.warn("Parse Time: {} millis ({}%)\n", .{parseTimeMillis, @divTrunc(100 * parseTimeMillis, totalMillis)});
+        std.debug.warn("Read Time : {} millis ({}%)\n", .{readTimeMillis , @divTrunc(100 * readTimeMillis, totalMillis)});
+        std.debug.warn("Gen Time  : {} millis ({}%)\n", .{generateTimeMillis , @divTrunc(100 * generateTimeMillis, totalMillis)});
+        std.debug.warn("Total Time: {} millis\n", .{totalMillis});
+    }
     {
         const voidTypeFromPool = try globalTypePool.add("void");
         try globalTypeMap.put(voidTypeFromPool, TypeEntry { .zigTypeFromPool = voidTypeFromPool, .metadata = .{ .builtin = true } });
@@ -369,14 +380,19 @@ fn main2() !u8 {
             //
             var file = try sdk_data_dir.openFile(entry.name, .{});
             defer file.close();
+            const readStartMillis = std.time.milliTimestamp();
             const content = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
+            readTimeMillis += std.time.milliTimestamp() - readStartMillis;
             defer allocator.free(content);
             std.debug.warn("  read {} bytes\n", .{content.len});
 
             // Parsing the JSON is VERY VERY SLOW!!!!!!
             var parser = json.Parser.init(allocator, false); // false is copy_strings
             defer parser.deinit();
+            const parseStartMillis = std.time.milliTimestamp();
             var jsonTree = try parser.parse(content);
+            parseTimeMillis += std.time.milliTimestamp() - parseStartMillis;
+
             defer jsonTree.deinit();
 
             const sdkFile = try allocator.create(SdkFile);
@@ -391,7 +407,9 @@ fn main2() !u8 {
                 .typeImports = std.StringHashMap(TypeEntry).init(allocator),
             };
             try sdkFiles.append(sdkFile);
+            const generateStartMillis = std.time.milliTimestamp();
             try generateFile(outWindowsDir, jsonTree, sdkFile);
+            generateTimeMillis += std.time.milliTimestamp() - generateStartMillis;
         }
         // Write the import footer for each file
         for (sdkFiles.items) |sdkFile| {
