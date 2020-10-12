@@ -20,10 +20,10 @@ const SdkFile = struct {
     jsonFilename: []const u8,
     name: []const u8,
     zigFilename: []const u8,
-    exports: std.StringHashMap(bool),
-    imports: std.StringHashMap(TypeMetadata2),
+    exports: std.StringHashMap(TypeEntry),
+    imports: std.StringHashMap(TypeEntry),
     fn noteTypeRef(self: *SdkFile, type_entry: TypeEntry) !void {
-        try self.imports.put(type_entry.zigTypeFromPool, type_entry.metadata);
+        try self.imports.put(type_entry.zigTypeFromPool, type_entry);
     }
 };
 
@@ -57,7 +57,7 @@ const filterFunctions = [_][2][]const u8 {
     .{ "ole", "OleLoadFromStream" },
     .{ "ole", "OleSaveToStream" },
     .{ "ole", "OleDraw" },
-    // "type" field is one nest level too much (need to open an issue for these)
+    // "type" field is one nest level too much (see https://github.com/ohjeongwook/windows_sdk_data/issues/6)
     .{ "atlthunk", "AtlThunk_AllocateData" },
     .{ "comsvcs", "SafeRef" },
     .{ "d3d9", "Direct3DCreate9" },
@@ -228,11 +228,23 @@ const filterFunctions = [_][2][]const u8 {
     .{ "wintrust", "WTHelperProvDataFromStateData" },
     .{ "wintrust", "WTHelperGetProvPrivateDataFromChain" },
 };
+const filterTypes = [_][2][]const u8 {
+};
 
 const SdkFileFilter = struct {
     funcMap: std.StringHashMap(bool),
+    typeMap: std.StringHashMap(bool),
+    pub fn init() SdkFileFilter {
+        return SdkFileFilter {
+            .funcMap = std.StringHashMap(bool).init(allocator),
+            .typeMap = std.StringHashMap(bool).init(allocator),
+        };
+    }
     pub fn filterFunc(self: SdkFileFilter, func: []const u8) bool {
         return self.funcMap.get(func) orelse false;
+    }
+    pub fn filterType(self: SdkFileFilter, type_str: []const u8) bool {
+        return self.typeMap.get(type_str) orelse false;
     }
 };
 var globalFileFilterMap = std.StringHashMap(*SdkFileFilter).init(allocator);
@@ -282,11 +294,19 @@ fn main2() !u8 {
         const getResult = try globalFileFilterMap.getOrPut(module);
         if (!getResult.found_existing) {
             getResult.entry.value = try allocator.create(SdkFileFilter);
-            getResult.entry.value.* = SdkFileFilter {
-                .funcMap = std.StringHashMap(bool).init(allocator),
-            };
+            getResult.entry.value.* = SdkFileFilter.init();
         }
         try getResult.entry.value.funcMap.put(func, true);
+    }
+    for (filterTypes) |filterType| {
+        const module = filterType[0];
+        const type_str = filterType[1];
+        const getResult = try globalFileFilterMap.getOrPut(module);
+        if (!getResult.found_existing) {
+            getResult.entry.value = try allocator.create(SdkFileFilter);
+            getResult.entry.value.* = SdkFileFilter.init();
+        }
+        try getResult.entry.value.typeMap.put(type_str, true);
     }
 
 
@@ -310,7 +330,7 @@ fn main2() !u8 {
         var dirIt = sdk_data_dir.iterate();
         while (try dirIt.next()) |entry| {
             // temporarily skip most files to speed up initial development
-            //const optional_filter : ?[]const u8 = "f";
+            //const optional_filter : ?[]const u8 = "w";
             const optional_filter : ?[]const u8 = null;
             if (optional_filter) |filter| {
                 if (!std.mem.startsWith(u8, entry.name, filter)) {
@@ -351,8 +371,8 @@ fn main2() !u8 {
                 .jsonFilename = jsonFilename,
                 .name = name,
                 .zigFilename = try std.mem.concat(allocator, u8, &[_][]const u8 {name, ".zig"}),
-                .exports = std.StringHashMap(bool).init(allocator),
-                .imports = std.StringHashMap(TypeMetadata2).init(allocator),
+                .exports = std.StringHashMap(TypeEntry).init(allocator),
+                .imports = std.StringHashMap(TypeEntry).init(allocator),
             };
             try sdkFiles.append(sdkFile);
             try generateFile(outWindowsDir, jsonTree, sdkFile);
@@ -375,7 +395,7 @@ fn main2() !u8 {
                 var importIt = sdkFile.imports.iterator();
                 while (importIt.next()) |kv| {
                     const symbol = kv.key;
-                    if (kv.value.builtin)
+                    if (kv.value.metadata.builtin)
                         continue;
                     if (sdkFile.exports.contains(symbol))
                         continue;
@@ -561,35 +581,43 @@ fn generateFile(outDir: std.fs.Dir, tree: json.ValueTree, sdkFile: *SdkFile) !vo
             const name = try globalTypePool.add((try jsonObjGetRequired(declObj, "name", sdkFile.jsonFilename)).String);
             const type_value = try jsonObjGetRequired(declObj, "type", sdkFile.jsonFilename);
 
+            if (optional_filter) |filter| {
+                if (filter.filterType(name)) {
+                    try outWriter.print("// type has been filtered: {}\n", .{name});
+                    continue;
+                }
+            }
+
+            const type_entry = try getTypeWithTempString(name);
+            if (type_entry.metadata.builtin)
+                continue;
+            if (sdkFile.exports.get(name)) |type_entry_conflict| {
+                // TODO: open an issue for these (there's over 600 redefinitions!)
+                try outWriter.print("// REDEFINITION: {} = {}\n", .{name, formatJson(type_value)});
+                continue;
+            }
+            try sdkFile.exports.put(name, type_entry);
             switch (type_value) {
                 .String => |s| {
-                    if (std.mem.eql(u8, s, "unsigned long")) {
-                        try outWriter.print("pub const {} = u32;\n", .{name});
-                        // TODO: move this to a more outer scope when more cases are implemented
-                        try sdkFile.exports.put(name, true);
-                    } else {
-                        try outWriter.print("// const {} = (String) {}\n", .{name, formatJson(type_value)});
-                    }
+                    try outWriter.print("pub const {} = void; // {}\n", .{name, s});
                 },
                 else => {
-                    try outWriter.print("// const {} = {}\n", .{name, formatJson(type_value)});
+                    try outWriter.print("pub const {} = void; // {}\n", .{name, formatJson(type_value)});
                 },
             }
         }
-        // orelse {
-        //    std.debug.warn("{}: json object missing 'data_type' field:\n", .{sdkFile.name});
-        //    try std.json.stringify(declNode, .{}, std.io.getStdErr().writer());
-        //    return 1;
-        //}).String;
     }
 
-    try outWriter.writeAll(
+    try outWriter.print(
         \\
-        \\test "" {
+        \\test "" {{
+        \\    const export_count = {};
+        \\    const import_count = {};
+        \\    @setEvalBranchQuota(2 * (export_count + import_count));
         \\    @import("std").meta.refAllDecls(@This());
-        \\}
+        \\}}
         \\
-    );
+    , .{sdkFile.exports.count(), sdkFile.imports.count()});
 }
 
 pub fn SliceFormatter(comptime T: type) type { return struct {
