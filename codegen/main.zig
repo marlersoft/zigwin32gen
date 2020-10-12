@@ -23,6 +23,8 @@ const SdkFile = struct {
     exports: std.StringHashMap(TypeEntry),
     imports: std.StringHashMap(TypeEntry),
     fn noteTypeRef(self: *SdkFile, type_entry: TypeEntry) !void {
+        if (type_entry.metadata.builtin)
+            return;
         try self.imports.put(type_entry.zigTypeFromPool, type_entry);
     }
 };
@@ -275,17 +277,29 @@ fn main2() !u8 {
         const voidTypeFromPool = try globalTypePool.add("void");
         try globalTypeMap.put(voidTypeFromPool, TypeEntry { .zigTypeFromPool = voidTypeFromPool, .metadata = .{ .builtin = true } });
     }
-    try addCToZigType("unsigned short", "c_ushort");
-    try addCToZigType("unsigned long", "c_ulong");
-    try addCToZigType("signed int", "c_int");
-    try addCToZigType("unsigned long long int", "c_ulonglong");
-    try addCToZigType("long", "c_long");
-    try addCToZigType("int", "c_int");
-    try addCToZigType("unsigned int", "c_uint");
-    try addCToZigType("short", "c_short");
-    try addCToZigType("size_t", "usize");
+    // TODO: should I have special case handling for the windws types like INT64, DWORD, etc?
+    //       maybe I should just add comptime asserts for now, such as comptime { assert(@sizeOf(INT64) == 8) }, etc
     try addCToZigType("char", "i8");
+    try addCToZigType("signed char", "i8");
     try addCToZigType("unsigned char", "u8");
+
+    try addCToZigType("short", "c_short");
+    try addCToZigType("signed short", "c_short");
+    try addCToZigType("unsigned short", "c_ushort");
+
+    try addCToZigType("int", "c_int");
+    try addCToZigType("signed int", "c_int");
+    try addCToZigType("unsigned int", "c_uint");
+
+    try addCToZigType("long", "c_long");
+    try addCToZigType("signed long", "c_long");
+    try addCToZigType("unsigned long", "c_ulong");
+
+    try addCToZigType("long long int", "c_longlong");
+    try addCToZigType("signed long long int", "c_longlong");
+    try addCToZigType("unsigned long long int", "c_ulonglong");
+
+    try addCToZigType("size_t", "usize");
 
     // Setup filter
     for (filterFunctions) |filterFunction| {
@@ -394,9 +408,8 @@ fn main2() !u8 {
             {
                 var importIt = sdkFile.imports.iterator();
                 while (importIt.next()) |kv| {
+                    std.debug.assert(!kv.value.metadata.builtin); // code verifies no builtin types get added to imports
                     const symbol = kv.key;
-                    if (kv.value.metadata.builtin)
-                        continue;
                     if (sdkFile.exports.contains(symbol))
                         continue;
                     // Temporaril just define all imports as void
@@ -599,10 +612,12 @@ fn generateFile(outDir: std.fs.Dir, tree: json.ValueTree, sdkFile: *SdkFile) !vo
             try sdkFile.exports.put(name, type_entry);
             switch (type_value) {
                 .String => |s| {
-                    try outWriter.print("pub const {} = void; // {}\n", .{name, s});
+                    const def_type = try getTypeWithTempString(s);
+                    try sdkFile.noteTypeRef(def_type);
+                    try outWriter.print("pub const {} = {};\n", .{name, def_type.zigTypeFromPool});
                 },
                 else => {
-                    try outWriter.print("pub const {} = void; // {}\n", .{name, formatJson(type_value)});
+                    try outWriter.print("pub const {} = void; // NonStringType: {}\n", .{name, formatJson(type_value)});
                 },
             }
         }
