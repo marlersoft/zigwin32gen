@@ -5,7 +5,7 @@ var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const allocator = &arena.allocator;
 
 const SdkFile = struct {
-    jsonFilename: []const u8,
+    filename: []const u8,
     name: []const u8,
     symbols: std.ArrayList([]const u8),
 };
@@ -14,49 +14,200 @@ const SdkFile = struct {
 //
 // Temporary Filtering Code to disable invalid configuration
 //
+const filterFunctions = [_][2][]const u8 {
+    // these functions have invalid api_locations, it is just an array of one string "None"
+    .{ "scrnsave", "ScreenSaverProc" },
+    .{ "scrnsave", "RegisterDialogClasses" },
+    .{ "scrnsave", "ScreenSaverConfigureDialog" },
+    .{ "scrnsave", "DefScreenSaverProc" },
+    // these functions are defined twice (see https://github.com/ohjeongwook/windows_sdk_data/issues/3)
+    .{ "perflib", "PerfStartProvider" },
+    .{ "ole", "OleCreate" },
+    .{ "ole", "OleCreateFromFile" },
+    .{ "ole", "OleLoadFromStream" },
+    .{ "ole", "OleSaveToStream" },
+    .{ "ole", "OleDraw" },
+    // "type" field is one nest level too much (need to open an issue for these)
+    .{ "atlthunk", "AtlThunk_AllocateData" },
+    .{ "comsvcs", "SafeRef" },
+    .{ "d3d9", "Direct3DCreate9" },
+    .{ "d3d9helper", "Direct3DCreate9" },
+    .{ "inspectable", "HSTRING_UserMarshal" },
+    .{ "inspectable", "HSTRING_UserUnmarshal" },
+    .{ "inspectable", "HSTRING_UserMarshal64" },
+    .{ "inspectable", "HSTRING_UserUnmarshal64" },
+    .{ "mfapi", "MFHeapAlloc" },
+    .{ "mscat", "CryptCATStoreFromHandle" },
+    .{ "mscat", "CryptCATPutCatAttrInfo" },
+    .{ "mscat", "CryptCATEnumerateCatAttr" },
+    .{ "mscat", "CryptCATGetMemberInfo" },
+    .{ "mscat", "CryptCATGetAttrInfo" },
+    .{ "mscat", "CryptCATPutMemberInfo" },
+    .{ "mscat", "CryptCATPutAttrInfo" },
+    .{ "mscat", "CryptCATEnumerateMember" },
+    .{ "mscat", "CryptCATEnumerateAttr" },
+    .{ "mscat", "CryptCATCDFOpen" },
+    .{ "mscat", "CryptCATCDFEnumCatAttributes" },
+    .{ "oaidl", "BSTR_UserMarshal" },
+    .{ "oaidl", "BSTR_UserUnmarshal" },
+    .{ "oaidl", "VARIANT_UserMarshal" },
+    .{ "oaidl", "VARIANT_UserUnmarshal" },
+    .{ "oaidl", "BSTR_UserMarshal64" },
+    .{ "oaidl", "BSTR_UserUnmarshal64" },
+    .{ "oaidl", "VARIANT_UserMarshal64" },
+    .{ "oaidl", "VARIANT_UserUnmarshal64" },
+    .{ "oleauto", "SafeArrayCreate" },
+    .{ "oleauto", "SafeArrayCreateEx" },
+    .{ "oleauto", "SafeArrayCreateVector" },
+    .{ "oleauto", "SafeArrayCreateVectorEx" },
+    .{ "propidl", "StgConvertVariantToProperty" },
+    .{ "remotesystemadditionalinfo", "HSTRING_UserMarshal" },
+    .{ "remotesystemadditionalinfo", "HSTRING_UserUnmarshal" },
+    .{ "remotesystemadditionalinfo", "HSTRING_UserMarshal64" },
+    .{ "remotesystemadditionalinfo", "HSTRING_UserUnmarshal64" },
+    .{ "rpcndr", "NdrPointerMarshall" },
+    .{ "rpcndr", "NdrSimpleStructMarshall" },
+    .{ "rpcndr", "NdrComplexStructMarshall" },
+    .{ "rpcndr", "NdrConformantArrayMarshall" },
+    .{ "rpcndr", "NdrComplexArrayMarshall" },
+    .{ "rpcndr", "NdrConformantStringMarshall" },
+    .{ "rpcndr", "NdrUserMarshalMarshall" },
+    .{ "rpcndr", "NdrInterfacePointerMarshall" },
+    .{ "rpcndr", "NdrPointerUnmarshall" },
+    .{ "rpcndr", "NdrSimpleStructUnmarshall" },
+    .{ "rpcndr", "NdrComplexStructUnmarshall" },
+    .{ "rpcndr", "NdrComplexArrayUnmarshall" },
+    .{ "rpcndr", "NdrConformantStringUnmarshall" },
+    .{ "rpcndr", "NdrUserMarshalUnmarshall" },
+    .{ "rpcndr", "NdrInterfacePointerUnmarshall" },
+    .{ "rpcndr", "RpcSsAllocate" },
+    .{ "rpcndr", "RpcSmAllocate" },
+    .{ "rpcndr", "NdrOleAllocate" },
+    .{ "rpcproxy", "CStdStubBuffer_IsIIDSupported" },
+    .{ "shellapi", "CommandLineToArgvW" },
+    .{ "shlobj_core", "SHAlloc" },
+    .{ "shlobj_core", "OpenRegStream" },
+    .{ "shlobj_core", "SHFind_InitMenuPopup" },
+    .{ "shlwapi", "SHOpenRegStreamA" },
+    .{ "shlwapi", "SHOpenRegStreamW" },
+    .{ "shlwapi", "SHOpenRegStream2A" },
+    .{ "shlwapi", "SHOpenRegStream2W" },
+    .{ "shlwapi", "SHCreateMemStream" },
+    .{ "shlwapi", "SHLockShared" },
+    .{ "usp10", "ScriptString_pSize" },
+    .{ "usp10", "ScriptString_pcOutChars" },
+    .{ "usp10", "ScriptString_pLogAttr" },
+    .{ "wia_xp", "LPSAFEARRAY_UserMarshal" },
+    .{ "wia_xp", "LPSAFEARRAY_UserUnmarshal" },
+    .{ "wia_xp", "LPSAFEARRAY_UserMarshal64" },
+    .{ "wia_xp", "LPSAFEARRAY_UserUnmarshal64" },
+    .{ "wincrypt", "CertCreateContext" },
+    .{ "windef", "__pctype_func" },
+    .{ "windef", "__pwctype_func" },
+    .{ "windef", "__acrt_get_locale_data_prefix" },
+    .{ "windef", "ULongToHandle" },
+    .{ "windef", "LongToHandle" },
+    .{ "windef", "IntToPtr" },
+    .{ "windef", "UIntToPtr" },
+    .{ "windef", "LongToPtr" },
+    .{ "windef", "ULongToPtr" },
+    .{ "windef", "Ptr32ToPtr" },
+    .{ "windef", "Handle32ToHandle" },
+    .{ "windef", "PtrToPtr32" },
+    .{ "windef", "_errno" },
+    .{ "windef", "__doserrno" },
+    .{ "windef", "memchr" },
+    .{ "windef", "memcpy" },
+    .{ "windef", "memmove" },
+    .{ "windef", "memset" },
+    .{ "windef", "strchr" },
+    .{ "windef", "strrchr" },
+    .{ "windef", "strstr" },
+    .{ "windef", "wcschr" },
+    .{ "windef", "wcsrchr" },
+    .{ "windef", "wcsstr" },
+    .{ "windef", "memccpy" },
+    .{ "windef", "wcstok_s" },
+    .{ "windef", "_wcsdup" },
+    .{ "windef", "wcscat" },
+    .{ "windef", "wcscpy" },
+    .{ "windef", "wcsncat" },
+    .{ "windef", "wcsncpy" },
+    .{ "windef", "wcspbrk" },
+    .{ "windef", "wcstok" },
+    .{ "windef", "_wcstok" },
+    .{ "windef", "_wcserror" },
+    .{ "windef", "__wcserror" },
+    .{ "windef", "_wcsnset" },
+    .{ "windef", "_wcsrev" },
+    .{ "windef", "_wcsset" },
+    .{ "windef", "_wcslwr" },
+    .{ "windef", "_wcslwr_l" },
+    .{ "windef", "_wcsupr" },
+    .{ "windef", "_wcsupr_l" },
+    .{ "windef", "wcsdup" },
+    .{ "windef", "wcsnset" },
+    .{ "windef", "wcsrev" },
+    .{ "windef", "wcsset" },
+    .{ "windef", "wcslwr" },
+    .{ "windef", "wcsupr" },
+    .{ "windef", "strtok_s" },
+    .{ "windef", "_memccpy" },
+    .{ "windef", "strcat" },
+    .{ "windef", "strcpy" },
+    .{ "windef", "_strdup" },
+    .{ "windef", "_strerror" },
+    .{ "windef", "strerror" },
+    .{ "windef", "_strlwr" },
+    .{ "windef", "_strlwr_l" },
+    .{ "windef", "strncat" },
+    .{ "windef", "strncpy" },
+    .{ "windef", "_strnset" },
+    .{ "windef", "strpbrk" },
+    .{ "windef", "_strrev" },
+    .{ "windef", "_strset" },
+    .{ "windef", "strtok" },
+    .{ "windef", "_strupr" },
+    .{ "windef", "_strupr_l" },
+    .{ "windef", "strdup" },
+    .{ "windef", "strlwr" },
+    .{ "windef", "strnset" },
+    .{ "windef", "strrev" },
+    .{ "windef", "strset" },
+    .{ "windef", "strupr" },
+    .{ "windef", "_exception_info" },
+    .{ "windef", "NtCurrentTeb" },
+    .{ "winsock", "inet_ntoa" },
+    .{ "winsock", "gethostbyaddr" },
+    .{ "winsock", "gethostbyname" },
+    .{ "winsock", "getservbyport" },
+    .{ "winsock", "getservbyname" },
+    .{ "winsock", "getprotobynumber" },
+    .{ "winsock", "getprotobyname" },
+    .{ "winsock2", "inet_ntoa" },
+    .{ "winsock2", "gethostbyaddr" },
+    .{ "winsock2", "gethostbyname" },
+    .{ "winsock2", "getservbyport" },
+    .{ "winsock2", "getservbyname" },
+    .{ "winsock2", "getprotobynumber" },
+    .{ "winsock2", "getprotobyname" },
+    .{ "winstring", "HSTRING_UserMarshal" },
+    .{ "winstring", "HSTRING_UserUnmarshal" },
+    .{ "wintrust", "WTHelperGetProvSignerFromChain" },
+    .{ "wintrust", "WTHelperGetProvCertFromChain" },
+    .{ "wintrust", "WTHelperProvDataFromStateData" },
+    .{ "wintrust", "WTHelperGetProvPrivateDataFromChain" },
+};
+
 const SdkFileFilter = struct {
-    functions: []const []const u8,
+    funcMap: std.StringHashMap(bool),
     pub fn filterFunc(self: SdkFileFilter, func: []const u8) bool {
-        for (self.functions) |f| {
-            if (std.mem.eql(u8, f, func))
-                return true;
-        }
-        return false;
+        return self.funcMap.get(func) orelse false;
     }
 };
-const globalFileFilters = [_]struct {name: []const u8, filter: SdkFileFilter } {
-    .{ .name = "scrnsave", .filter = .{
-        .functions = &[_][]const u8 {
-            // these functions are filtered because api_locations is invalid, it is just an array of one string "None"
-            "ScreenSaverProc",
-            "RegisterDialogClasses",
-            "ScreenSaverConfigureDialog",
-            "DefScreenSaverProc",
-        },
-    }},
-    .{ .name = "perflib", .filter = .{
-        .functions = &[_][]const u8 {
-            // this function is defined twice (see https://github.com/ohjeongwook/windows_sdk_data/issues/3)
-            "PerfStartProvider",
-        },
-    }},
-    .{ .name = "ole", .filter = .{
-        .functions = &[_][]const u8 {
-            // these functions are defined twice
-            "OleCreate",
-            "OleCreateFromFile",
-            "OleLoadFromStream",
-            "OleSaveToStream",
-            "OleDraw",
-        },
-    }},
-};
+var globalFileFilterMap = std.StringHashMap(*SdkFileFilter).init(allocator);
 fn getFilter(name: []const u8) ?*const SdkFileFilter {
-    for (globalFileFilters) |*fileFilter| {
-        if (std.mem.eql(u8, name, fileFilter.name))
-            return &fileFilter.filter;
-    }
-    return null;
+    return globalFileFilterMap.get(name);
 }
 
 
@@ -67,6 +218,20 @@ pub fn main() !u8 {
     };
 }
 fn main2() !u8 {
+    // Setup filter
+    for (filterFunctions) |filterFunction| {
+        const module = filterFunction[0];
+        const func = filterFunction[1];
+        const getResult = try globalFileFilterMap.getOrPut(module);
+        if (!getResult.found_existing) {
+            getResult.entry.value = try allocator.create(SdkFileFilter);
+            getResult.entry.value.* = SdkFileFilter {
+                .funcMap = std.StringHashMap(bool).init(allocator),
+            };
+        }
+        try getResult.entry.value.funcMap.put(func, true);
+    }
+
     var sdk_data_dir = try std.fs.cwd().openDir("windows_sdk_data\\data", .{.iterate = true});
     defer sdk_data_dir.close();
 
@@ -122,10 +287,10 @@ fn main2() !u8 {
             defer jsonTree.deinit();
 
             const sdkFile = try allocator.create(SdkFile);
-            const jsonFilename = try std.mem.dupe(allocator, u8, entry.name);
+            const filename = try std.mem.dupe(allocator, u8, entry.name);
             sdkFile.* = .{
-                .jsonFilename = jsonFilename,
-                .name = jsonFilename[0..jsonFilename.len - ".json".len],
+                .filename = filename,
+                .name = filename[0..filename.len - ".json".len],
                 .symbols = std.ArrayList([]const u8).init(allocator),
             };
             try sdkFiles.append(sdkFile);
@@ -229,7 +394,8 @@ fn generateFile(outDir: std.fs.Dir, tree: json.ValueTree, sdkFile: *SdkFile) !vo
         if (optional_data_type) |data_type_node| {
             const data_type = data_type_node.String;
             if (std.mem.eql(u8, data_type, "FuncDecl")) {
-                const name = (try jsonObjGetRequired(declObj, "name", sdkFile.jsonFilename)).String;
+                const name = (try jsonObjGetRequired(declObj, "name", sdkFile.filename)).String;
+                //std.debug.warn("[DEBUG] function '{}'\n", .{name});
 
                 if (optional_filter) |filter| {
                     if (filter.filterFunc(name)) {
@@ -237,14 +403,31 @@ fn generateFile(outDir: std.fs.Dir, tree: json.ValueTree, sdkFile: *SdkFile) !vo
                         continue;
                     }
                 }
-                try jsonObjEnforceKnownFields(declObj, &[_][]const u8 {"data_type", "name", "arguments", "api_locations", "type"}, sdkFile.jsonFilename);
+                try jsonObjEnforceKnownFieldsOnly(declObj, &[_][]const u8 {"data_type", "name", "arguments", "api_locations", "type"}, sdkFile.filename);
 
-                const arguments = (try jsonObjGetRequired(declObj, "arguments", sdkFile.jsonFilename)).Array;
+                const arguments = (try jsonObjGetRequired(declObj, "arguments", sdkFile.filename)).Array;
                 const optional_api_locations = declObj.get("api_locations");
-                const return_type = try jsonObjGetRequired(declObj, "type", sdkFile.jsonFilename);
+
+                // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                // The return_type always seems to be an object with the function name and return type
+                // not sure why the name is duplicated...https://github.com/ohjeongwook/windows_sdk_data/issues/5
+                const return_type = init: {
+                    const type_node = try jsonObjGetRequired(declObj, "type", sdkFile.filename);
+                    const type_obj = type_node.Object;
+                    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"name", "type"}, sdkFile.filename);
+                    const type_sub_name = (try jsonObjGetRequired(type_obj, "name", sdkFile.filename)).String;
+                    const type_sub_type = try jsonObjGetRequired(type_obj, "type", sdkFile.filename);
+                    if (!std.mem.eql(u8, name, type_sub_name)) {
+                        std.debug.warn("Error: FuncDecl name '{}' != type.name '{}'\n", .{name, type_sub_name});
+                        return error.AlreadyReported;
+                    }
+                    break :init type_sub_type;
+                };
+                // TEMPORARILY print this for analysis
+                try outWriter.print("// function '{}' returns: {}\n", .{name, formatJson(return_type)});
+
                 if (optional_api_locations) |api_locations_node| {
                     const api_locations = api_locations_node.Array;
-                    try outWriter.print("// FuncDecl JSON: {}\n", .{formatJson(declNode)});
                     try outWriter.print("// Function '{}' has the following {} api_locations:\n", .{name, api_locations.items.len});
                     var first_dll : ?[]const u8 = null;
                     for (api_locations.items) |api_location_node| {
@@ -264,13 +447,13 @@ fn generateFile(outDir: std.fs.Dir, tree: json.ValueTree, sdkFile: *SdkFile) !vo
                         } else if (std.mem.endsWith(u8, api_location, ".drv")) {
                         } else {
                             std.debug.warn("{}: Error: in function '{}', api_location '{}' does not have one of these extensions: dll, lib, sys, h, cpl, exe, drv\n", .{
-                                sdkFile.jsonFilename, name, api_location});
+                                sdkFile.filename, name, api_location});
                             return error.AlreadyReported;
                         }
                     }
                     if (first_dll == null) {
                         try outWriter.print("// function '{}' is not in a dll, so omitting its declaration\n", .{name});
-                        //std.debug.warn("{}: function '{}' has no dll in its {} api_location(s):\n", .{sdkFile.jsonFilename, name, api_locations.items.len});
+                        //std.debug.warn("{}: function '{}' has no dll in its {} api_location(s):\n", .{sdkFile.filename, name, api_locations.items.len});
                         //for (api_locations.items) |api_location_node| {
                         //    std.debug.warn("    - {}\n", .{api_location_node.String});
                         //}
@@ -286,9 +469,9 @@ fn generateFile(outDir: std.fs.Dir, tree: json.ValueTree, sdkFile: *SdkFile) !vo
                 try outWriter.print("// data_type '{}': {}\n", .{data_type, formatJson(declNode)});
             }
         } else {
-            try jsonObjEnforceKnownFields(declObj, &[_][]const u8 {"name", "type"}, sdkFile.jsonFilename);
-            const name = (try jsonObjGetRequired(declObj, "name", sdkFile.jsonFilename)).String;
-            const type_value = try jsonObjGetRequired(declObj, "type", sdkFile.jsonFilename);
+            try jsonObjEnforceKnownFieldsOnly(declObj, &[_][]const u8 {"name", "type"}, sdkFile.filename);
+            const name = (try jsonObjGetRequired(declObj, "name", sdkFile.filename)).String;
+            const type_value = try jsonObjGetRequired(declObj, "type", sdkFile.filename);
             switch (type_value) {
                 .String => |s| {
                     if (std.mem.eql(u8, s, "unsigned long")) {
@@ -338,7 +521,7 @@ pub fn formatSliceT(comptime T: type, slice: []const T) SliceFormatter(T) {
 //    return .{ .slice = slice };
 //}
 
-fn jsonObjEnforceKnownFields(map: json.ObjectMap, knownFields: []const []const u8, fileForError: []const u8) !void {
+fn jsonObjEnforceKnownFieldsOnly(map: json.ObjectMap, knownFields: []const []const u8, fileForError: []const u8) !void {
     var it = map.iterator();
     fieldLoop: while (it.next()) |kv| {
         for (knownFields) |knownField| {
