@@ -14,15 +14,16 @@ const TypeEntry = struct {
 };
 var globalTypeMap = std.StringHashMap(TypeEntry).init(allocator);
 
-var globalTypePool = StringPool.init(allocator);
+var globalSymbolPool = StringPool.init(allocator);
 
 const SdkFile = struct {
     jsonFilename: []const u8,
     name: []const u8,
     zigFilename: []const u8,
-    funcExports: std.ArrayList([]const u8),
-    typeExports: std.StringHashMap(TypeEntry),
     typeImports: std.StringHashMap(TypeEntry),
+    typeExports: std.StringHashMap(TypeEntry),
+    funcExports: std.ArrayList([]const u8),
+    constExports: std.ArrayList([]const u8),
     fn noteTypeRef(self: *SdkFile, type_entry: TypeEntry) !void {
         if (type_entry.metadata.builtin)
             return;
@@ -31,7 +32,7 @@ const SdkFile = struct {
 };
 
 fn getTypeWithTempString(tempString: []const u8) !TypeEntry {
-    return getTypeWithPoolString(try globalTypePool.add(tempString));
+    return getTypeWithPoolString(try globalSymbolPool.add(tempString));
 }
 fn getTypeWithPoolString(poolString: []const u8) !TypeEntry {
     return globalTypeMap.get(poolString) orelse {
@@ -256,8 +257,8 @@ fn getFilter(name: []const u8) ?*const SdkFileFilter {
 }
 
 fn addCToZigType(c: []const u8, zig: []const u8) !void {
-    const cPool = try globalTypePool.add(c);
-    const zigPool = try globalTypePool.add(zig);
+    const cPool = try globalSymbolPool.add(c);
+    const zigPool = try globalSymbolPool.add(zig);
     const typeMetadata = TypeEntry {
         .zigTypeFromPool = zigPool,
         .metadata = .{ .builtin = true },
@@ -286,7 +287,7 @@ fn main2() !u8 {
         std.debug.warn("Total Time: {} millis\n", .{totalMillis});
     }
     {
-        const voidTypeFromPool = try globalTypePool.add("void");
+        const voidTypeFromPool = try globalSymbolPool.add("void");
         try globalTypeMap.put(voidTypeFromPool, TypeEntry { .zigTypeFromPool = voidTypeFromPool, .metadata = .{ .builtin = true } });
     }
     // TODO: should I have special case handling for the windws types like INT64, DWORD, etc?
@@ -402,9 +403,10 @@ fn main2() !u8 {
                 .jsonFilename = jsonFilename,
                 .name = name,
                 .zigFilename = try std.mem.concat(allocator, u8, &[_][]const u8 {name, ".zig"}),
-                .funcExports = std.ArrayList([]const u8).init(allocator),
-                .typeExports = std.StringHashMap(TypeEntry).init(allocator),
                 .typeImports = std.StringHashMap(TypeEntry).init(allocator),
+                .typeExports = std.StringHashMap(TypeEntry).init(allocator),
+                .funcExports = std.ArrayList([]const u8).init(allocator),
+                .constExports = std.ArrayList([]const u8).init(allocator),
             };
             try sdkFiles.append(sdkFile);
             const generateStartMillis = std.time.milliTimestamp();
@@ -483,6 +485,10 @@ fn main2() !u8 {
         );
         for (sdkFiles.items) |sdkFile| {
             try writer.print("\nconst {} = @import(\"./windows/{}.zig\");\n", .{sdkFile.name, sdkFile.name});
+            try writer.print("// {} exports {} constants:\n", .{sdkFile.name, sdkFile.constExports.items.len});
+            for (sdkFile.constExports.items) |constant| {
+                try writer.print("pub const {} = {}.{};\n", .{constant, sdkFile.name, constant});
+            }
             try writer.print("// {} exports {} types:\n", .{sdkFile.name, sdkFile.typeExports.count()});
             var exportIt = sdkFile.typeExports.iterator();
             while (exportIt.next()) |kv| {
@@ -540,7 +546,7 @@ fn generateFile(outDir: std.fs.Dir, tree: json.ValueTree, sdkFile: *SdkFile) !vo
     //try outWriter.print("usingnamespace @import(\"../symbols.zig\");\n", .{});
     for (entryArray.items) |declNode| {
         const declObj = declNode.Object;
-        const name = try globalTypePool.add((try jsonObjGetRequired(declObj, "name", sdkFile.jsonFilename)).String);
+        const name = try globalSymbolPool.add((try jsonObjGetRequired(declObj, "name", sdkFile.jsonFilename)).String);
         const optional_data_type = declObj.get("data_type");
 
         if (optional_data_type) |data_type_node| {
@@ -641,14 +647,7 @@ fn generateFile(outDir: std.fs.Dir, tree: json.ValueTree, sdkFile: *SdkFile) !vo
                     try sdkFile.noteTypeRef(def_type);
                     try outWriter.print("pub const {} = {};\n", .{name, def_type.zigTypeFromPool});
                 },
-                .Object => |type_obj| {
-                    //generateType(outWriter, type_obj);
-                    //const type_obj_name = (try jsonObjGetRequired(type_obj, "name", sdkFile.jsonFilename)).String;
-
-                    //const type_obj_data_type = (try jsonObjGetRequired(declObj, "data_type", sdkFile.jsonFilename)).String;
-                    // TODO: get data_type and generate Struct definitions next?
-                    try outWriter.print("pub const {} = void; // ObjectType: {}\n", .{name, formatJson(type_value)});
-                },
+                .Object => |type_obj| try generateType(sdkFile, outWriter, name, type_obj),
                 else => @panic("got a JSON \"type\" that is neither a String nor an Object"),
             }
         }
@@ -657,20 +656,106 @@ fn generateFile(outDir: std.fs.Dir, tree: json.ValueTree, sdkFile: *SdkFile) !vo
     try outWriter.print(
         \\
         \\test "" {{
-        \\    const func_export_count = {};
-        \\    const type_export_count = {};
         \\    const type_import_count = {};
-        \\    @setEvalBranchQuota(func_export_count + type_export_count + type_import_count);
+        \\    const constant_export_count = {};
+        \\    const type_export_count = {};
+        \\    const func_export_count = {};
+        \\    @setEvalBranchQuota(type_import_count + constant_export_count + type_export_count + func_export_count);
         \\    @import("std").meta.refAllDecls(@This());
         \\}}
         \\
-    , .{sdkFile.funcExports.items.len, sdkFile.typeExports.count(), sdkFile.typeImports.count()});
+    , .{sdkFile.typeImports.count(), sdkFile.constExports.items.len, sdkFile.typeExports.count(), sdkFile.funcExports.items.len});
 }
 
-fn generateType(outWriter: std.file.Writer, ) !void {
-    return error.NotImpl;
+fn generateType(sdkFile: *SdkFile, outWriter: std.fs.File.Writer, name: []const u8, obj: json.ObjectMap) !void {
+    //const type_obj_name = (try jsonObjGetRequired(type_obj, "name", sdkFile.jsonFilename)).String;
+
+    //const type_obj_data_type = (try jsonObjGetRequired(declObj, "data_type", sdkFile.jsonFilename)).String;
+    // TODO: get data_type and generate Struct definitions next?
+    if (obj.get("data_type")) |data_type_node| {
+        const data_type = data_type_node.String;
+        if (std.mem.eql(u8, data_type, "Enum")) {
+            try jsonObjEnforceKnownFieldsOnly(obj, &[_][]const u8 {"data_type", "enumerators"}, sdkFile.jsonFilename);
+            const enumerators = (try jsonObjGetRequired(obj, "enumerators", sdkFile.jsonFilename)).Array;
+            try outWriter.print("pub usingnamespace {};\n", .{name});
+            try outWriter.print("pub const {} = extern enum {{\n", .{name});
+            if (enumerators.items.len == 0) {
+                try outWriter.print("    NOVALUES, // this enum has no values?\n", .{});
+            } else for (enumerators.items) |enumerator_node| {
+                const enumerator = enumerator_node.Object;
+                try jsonObjEnforceKnownFieldsOnly(enumerator, &[_][]const u8 {"name", "value"}, sdkFile.jsonFilename);
+                const enum_value_name = try globalSymbolPool.add((try jsonObjGetRequired(enumerator, "name", sdkFile.jsonFilename)).String);
+                try sdkFile.constExports.append(enum_value_name);
+                const enum_value_obj = (try jsonObjGetRequired(enumerator, "value", sdkFile.jsonFilename)).Object;
+                if (enum_value_obj.get("value")) |enum_value_value_node| {
+                    try jsonObjEnforceKnownFieldsOnly(enum_value_obj, &[_][]const u8 {"value", "type"}, sdkFile.jsonFilename);
+                    const enum_value_type = (try jsonObjGetRequired(enum_value_obj, "type", sdkFile.jsonFilename)).String;
+                    const value_str = enum_value_value_node.String;
+                    std.debug.assert(std.mem.eql(u8, enum_value_type, "int")); // code assumes all enum values are of type 'int'
+                    try outWriter.print("    {} = {}, // {}\n", .{enum_value_name,
+                        fixIntegerLiteral(value_str, true), value_str});
+                } else {
+                    try outWriter.print("    {},\n", .{enum_value_name});
+                }
+            }
+            try outWriter.print("}};\n", .{});
+        } else {
+            try outWriter.print("pub const {} = void; // ObjectType : data_type={}: {}\n", .{name, data_type, formatJson(json.Value { .Object = obj})});
+        }
+    } else {
+        try outWriter.print("pub const {} = void; // ObjectType: {}\n", .{name, formatJson(json.Value { .Object = obj})});
+    }
 }
 
+const FixIntegerLiteralFormatter = struct {
+    literal: []const u8,
+    is_c_int: bool,
+    pub fn format(
+        self: @This(),
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        var literal = self.literal;
+        if (std.mem.endsWith(u8, literal, "UL") or std.mem.endsWith(u8, literal, "ul")) {
+            literal = literal[0..literal.len - 2];
+        } else if (std.mem.endsWith(u8, literal, "L") or std.mem.endsWith(u8, literal, "U")) {
+            literal = literal[0..literal.len - 1];
+        }
+        var radix : u8 = 10;
+        if (std.mem.startsWith(u8, literal, "0x")) {
+            literal = literal[2..];
+            radix = 16;
+        } else if (std.mem.startsWith(u8, literal, "0X")) {
+            std.debug.warn("[WARNING] found integer literal that begins with '0X' instead of '0x': '{}' (should probably file an issue)\n", .{self.literal});
+            literal = literal[2..];
+            radix = 16;
+        }
+
+        var literal_buf: [30]u8 = undefined;
+        if (self.is_c_int) {
+            // we have to parse the integer literal and convert it to a negative since Zig
+            // doesn't allow casting largs positive integer literals to c_int if they overflow 31 bits
+            const value = std.fmt.parseInt(i64, literal, radix) catch @panic("failed to parse integer literal (TODO: print better error)");
+            std.debug.assert(value >= 0); // negative not implemented, haven't found any yet
+            if (value > std.math.maxInt(c_int)) {
+                // TODO: print better error message if this fails
+                std.debug.assert(value <= std.math.maxInt(c_uint));
+                literal_buf[0] = '-';
+                literal = literal_buf[0..1 + std.fmt.formatIntBuf(literal_buf[1..],
+                    @as(i64, std.math.maxInt(c_uint)) + 1 - value, 10, false, .{})];
+                radix = 10;
+            }
+        }
+
+        const prefix : []const u8 = if (radix == 16) "0x" else "";
+        try writer.print("{}{}", .{prefix, literal});
+    }
+
+};
+pub fn fixIntegerLiteral(literal: []const u8, is_c_int: bool) FixIntegerLiteralFormatter {
+    return .{ .literal = literal, .is_c_int = is_c_int };
+}
 
 pub fn SliceFormatter(comptime T: type) type { return struct {
     slice: []const T,
