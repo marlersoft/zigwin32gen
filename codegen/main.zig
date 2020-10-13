@@ -5,12 +5,17 @@ const StringPool = @import("./stringpool.zig").StringPool;
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const allocator = &arena.allocator;
 
-const TypeMetadata2 = struct {
+const zigKeywords = [_][]const u8 {
+    "defer", "align", "error", "resume", "suspend", "var", "callconv",
+};
+var globalZigKeywordMap = std.StringHashMap(bool).init(allocator);
+
+const TypeMetadata = struct {
     builtin: bool,
 };
 const TypeEntry = struct {
     zigTypeFromPool: []const u8,
-    metadata: TypeMetadata2,
+    metadata: TypeMetadata,
 };
 var globalTypeMap = std.StringHashMap(TypeEntry).init(allocator);
 
@@ -286,6 +291,11 @@ fn main2() !u8 {
         std.debug.warn("Gen Time  : {} millis ({}%)\n", .{generateTimeMillis , @divTrunc(100 * generateTimeMillis, totalMillis)});
         std.debug.warn("Total Time: {} millis\n", .{totalMillis});
     }
+
+    for (zigKeywords) |zigKeyword| {
+        try globalZigKeywordMap.put(zigKeyword, true);
+    }
+
     {
         const voidTypeFromPool = try globalSymbolPool.add("void");
         try globalTypeMap.put(voidTypeFromPool, TypeEntry { .zigTypeFromPool = voidTypeFromPool, .metadata = .{ .builtin = true } });
@@ -699,12 +709,54 @@ fn generateType(sdkFile: *SdkFile, outWriter: std.fs.File.Writer, name: []const 
                 }
             }
             try outWriter.print("}};\n", .{});
+        } else if (std.mem.eql(u8, data_type, "Struct")) {
+            try jsonObjEnforceKnownFieldsOnly(obj, &[_][]const u8 {"data_type", "name", "elements"}, sdkFile.jsonFilename);
+            // I think we can ignore the struct name...
+            const elements = (try jsonObjGetRequired(obj, "elements", sdkFile.jsonFilename)).Array;
+            try outWriter.print("pub const {} = extern struct {{\n", .{name});
+            for (elements.items) |element_node| {
+                switch (element_node) {
+                    .Object => |element| {
+                        //try jsonObjEnforceKnownFieldsOnly(element, &[_][]const u8 {"name", "data_type", "type", "dim", "elements"}, sdkFile.jsonFilename);
+                        if (element.get("name")) |element_name_node| {
+                            const element_name = element_name_node.String;
+                            try outWriter.print("    {}: u32, // {}\n", .{formatCToZigSymbol(element_name), formatJson(element_node)});
+                        } else {
+                            try outWriter.print("    // {}\n", .{formatJson(element_node)});
+                        }
+                    },
+                    else => {
+                        try outWriter.print("    // NonObjectStructElement: {}\n", .{formatJson(element_node)});
+                    },
+                }
+            }
+            try outWriter.print("}};\n", .{});
         } else {
             try outWriter.print("pub const {} = void; // ObjectType : data_type={}: {}\n", .{name, data_type, formatJson(json.Value { .Object = obj})});
         }
     } else {
         try outWriter.print("pub const {} = void; // ObjectType: {}\n", .{name, formatJson(json.Value { .Object = obj})});
     }
+}
+
+
+const CToZigSymbolFormatter = struct {
+    symbol: []const u8,
+    pub fn format(
+        self: @This(),
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        if (globalZigKeywordMap.get(self.symbol) orelse false) {
+            try writer.print("@\"{}\"", .{self.symbol});
+        } else {
+            try writer.writeAll(self.symbol);
+        }
+    }
+};
+pub fn formatCToZigSymbol(symbol: []const u8) CToZigSymbolFormatter {
+    return .{ .symbol = symbol };
 }
 
 const FixIntegerLiteralFormatter = struct {
@@ -751,11 +803,11 @@ const FixIntegerLiteralFormatter = struct {
         const prefix : []const u8 = if (radix == 16) "0x" else "";
         try writer.print("{}{}", .{prefix, literal});
     }
-
 };
 pub fn fixIntegerLiteral(literal: []const u8, is_c_int: bool) FixIntegerLiteralFormatter {
     return .{ .literal = literal, .is_c_int = is_c_int };
 }
+
 
 pub fn SliceFormatter(comptime T: type) type { return struct {
     slice: []const T,
