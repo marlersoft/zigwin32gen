@@ -248,6 +248,8 @@ const filterTypes = [_][2][]const u8 {
     .{ "clusapi", "CLUSPROP_PARTITION_INFO_EX2" },
     .{ "clusapi", "CLUSPROP_SCSI_ADDRESS" },
     .{ "clusapi", "CLUSPROP_FTSET_INFO" },
+    // this struct uses bitfields and the windows sdk_data doesn't contain any metadata indicating this, need to open an issue for this
+    .{ "windef", "IMAGE_ARCHITECTURE_HEADER" },
 };
 
 const SdkFileFilter = struct {
@@ -329,11 +331,14 @@ fn main2() !u8 {
     try addCToZigType("signed long", "c_long");
     try addCToZigType("unsigned long", "c_ulong");
 
+    try addCToZigType("long long", "c_longlong");
     try addCToZigType("long long int", "c_longlong");
     try addCToZigType("signed long long int", "c_longlong");
     try addCToZigType("unsigned long long int", "c_ulonglong");
 
     try addCToZigType("size_t", "usize");
+
+    try addCToZigType("long double", "c_longdouble");
 
     // Setup filter
     for (filterFunctions) |filterFunction| {
@@ -449,8 +454,8 @@ fn main2() !u8 {
             );
             try writer.print("usingnamespace struct {{\n", .{});
             for (sdkFile.typeImports.items) |symbol| {
-                // Temporarily just define all imports as void
-                try writer.print("    pub const {} = void;\n", .{symbol});
+                // Temporarily just define all type imports as c_int as a placeholder
+                try writer.print("    pub const {} = c_int; // c_int is a temporary placeholder\n", .{symbol});
             }
             try writer.print("}};\n", .{});
         }
@@ -560,7 +565,7 @@ fn generateFile(outDir: std.fs.Dir, tree: json.ValueTree, sdkFile: *SdkFile) !vo
     //try outWriter.print("usingnamespace @import(\"../symbols.zig\");\n", .{});
     for (entryArray.items) |declNode| {
         const declObj = declNode.Object;
-        const name = try globalSymbolPool.add((try jsonObjGetRequired(declObj, "name", sdkFile.jsonFilename)).String);
+        const name = try globalSymbolPool.add((try jsonObjGetRequired(declObj, "name", sdkFile)).String);
         const optional_data_type = declObj.get("data_type");
 
         if (optional_data_type) |data_type_node| {
@@ -575,20 +580,20 @@ fn generateFile(outDir: std.fs.Dir, tree: json.ValueTree, sdkFile: *SdkFile) !vo
                     }
                 }
                 try sdkFile.funcExports.append(name);
-                try jsonObjEnforceKnownFieldsOnly(declObj, &[_][]const u8 {"data_type", "name", "arguments", "api_locations", "type"}, sdkFile.jsonFilename);
+                try jsonObjEnforceKnownFieldsOnly(declObj, &[_][]const u8 {"data_type", "name", "arguments", "api_locations", "type"}, sdkFile);
 
-                const arguments = (try jsonObjGetRequired(declObj, "arguments", sdkFile.jsonFilename)).Array;
+                const arguments = (try jsonObjGetRequired(declObj, "arguments", sdkFile)).Array;
                 const optional_api_locations = declObj.get("api_locations");
 
                 // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
                 // The return_type always seems to be an object with the function name and return type
                 // not sure why the name is duplicated...https://github.com/ohjeongwook/windows_sdk_data/issues/5
                 const return_type_c = init: {
-                    const type_node = try jsonObjGetRequired(declObj, "type", sdkFile.jsonFilename);
+                    const type_node = try jsonObjGetRequired(declObj, "type", sdkFile);
                     const type_obj = type_node.Object;
-                    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"name", "type"}, sdkFile.jsonFilename);
-                    const type_sub_name = (try jsonObjGetRequired(type_obj, "name", sdkFile.jsonFilename)).String;
-                    const type_sub_type = try jsonObjGetRequired(type_obj, "type", sdkFile.jsonFilename);
+                    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"name", "type"}, sdkFile);
+                    const type_sub_name = (try jsonObjGetRequired(type_obj, "name", sdkFile)).String;
+                    const type_sub_type = try jsonObjGetRequired(type_obj, "type", sdkFile);
                     if (!std.mem.eql(u8, name, type_sub_name)) {
                         std.debug.warn("Error: FuncDecl name '{}' != type.name '{}'\n", .{name, type_sub_name});
                         return error.AlreadyReported;
@@ -636,8 +641,8 @@ fn generateFile(outDir: std.fs.Dir, tree: json.ValueTree, sdkFile: *SdkFile) !vo
                 try outWriter.print("// data_type '{}': {}\n", .{data_type, formatJson(declNode)});
             }
         } else {
-            try jsonObjEnforceKnownFieldsOnly(declObj, &[_][]const u8 {"name", "type"}, sdkFile.jsonFilename);
-            const type_value = try jsonObjGetRequired(declObj, "type", sdkFile.jsonFilename);
+            try jsonObjEnforceKnownFieldsOnly(declObj, &[_][]const u8 {"name", "type"}, sdkFile);
+            const type_value = try jsonObjGetRequired(declObj, "type", sdkFile);
 
             if (optional_filter) |filter| {
                 if (filter.filterType(name)) {
@@ -693,28 +698,28 @@ fn generateFile(outDir: std.fs.Dir, tree: json.ValueTree, sdkFile: *SdkFile) !vo
 }
 
 fn generateType(sdkFile: *SdkFile, outWriter: std.fs.File.Writer, name: []const u8, obj: json.ObjectMap) !void {
-    //const type_obj_name = (try jsonObjGetRequired(type_obj, "name", sdkFile.jsonFilename)).String;
+    //const type_obj_name = (try jsonObjGetRequired(type_obj, "name", sdkFile)).String;
 
-    //const type_obj_data_type = (try jsonObjGetRequired(declObj, "data_type", sdkFile.jsonFilename)).String;
+    //const type_obj_data_type = (try jsonObjGetRequired(declObj, "data_type", sdkFile)).String;
     // TODO: get data_type and generate Struct definitions next?
     if (obj.get("data_type")) |data_type_node| {
         const data_type = data_type_node.String;
         if (std.mem.eql(u8, data_type, "Enum")) {
-            try jsonObjEnforceKnownFieldsOnly(obj, &[_][]const u8 {"data_type", "enumerators"}, sdkFile.jsonFilename);
-            const enumerators = (try jsonObjGetRequired(obj, "enumerators", sdkFile.jsonFilename)).Array;
+            try jsonObjEnforceKnownFieldsOnly(obj, &[_][]const u8 {"data_type", "enumerators"}, sdkFile);
+            const enumerators = (try jsonObjGetRequired(obj, "enumerators", sdkFile)).Array;
             try outWriter.print("pub usingnamespace {};\n", .{name});
             try outWriter.print("pub const {} = extern enum {{\n", .{name});
             if (enumerators.items.len == 0) {
                 try outWriter.print("    NOVALUES, // this enum has no values?\n", .{});
             } else for (enumerators.items) |enumerator_node| {
                 const enumerator = enumerator_node.Object;
-                try jsonObjEnforceKnownFieldsOnly(enumerator, &[_][]const u8 {"name", "value"}, sdkFile.jsonFilename);
-                const enum_value_name = try globalSymbolPool.add((try jsonObjGetRequired(enumerator, "name", sdkFile.jsonFilename)).String);
+                try jsonObjEnforceKnownFieldsOnly(enumerator, &[_][]const u8 {"name", "value"}, sdkFile);
+                const enum_value_name = try globalSymbolPool.add((try jsonObjGetRequired(enumerator, "name", sdkFile)).String);
                 try sdkFile.constExports.append(enum_value_name);
-                const enum_value_obj = (try jsonObjGetRequired(enumerator, "value", sdkFile.jsonFilename)).Object;
+                const enum_value_obj = (try jsonObjGetRequired(enumerator, "value", sdkFile)).Object;
                 if (enum_value_obj.get("value")) |enum_value_value_node| {
-                    try jsonObjEnforceKnownFieldsOnly(enum_value_obj, &[_][]const u8 {"value", "type"}, sdkFile.jsonFilename);
-                    const enum_value_type = (try jsonObjGetRequired(enum_value_obj, "type", sdkFile.jsonFilename)).String;
+                    try jsonObjEnforceKnownFieldsOnly(enum_value_obj, &[_][]const u8 {"value", "type"}, sdkFile);
+                    const enum_value_type = (try jsonObjGetRequired(enum_value_obj, "type", sdkFile)).String;
                     const value_str = enum_value_value_node.String;
                     std.debug.assert(std.mem.eql(u8, enum_value_type, "int")); // code assumes all enum values are of type 'int'
                     try outWriter.print("    {} = {}, // {}\n", .{enum_value_name,
@@ -725,19 +730,19 @@ fn generateType(sdkFile: *SdkFile, outWriter: std.fs.File.Writer, name: []const 
             }
             try outWriter.print("}};\n", .{});
         } else if (std.mem.eql(u8, data_type, "Struct")) {
-            try jsonObjEnforceKnownFieldsOnly(obj, &[_][]const u8 {"data_type", "name", "elements"}, sdkFile.jsonFilename);
+            try jsonObjEnforceKnownFieldsOnly(obj, &[_][]const u8 {"data_type", "name", "elements"}, sdkFile);
             // I think we can ignore the struct name...
-            const elements = (try jsonObjGetRequired(obj, "elements", sdkFile.jsonFilename)).Array;
+            const elements = (try jsonObjGetRequired(obj, "elements", sdkFile)).Array;
             try outWriter.print("pub const {} = extern struct {{\n", .{name});
             for (elements.items) |element_node| {
                 try generateField(sdkFile, outWriter, element_node);
             }
             try outWriter.print("}};\n", .{});
         } else {
-            try outWriter.print("pub const {} = void; // ObjectType : data_type={}: {}\n", .{name, data_type, formatJson(json.Value { .Object = obj})});
+            try outWriter.print("pub const {} = c_int; // ObjectType : data_type={}: {}\n", .{name, data_type, formatJson(json.Value { .Object = obj})});
         }
     } else {
-        try outWriter.print("pub const {} = void; // ObjectType: {}\n", .{name, formatJson(json.Value { .Object = obj})});
+        try outWriter.print("pub const {} = c_int; // ObjectType: {}\n", .{name, formatJson(json.Value { .Object = obj})});
     }
 }
 
@@ -750,13 +755,34 @@ fn generateField(sdkFile: *SdkFile, outWriter: std.fs.File.Writer, field_node: j
             // TODO: not sure if this is the right way to represent the base type
             try outWriter.print("    __zig_basetype__: {},\n", .{base_type.zigTypeFromPool});
         },
-        .Object => |element| {
-            //try jsonObjEnforceKnownFieldsOnly(element, &[_][]const u8 {"name", "data_type", "type", "dim", "elements"}, sdkFile.jsonFilename);
-            if (element.get("name")) |element_name_node| {
-                const element_name = element_name_node.String;
-                try outWriter.print("    {}: u32, // NamedStructElement: {}\n", .{formatCToZigSymbol(element_name), formatJson(field_node)});
+        .Object => |field_obj| {
+            if (field_obj.get("data_type")) |data_type_node| {
+                // TODO: can we run a version of this, either here or in one of the if/else sub code paths?
+                //try jsonObjEnforceKnownFieldsOnly(field_obj, &[_][]const u8 {"name", "data_type", "type", "dim", "elements"}, sdkFile);
+                if (field_obj.get("name")) |field_obj_name_node| {
+                    const field_obj_name = field_obj_name_node.String;
+                    try outWriter.print("    {}: u32, // NamedStructField: {}\n", .{formatCToZigSymbol(field_obj_name), formatJson(field_node)});
+                } else {
+                    try outWriter.print("    // NamelessStructFieldObj: {}\n", .{formatJson(field_node)});
+                }
             } else {
-                try outWriter.print("    // NamelessStructElement: {}\n", .{formatJson(field_node)});
+                try jsonObjEnforceKnownFieldsOnly(field_obj, &[_][]const u8 {"name", "type"}, sdkFile);
+                // NOTE: this will fail on windef IMAGE_ARCHITECTURE_HEADER because it contains nameless
+                //       fields whose only purpose is to pad bitfields...not sure how this should be supported
+                //       yet since the json does not contain any bitfield information
+                const name = (try jsonObjGetRequired(field_obj, "name", sdkFile)).String;
+                const type_node = try jsonObjGetRequired(field_obj, "type", sdkFile);
+                switch (type_node) {
+                    .String => |type_str| {
+                        const field_type = try getTypeWithTempString(type_str);
+                        try sdkFile.noteTypeRef(field_type);
+                        try outWriter.print("    {}: {},\n", .{formatCToZigSymbol(name), field_type.zigTypeFromPool});
+                    },
+                    .Object => |type_obj| {
+                        try outWriter.print("    {}: u32, // actual field type={}\n", .{formatCToZigSymbol(name), formatJson(type_node)});
+                    },
+                    else => @panic("got a JSON \"type\" that is neither a String nor an Object"),
+                }
             }
         },
         else => {
@@ -864,22 +890,22 @@ pub fn formatSliceT(comptime T: type, slice: []const T) SliceFormatter(T) {
 //    return .{ .slice = slice };
 //}
 
-fn jsonObjEnforceKnownFieldsOnly(map: json.ObjectMap, knownFields: []const []const u8, fileForError: []const u8) !void {
+fn jsonObjEnforceKnownFieldsOnly(map: json.ObjectMap, knownFields: []const []const u8, sdkFile: *SdkFile) !void {
     var it = map.iterator();
     fieldLoop: while (it.next()) |kv| {
         for (knownFields) |knownField| {
             if (std.mem.eql(u8, knownField, kv.key))
                 continue :fieldLoop;
         }
-        std.debug.warn("{}: Error: JSON object has unknown field '{}', expected one of: {}\n", .{fileForError, kv.key, formatSliceT([]const u8, knownFields)});
+        std.debug.warn("{}: Error: JSON object has unknown field '{}', expected one of: {}\n", .{sdkFile.jsonFilename, kv.key, formatSliceT([]const u8, knownFields)});
         return error.AlreadyReported;
     }
 }
 
-fn jsonObjGetRequired(map: json.ObjectMap, field: []const u8, fileForError: []const u8) !json.Value {
+fn jsonObjGetRequired(map: json.ObjectMap, field: []const u8, sdkFile: *SdkFile) !json.Value {
     return map.get(field) orelse {
         // TODO: print file location?
-        std.debug.warn("{}: json object is missing '{}' field: {}\n", .{fileForError, field, formatJson(json.Value { .Object = map })});
+        std.debug.warn("{}: json object is missing '{}' field: {}\n", .{sdkFile.jsonFilename, field, formatJson(json.Value { .Object = map })});
         return error.AlreadyReported;
     };
 }
