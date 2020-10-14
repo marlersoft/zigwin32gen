@@ -25,14 +25,15 @@ const SdkFile = struct {
     jsonFilename: []const u8,
     name: []const u8,
     zigFilename: []const u8,
-    typeImports: std.StringHashMap(TypeEntry),
+    typeRefs: std.StringHashMap(TypeEntry),
     typeExports: std.StringHashMap(TypeEntry),
     funcExports: std.ArrayList([]const u8),
     constExports: std.ArrayList([]const u8),
+    typeImports: std.ArrayList([]const u8),
     fn noteTypeRef(self: *SdkFile, type_entry: TypeEntry) !void {
         if (type_entry.metadata.builtin)
             return;
-        try self.typeImports.put(type_entry.zigTypeFromPool, type_entry);
+        try self.typeRefs.put(type_entry.zigTypeFromPool, type_entry);
     }
 };
 
@@ -54,7 +55,7 @@ fn getTypeWithPoolString(poolString: []const u8) !TypeEntry {
 // Temporary Filtering Code to disable invalid configuration
 //
 const filterFunctions = [_][2][]const u8 {
-    // these functions have invalid api_locations, it is just an array of one string "None"
+    // these functions have invalid api_locations, it is just an array of one string "None", no issue opened for this yet
     .{ "scrnsave", "ScreenSaverProc" },
     .{ "scrnsave", "RegisterDialogClasses" },
     .{ "scrnsave", "ScreenSaverConfigureDialog" },
@@ -238,6 +239,15 @@ const filterFunctions = [_][2][]const u8 {
     .{ "wintrust", "WTHelperGetProvPrivateDataFromChain" },
 };
 const filterTypes = [_][2][]const u8 {
+    // these structs have multiple base type elements, no issue opened for this yet
+    .{ "clusapi", "CLUSPROP_RESOURCE_CLASS_INFO" },
+    .{ "clusapi", "CLUSTER_SHARED_VOLUME_RENAME_INPUT" },
+    .{ "clusapi", "CLUSTER_SHARED_VOLUME_RENAME_GUID_INPUT" },
+    .{ "clusapi", "CLUSPROP_PARTITION_INFO" },
+    .{ "clusapi", "CLUSPROP_PARTITION_INFO_EX" },
+    .{ "clusapi", "CLUSPROP_PARTITION_INFO_EX2" },
+    .{ "clusapi", "CLUSPROP_SCSI_ADDRESS" },
+    .{ "clusapi", "CLUSPROP_FTSET_INFO" },
 };
 
 const SdkFileFilter = struct {
@@ -413,10 +423,11 @@ fn main2() !u8 {
                 .jsonFilename = jsonFilename,
                 .name = name,
                 .zigFilename = try std.mem.concat(allocator, u8, &[_][]const u8 {name, ".zig"}),
-                .typeImports = std.StringHashMap(TypeEntry).init(allocator),
+                .typeRefs = std.StringHashMap(TypeEntry).init(allocator),
                 .typeExports = std.StringHashMap(TypeEntry).init(allocator),
                 .funcExports = std.ArrayList([]const u8).init(allocator),
                 .constExports = std.ArrayList([]const u8).init(allocator),
+                .typeImports = std.ArrayList([]const u8).init(allocator),
             };
             try sdkFiles.append(sdkFile);
             const generateStartMillis = std.time.milliTimestamp();
@@ -437,16 +448,9 @@ fn main2() !u8 {
                 \\
             );
             try writer.print("usingnamespace struct {{\n", .{});
-            {
-                var importIt = sdkFile.typeImports.iterator();
-                while (importIt.next()) |kv| {
-                    std.debug.assert(!kv.value.metadata.builtin); // code verifies no builtin types get added to imports
-                    const symbol = kv.key;
-                    if (sdkFile.typeExports.contains(symbol))
-                        continue;
-                    // Temporaril just define all imports as void
-                    try writer.print("    pub const {} = void;\n", .{symbol});
-                }
+            for (sdkFile.typeImports.items) |symbol| {
+                // Temporarily just define all imports as void
+                try writer.print("    pub const {} = void;\n", .{symbol});
             }
             try writer.print("}};\n", .{});
         }
@@ -663,6 +667,17 @@ fn generateFile(outDir: std.fs.Dir, tree: json.ValueTree, sdkFile: *SdkFile) !vo
         }
     }
 
+    {
+        var typeRefIt = sdkFile.typeRefs.iterator();
+        while (typeRefIt.next()) |kv| {
+            std.debug.assert(!kv.value.metadata.builtin); // code verifies no builtin types get added to typeRefs
+            const symbol = kv.key;
+            if (sdkFile.typeExports.contains(symbol))
+                continue;
+            try sdkFile.typeImports.append(symbol);
+        }
+    }
+
     try outWriter.print(
         \\
         \\test "" {{
@@ -674,7 +689,7 @@ fn generateFile(outDir: std.fs.Dir, tree: json.ValueTree, sdkFile: *SdkFile) !vo
         \\    @import("std").meta.refAllDecls(@This());
         \\}}
         \\
-    , .{sdkFile.typeImports.count(), sdkFile.constExports.items.len, sdkFile.typeExports.count(), sdkFile.funcExports.items.len});
+    , .{sdkFile.typeImports.items.len, sdkFile.constExports.items.len, sdkFile.typeExports.count(), sdkFile.funcExports.items.len});
 }
 
 fn generateType(sdkFile: *SdkFile, outWriter: std.fs.File.Writer, name: []const u8, obj: json.ObjectMap) !void {
@@ -716,6 +731,13 @@ fn generateType(sdkFile: *SdkFile, outWriter: std.fs.File.Writer, name: []const 
             try outWriter.print("pub const {} = extern struct {{\n", .{name});
             for (elements.items) |element_node| {
                 switch (element_node) {
+                    // This seems to happen if the struct has a base type
+                    .String => |base_type_str| {
+                        const base_type = try getTypeWithTempString(base_type_str);
+                        try sdkFile.noteTypeRef(base_type);
+                        // TODO: not sure if this is the right way to represent the base type
+                        try outWriter.print("    __zig_basetype__: {},\n", .{base_type.zigTypeFromPool});
+                    },
                     .Object => |element| {
                         //try jsonObjEnforceKnownFieldsOnly(element, &[_][]const u8 {"name", "data_type", "type", "dim", "elements"}, sdkFile.jsonFilename);
                         if (element.get("name")) |element_name_node| {
@@ -726,7 +748,9 @@ fn generateType(sdkFile: *SdkFile, outWriter: std.fs.File.Writer, name: []const 
                         }
                     },
                     else => {
-                        try outWriter.print("    // NonObjectStructElement: {}\n", .{formatJson(element_node)});
+                        // TODO: print error context
+                        std.debug.warn("Error: expected Object or String but got: {}\n", .{formatJson(element_node)});
+                        return error.AlreadyReported;
                     },
                 }
             }
