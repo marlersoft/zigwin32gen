@@ -730,29 +730,7 @@ fn generateType(sdkFile: *SdkFile, outWriter: std.fs.File.Writer, name: []const 
             const elements = (try jsonObjGetRequired(obj, "elements", sdkFile.jsonFilename)).Array;
             try outWriter.print("pub const {} = extern struct {{\n", .{name});
             for (elements.items) |element_node| {
-                switch (element_node) {
-                    // This seems to happen if the struct has a base type
-                    .String => |base_type_str| {
-                        const base_type = try getTypeWithTempString(base_type_str);
-                        try sdkFile.noteTypeRef(base_type);
-                        // TODO: not sure if this is the right way to represent the base type
-                        try outWriter.print("    __zig_basetype__: {},\n", .{base_type.zigTypeFromPool});
-                    },
-                    .Object => |element| {
-                        //try jsonObjEnforceKnownFieldsOnly(element, &[_][]const u8 {"name", "data_type", "type", "dim", "elements"}, sdkFile.jsonFilename);
-                        if (element.get("name")) |element_name_node| {
-                            const element_name = element_name_node.String;
-                            try outWriter.print("    {}: u32, // {}\n", .{formatCToZigSymbol(element_name), formatJson(element_node)});
-                        } else {
-                            try outWriter.print("    // {}\n", .{formatJson(element_node)});
-                        }
-                    },
-                    else => {
-                        // TODO: print error context
-                        std.debug.warn("Error: expected Object or String but got: {}\n", .{formatJson(element_node)});
-                        return error.AlreadyReported;
-                    },
-                }
+                try generateField(sdkFile, outWriter, element_node);
             }
             try outWriter.print("}};\n", .{});
         } else {
@@ -760,6 +738,32 @@ fn generateType(sdkFile: *SdkFile, outWriter: std.fs.File.Writer, name: []const 
         }
     } else {
         try outWriter.print("pub const {} = void; // ObjectType: {}\n", .{name, formatJson(json.Value { .Object = obj})});
+    }
+}
+
+fn generateField(sdkFile: *SdkFile, outWriter: std.fs.File.Writer, field_node: json.Value) !void {
+    switch (field_node) {
+        // This seems to happen if the struct has a base type
+        .String => |base_type_str| {
+            const base_type = try getTypeWithTempString(base_type_str);
+            try sdkFile.noteTypeRef(base_type);
+            // TODO: not sure if this is the right way to represent the base type
+            try outWriter.print("    __zig_basetype__: {},\n", .{base_type.zigTypeFromPool});
+        },
+        .Object => |element| {
+            //try jsonObjEnforceKnownFieldsOnly(element, &[_][]const u8 {"name", "data_type", "type", "dim", "elements"}, sdkFile.jsonFilename);
+            if (element.get("name")) |element_name_node| {
+                const element_name = element_name_node.String;
+                try outWriter.print("    {}: u32, // NamedStructElement: {}\n", .{formatCToZigSymbol(element_name), formatJson(field_node)});
+            } else {
+                try outWriter.print("    // NamelessStructElement: {}\n", .{formatJson(field_node)});
+            }
+        },
+        else => {
+            // TODO: print error context
+            std.debug.warn("Error: expected Object or String but got: {}\n", .{formatJson(field_node)});
+            return error.AlreadyReported;
+        },
     }
 }
 
