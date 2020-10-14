@@ -295,7 +295,8 @@ fn main2() !u8 {
     var readTimeMillis : i64 = 0;
     var generateTimeMillis : i64 = 0;
     defer {
-        const totalMillis = std.time.milliTimestamp() - mainStartMillis;
+        var totalMillis = std.time.milliTimestamp() - mainStartMillis;
+        if (totalMillis == 0) totalMillis = 1; // prevent divide by 0
         std.debug.warn("Parse Time: {} millis ({}%)\n", .{parseTimeMillis, @divTrunc(100 * parseTimeMillis, totalMillis)});
         std.debug.warn("Read Time : {} millis ({}%)\n", .{readTimeMillis , @divTrunc(100 * readTimeMillis, totalMillis)});
         std.debug.warn("Gen Time  : {} millis ({}%)\n", .{generateTimeMillis , @divTrunc(100 * generateTimeMillis, totalMillis)});
@@ -356,13 +357,12 @@ fn main2() !u8 {
         try getResult.entry.value.typeMap.put(type_str, true);
     }
 
-
-    var sdk_data_dir = try std.fs.cwd().openDir("windows_sdk_data\\data", .{.iterate = true});
+    const sdk_dir_str = "windows_sdk_data" ++ std.fs.path.sep_str ++ "data";
+    var sdk_data_dir = try std.fs.cwd().openDir(sdk_dir_str, .{.iterate = true});
     defer sdk_data_dir.close();
 
     const outDirString = "out";
-    var cwd = std.fs.cwd();
-    defer cwd.close();
+    const cwd = std.fs.cwd();
     try cleanDir(cwd, outDirString);
     var outDir = try cwd.openDir(outDirString, .{});
     defer outDir.close();
