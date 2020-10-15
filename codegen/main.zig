@@ -518,8 +518,8 @@ fn main2() !u8 {
         defer symbol_file.close();
         const writer = symbol_file.writer();
         try writer.writeAll(
-            \\ //! This module contains aliases to ALL symbols inside the windows SDK.  It allows
-            \\ //! an application to access any and all symbols through a single import.
+            \\//! This module contains aliases to ALL symbols inside the windows SDK.  It allows
+            \\//! an application to access any and all symbols through a single import.
             \\
         );
         for (sdk_files.items) |sdk_file| {
@@ -658,7 +658,7 @@ fn generateTopLevelDecl(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, decl
                     try out_writer.print("// function '{}' is not in a dll, so omitting its declaration\n", .{name});
                 } else {
                     const extern_string = first_dll.?[0 .. first_dll.?.len - ".dll".len];
-                    try out_writer.print("pub extern \"{}\" fn {}() {};\n", .{extern_string, name, return_type.zig_type_from_pool});
+                    try out_writer.print("pub extern \"{}\" fn {}() callconv(.Stdcall) {};\n", .{extern_string, name, return_type.zig_type_from_pool});
                 }
             } else {
                 try out_writer.print("// FuncDecl with no api_locations (is this a compiler intrinsic or something?): {}\n", .{formatJson(decl_obj)});
