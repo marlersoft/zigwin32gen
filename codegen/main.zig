@@ -17,9 +17,10 @@ const TypeEntry = struct {
     zig_type_from_pool: []const u8,
     metadata: TypeMetadata,
 };
-var global_type_map = std.StringHashMap(TypeEntry).init(allocator);
 
+var global_void_type_from_pool_ptr : [*]const u8 = undefined;
 var global_symbol_pool = StringPool.init(allocator);
+var global_type_map = std.StringHashMap(TypeEntry).init(allocator);
 
 const SdkFile = struct {
     json_filename: []const u8,
@@ -256,8 +257,23 @@ const filter_types = [_][2][]const u8 {
     .{ "clusapi", "CLUSPROP_PARTITION_INFO_EX2" },
     .{ "clusapi", "CLUSPROP_SCSI_ADDRESS" },
     .{ "clusapi", "CLUSPROP_FTSET_INFO" },
+    .{ "clusapi", "PCLUSPROP_RESOURCE_CLASS_INFO" },
+    .{ "clusapi", "PCLUSTER_SHARED_VOLUME_RENAME_INPUT" },
+    .{ "clusapi", "PCLUSTER_SHARED_VOLUME_RENAME_GUID_INPUT" },
+    .{ "clusapi", "PCLUSPROP_PARTITION_INFO" },
+    .{ "clusapi", "PCLUSPROP_FTSET_INFO" },
+    .{ "clusapi", "PCLUSPROP_SCSI_ADDRESS" },
     // this struct uses bitfields and the windows sdk_data doesn't contain any metadata indicating this, need to open an issue for this
     .{ "windef", "IMAGE_ARCHITECTURE_HEADER" },
+    .{ "windef", "PIMAGE_ARCHITECTURE_HEADER" },
+    // pointer to these types are not allowed on functions with Stdcall calling convention and as
+    // extern struct fields, I think because the underlying struct type has no fields
+    .{ "winbase", "PCCERT_CHAIN_CONTEXT" },
+    .{ "winbase", "PCCERT_SERVER_OCSP_RESPONSE_CONTEXT" },
+    .{ "winbase", "LPUNKNOWN" },
+    .{ "winbase", "LPSTORAGE" },
+    .{ "winbase", "LPOLECLIENTSITE" },
+    .{ "winbase", "LPDATAOBJECT" },
 };
 
 const SdkFileFilter = struct {
@@ -319,10 +335,12 @@ fn main2() !u8 {
 
     {
         const void_type_from_pool = try global_symbol_pool.add("void");
+        global_void_type_from_pool_ptr = void_type_from_pool.ptr;
         try global_type_map.put(void_type_from_pool, TypeEntry { .zig_type_from_pool = void_type_from_pool, .metadata = .{ .builtin = true } });
     }
     // TODO: should I have special case handling for the windws types like INT64, DWORD, etc?
     //       maybe I should just add comptime asserts for now, such as comptime { assert(@sizeOf(INT64) == 8) }, etc
+
     try addCToZigType("char", "i8");
     try addCToZigType("signed char", "i8");
     try addCToZigType("unsigned char", "u8");
@@ -562,7 +580,7 @@ fn generateFile(out_dir: std.fs.Dir, tree: json.ValueTree, sdk_file: *SdkFile) !
     // We can't import the symbols module because it will re-introduce the same symbols we are exporting
     //try out_writer.print("usingnamespace @import(\"../symbols.zig\");\n", .{});
     for (entry_array.items) |decl_node| {
-        try generateTopLevelDecl(sdk_file, out_writer, decl_node.Object, optional_filter);
+        try generateTopLevelDecl(sdk_file, out_writer, optional_filter, decl_node.Object);
     }
 
     {
@@ -590,13 +608,17 @@ fn generateFile(out_dir: std.fs.Dir, tree: json.ValueTree, sdk_file: *SdkFile) !
     , .{sdk_file.type_imports.items.len, sdk_file.const_exports.items.len, sdk_file.type_exports.count(), sdk_file.func_exports.items.len});
 }
 
-fn generateTopLevelDecl(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, decl_obj: json.ObjectMap, optional_filter: ?*const SdkFileFilter) !void {
+fn generateTopLevelDecl(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, optional_filter: ?*const SdkFileFilter, decl_obj: json.ObjectMap) !void {
     const name = try global_symbol_pool.add((try jsonObjGetRequired(decl_obj, "name", sdk_file)).String);
     const optional_data_type = decl_obj.get("data_type");
 
     if (optional_data_type) |data_type_node| {
         const data_type = data_type_node.String;
-        if (std.mem.eql(u8, data_type, "FuncDecl")) {
+        if (std.mem.eql(u8, data_type, "Ptr")) {
+            try jsonObjEnforceKnownFieldsOnly(decl_obj, &[_][]const u8 {"data_type", "name", "type"}, sdk_file);
+            const type_node = try jsonObjGetRequired(decl_obj, "type", sdk_file);
+            try generateTopLevelType(sdk_file, out_writer, optional_filter, name, type_node, .{ .is_ptr = true });
+        } else if (std.mem.eql(u8, data_type, "FuncDecl")) {
             //std.debug.warn("[DEBUG] function '{}'\n", .{name});
 
             if (optional_filter) |filter| {
@@ -668,41 +690,50 @@ fn generateTopLevelDecl(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, decl
         }
     } else {
         try jsonObjEnforceKnownFieldsOnly(decl_obj, &[_][]const u8 {"name", "type"}, sdk_file);
-        const type_value = try jsonObjGetRequired(decl_obj, "type", sdk_file);
-
-        if (optional_filter) |filter| {
-            if (filter.filterType(name)) {
-                try out_writer.print("// type has been filtered: {}\n", .{name});
-                return;
-            }
-        }
-
-        const type_entry = try getTypeWithTempString(name);
-        if (type_entry.metadata.builtin)
-            return;
-        if (sdk_file.type_exports.get(name)) |type_entry_conflict| {
-            // TODO: open an issue for these (there's over 600 redefinitions!)
-            try out_writer.print("// REDEFINITION: {} = {}\n", .{name, formatJson(type_value)});
-            return;
-        }
-        try sdk_file.type_exports.put(name, type_entry);
-        switch (type_value) {
-            .String => |s| {
-                const def_type = try getTypeWithTempString(s);
-                try sdk_file.addTypeRef(def_type);
-                try out_writer.print("pub const {} = {};\n", .{name, def_type.zig_type_from_pool});
-            },
-            .Object => |type_obj| try generateType(sdk_file, out_writer, name, type_obj),
-            else => @panic("got a JSON \"type\" that is neither a String nor an Object"),
-        }
+        const type_node = try jsonObjGetRequired(decl_obj, "type", sdk_file);
+        try generateTopLevelType(sdk_file, out_writer, optional_filter, name, type_node, .{ .is_ptr = false });
     }
 }
 
-fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, name: []const u8, obj: json.ObjectMap) !void {
-    //const type_obj_name = (try jsonObjGetRequired(type_obj, "name", sdk_file)).String;
+const GenTopLevelTypeOptions = struct {
+    is_ptr: bool,
+};
+fn generateTopLevelType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, optional_filter: ?*const SdkFileFilter, name: []const u8, type_node: json.Value, options: GenTopLevelTypeOptions) !void {
+    if (optional_filter) |filter| {
+        if (filter.filterType(name)) {
+            try out_writer.print("// type has been filtered: {}\n", .{name});
+            return;
+        }
+    }
+    const new_type_entry = try getTypeWithTempString(name);
+    if (new_type_entry.metadata.builtin)
+        return;
+    if (sdk_file.type_exports.get(name)) |type_entry_conflict| {
+        // TODO: open an issue for these (there's over 600 redefinitions!)
+        try out_writer.print("// WARNING: redefinition in same module: {} = {}\n", .{name, formatJson(type_node)});
+        return;
+    }
+    try sdk_file.type_exports.put(name, new_type_entry);
+    switch (type_node) {
+        .String => |s| {
+            const def_type = try getTypeWithTempString(s);
+            try sdk_file.addTypeRef(def_type);
+            try out_writer.print("pub const {} = ", .{name});
+            if (options.is_ptr) {
+                try out_writer.print("{}", .{formatCToZigPtr(def_type.zig_type_from_pool)});
+            } else {
+                try out_writer.print("{}", .{def_type.zig_type_from_pool});
+            }
+            try out_writer.print(";\n", .{});
+        },
+        .Object => |type_obj| try generateType(sdk_file, out_writer, name, type_obj),
+        else => @panic("got a JSON \"type\" that is neither a String nor an Object"),
+    }
+}
 
-    //const type_obj_data_type = (try jsonObjGetRequired(decl_obj, "data_type", sdk_file)).String;
-    // TODO: get data_type and generate Struct definitions next?
+
+fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, name: []const u8, obj: json.ObjectMap) !void {
+    //std.debug.warn("[DEBUG] generating type '{}'\n", .{name});
     if (obj.get("data_type")) |data_type_node| {
         const data_type = data_type_node.String;
         if (std.mem.eql(u8, data_type, "Enum")) {
@@ -863,6 +894,25 @@ pub fn fixIntegerLiteral(literal: []const u8, is_c_int: bool) FixIntegerLiteralF
     return .{ .literal = literal, .is_c_int = is_c_int };
 }
 
+const CToZigPtrFormatter = struct {
+    type_name_from_pool: []const u8,
+    pub fn format(
+        self: @This(),
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        if (self.type_name_from_pool.ptr == global_void_type_from_pool_ptr) {
+            try writer.writeAll("*c_void");
+        } else {
+            // TODO: would be nice if we could use either *T or [*]T zig pointer semantics
+            try writer.print("[*c]{}", .{self.type_name_from_pool});
+        }
+    }
+};
+pub fn formatCToZigPtr(type_name_from_pool: []const u8) CToZigPtrFormatter {
+    return .{ .type_name_from_pool = type_name_from_pool };
+}
 
 pub fn SliceFormatter(comptime T: type) type { return struct {
     slice: []const T,
