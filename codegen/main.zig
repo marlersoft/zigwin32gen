@@ -54,6 +54,11 @@ fn getTypeWithPoolString(pool_string: []const u8) !TypeEntry {
     };
 }
 
+const SharedTypeExportEntry = struct {
+    first_sdk_file_ptr: *SdkFile,
+    duplicates: u32,
+};
+
 //
 // Temporary Filtering Code to disable invalid configuration
 //
@@ -375,6 +380,9 @@ fn main2() !u8 {
     var out_dir = try cwd.openDir(out_dir_string, .{});
     defer out_dir.close();
 
+    var shared_type_export_map = std.StringHashMap(SharedTypeExportEntry).init(allocator);
+    defer shared_type_export_map.deinit();
+
     var sdk_files = std.ArrayList(*SdkFile).init(allocator);
     defer sdk_files.deinit();
     {
@@ -442,6 +450,25 @@ fn main2() !u8 {
             try generateFile(out_windows_dir, jsonTree, sdk_file);
             generate_time_millis += std.time.milliTimestamp() - generate_start_millis;
         }
+
+        // populate the shared_type_export_map
+        for (sdk_files.items) |sdk_file| {
+            var type_export_it = sdk_file.type_exports.iterator();
+            while (type_export_it.next()) |kv| {
+                const type_name = kv.key;
+                if (shared_type_export_map.get(type_name)) |entry| {
+                    // handle duplicates symbols (https://github.com/ohjeongwook/windows_sdk_data/issues/2)
+                    // TODO: uncomment this warning after all types start being generated
+                    // For now, a warning about this will be included in the generated symbols.zig file below
+                    //std.debug.warn("WARNING: type '{}' in '{}' conflicts with type in '{}'\n", .{
+                    //    type_name, sdk_file.name, entry.first_sdk_file_ptr.name});
+                    try shared_type_export_map.put(type_name, .{ .first_sdk_file_ptr = entry.first_sdk_file_ptr, .duplicates = entry.duplicates + 1 });
+                } else {
+                    try shared_type_export_map.put(type_name, .{ .first_sdk_file_ptr = sdk_file, .duplicates = 0 });
+                }
+            }
+        }
+
         // Write the import footer for each file
         for (sdk_files.items) |sdk_file| {
             var out_file = try out_windows_dir.openFile(sdk_file.zig_filename, .{.read = false, .write = true});
@@ -456,9 +483,14 @@ fn main2() !u8 {
                 \\
             );
             try writer.print("usingnamespace struct {{\n", .{});
-            for (sdk_file.type_imports.items) |symbol| {
-                // Temporarily just define all type imports as c_int as a placeholder
-                try writer.print("    pub const {} = c_int; // c_int is a temporary placeholder\n", .{symbol});
+            for (sdk_file.type_imports.items) |type_name| {
+                if (shared_type_export_map.get(type_name)) |entry| {
+                    try writer.print("    pub const {} = @import(\"./{}.zig\").{};\n", .{type_name, entry.first_sdk_file_ptr.name, type_name});
+                } else {
+                    // TODO: uncomment this warning after all types start being generated
+                    //std.debug.warn("WARNING: module '{}' uses undefined type '{}'\n", .{ sdk_file.name, type_name});
+                    try writer.print("    pub const {} = c_int; // WARNING: this is a placeholder because this type is undefined\n", .{type_name});
+                }
             }
             try writer.print("}};\n", .{});
         }
@@ -481,21 +513,6 @@ fn main2() !u8 {
         );
     }
 
-
-    // find duplicates symbols (https://github.com/ohjeongwook/windows_sdk_data/issues/2)
-    var symbol_count_map = std.StringHashMap(u32).init(allocator);
-    defer symbol_count_map.deinit();
-    for (sdk_files.items) |sdk_file| {
-        var export_it = sdk_file.type_exports.iterator();
-        while (export_it.next()) |kv| {
-            const symbol = kv.key;
-            if (symbol_count_map.get(symbol)) |count| {
-                try symbol_count_map.put(symbol, count + 1);
-            } else {
-                try symbol_count_map.put(symbol, 1);
-            }
-        }
-    }
     {
         var symbol_file = try out_dir.createFile("symbols.zig", .{});
         defer symbol_file.close();
@@ -514,12 +531,13 @@ fn main2() !u8 {
             try writer.print("// {} exports {} types:\n", .{sdk_file.name, sdk_file.type_exports.count()});
             var export_it = sdk_file.type_exports.iterator();
             while (export_it.next()) |kv| {
-                const symbol = kv.key;
-                const count = symbol_count_map.get(symbol) orelse @panic("codebug");
-                if (count != 1) {
-                    try writer.print("// symbol '{}.{}' has {} conflicts\n", .{sdk_file.name, symbol, count});
+                const type_name = kv.key;
+                const type_entry = shared_type_export_map.get(type_name) orelse unreachable;
+                if (type_entry.first_sdk_file_ptr != sdk_file) {
+                    try writer.print("// WARNING: type '{}.{}' has {} definitions, going with '{}'\n", .{
+                        sdk_file.name, type_name, type_entry.duplicates + 1, type_entry.first_sdk_file_ptr.name});
                 } else {
-                    try writer.print("pub const {} = {}.{};\n", .{symbol, sdk_file.name, symbol});
+                    try writer.print("pub const {} = {}.{};\n", .{type_name, sdk_file.name, type_name});
                 }
             }
             try writer.print("// {} exports {} functions:\n", .{sdk_file.name, sdk_file.func_exports.items.len});
