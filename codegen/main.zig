@@ -5,56 +5,59 @@ const StringPool = @import("./stringpool.zig").StringPool;
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const allocator = &arena.allocator;
 
-const zigKeywords = [_][]const u8 {
+const zig_keywords = [_][]const u8 {
     "defer", "align", "error", "resume", "suspend", "var", "callconv",
 };
-var globalZigKeywordMap = std.StringHashMap(bool).init(allocator);
+var global_zig_keyword_map = std.StringHashMap(bool).init(allocator);
 
 const TypeMetadata = struct {
     builtin: bool,
 };
 const TypeEntry = struct {
-    zigTypeFromPool: []const u8,
+    zig_type_from_pool: []const u8,
     metadata: TypeMetadata,
 };
-var globalTypeMap = std.StringHashMap(TypeEntry).init(allocator);
+var global_type_map = std.StringHashMap(TypeEntry).init(allocator);
 
-var globalSymbolPool = StringPool.init(allocator);
+var global_symbol_pool = StringPool.init(allocator);
 
 const SdkFile = struct {
-    jsonFilename: []const u8,
+    json_filename: []const u8,
     name: []const u8,
-    zigFilename: []const u8,
-    typeRefs: std.StringHashMap(TypeEntry),
-    typeExports: std.StringHashMap(TypeEntry),
-    funcExports: std.ArrayList([]const u8),
-    constExports: std.ArrayList([]const u8),
-    typeImports: std.ArrayList([]const u8),
-    fn noteTypeRef(self: *SdkFile, type_entry: TypeEntry) !void {
+    zig_filename: []const u8,
+    type_refs: std.StringHashMap(TypeEntry),
+    type_exports: std.StringHashMap(TypeEntry),
+    func_exports: std.ArrayList([]const u8),
+    const_exports: std.ArrayList([]const u8),
+    /// type_imports is made up of all the type_refs excluding any types that have been exported
+    /// it is populated after all type_refs and type_exports have been analyzed
+    type_imports: std.ArrayList([]const u8),
+
+    fn addTypeRef(self: *SdkFile, type_entry: TypeEntry) !void {
         if (type_entry.metadata.builtin)
             return;
-        try self.typeRefs.put(type_entry.zigTypeFromPool, type_entry);
+        try self.type_refs.put(type_entry.zig_type_from_pool, type_entry);
     }
 };
 
-fn getTypeWithTempString(tempString: []const u8) !TypeEntry {
-    return getTypeWithPoolString(try globalSymbolPool.add(tempString));
+fn getTypeWithTempString(temp_string: []const u8) !TypeEntry {
+    return getTypeWithPoolString(try global_symbol_pool.add(temp_string));
 }
-fn getTypeWithPoolString(poolString: []const u8) !TypeEntry {
-    return globalTypeMap.get(poolString) orelse {
-        const typeMetadata = TypeEntry {
-            .zigTypeFromPool = poolString,
+fn getTypeWithPoolString(pool_string: []const u8) !TypeEntry {
+    return global_type_map.get(pool_string) orelse {
+        const type_metadata = TypeEntry {
+            .zig_type_from_pool = pool_string,
             .metadata = .{ .builtin = false },
         };
-        try globalTypeMap.put(poolString, typeMetadata);
-        return typeMetadata;
+        try global_type_map.put(pool_string, type_metadata);
+        return type_metadata;
     };
 }
 
 //
 // Temporary Filtering Code to disable invalid configuration
 //
-const filterFunctions = [_][2][]const u8 {
+const filter_funcs = [_][2][]const u8 {
     // these functions have invalid api_locations, it is just an array of one string "None", no issue opened for this yet
     .{ "scrnsave", "ScreenSaverProc" },
     .{ "scrnsave", "RegisterDialogClasses" },
@@ -238,7 +241,7 @@ const filterFunctions = [_][2][]const u8 {
     .{ "wintrust", "WTHelperProvDataFromStateData" },
     .{ "wintrust", "WTHelperGetProvPrivateDataFromChain" },
 };
-const filterTypes = [_][2][]const u8 {
+const filter_types = [_][2][]const u8 {
     // these structs have multiple base type elements, no issue opened for this yet
     .{ "clusapi", "CLUSPROP_RESOURCE_CLASS_INFO" },
     .{ "clusapi", "CLUSTER_SHARED_VOLUME_RENAME_INPUT" },
@@ -253,35 +256,35 @@ const filterTypes = [_][2][]const u8 {
 };
 
 const SdkFileFilter = struct {
-    funcMap: std.StringHashMap(bool),
-    typeMap: std.StringHashMap(bool),
+    func_map: std.StringHashMap(bool),
+    type_map: std.StringHashMap(bool),
     pub fn init() SdkFileFilter {
         return SdkFileFilter {
-            .funcMap = std.StringHashMap(bool).init(allocator),
-            .typeMap = std.StringHashMap(bool).init(allocator),
+            .func_map = std.StringHashMap(bool).init(allocator),
+            .type_map = std.StringHashMap(bool).init(allocator),
         };
     }
     pub fn filterFunc(self: SdkFileFilter, func: []const u8) bool {
-        return self.funcMap.get(func) orelse false;
+        return self.func_map.get(func) orelse false;
     }
     pub fn filterType(self: SdkFileFilter, type_str: []const u8) bool {
-        return self.typeMap.get(type_str) orelse false;
+        return self.type_map.get(type_str) orelse false;
     }
 };
-var globalFileFilterMap = std.StringHashMap(*SdkFileFilter).init(allocator);
+var global_file_filter_map = std.StringHashMap(*SdkFileFilter).init(allocator);
 fn getFilter(name: []const u8) ?*const SdkFileFilter {
-    return globalFileFilterMap.get(name);
+    return global_file_filter_map.get(name);
 }
 
 fn addCToZigType(c: []const u8, zig: []const u8) !void {
-    const cPool = try globalSymbolPool.add(c);
-    const zigPool = try globalSymbolPool.add(zig);
-    const typeMetadata = TypeEntry {
-        .zigTypeFromPool = zigPool,
+    const c_type_pool = try global_symbol_pool.add(c);
+    const zig_type_pool = try global_symbol_pool.add(zig);
+    const type_metadata = TypeEntry {
+        .zig_type_from_pool = zig_type_pool,
         .metadata = .{ .builtin = true },
     };
-    try globalTypeMap.put(cPool, typeMetadata);
-    try globalTypeMap.put(zigPool, typeMetadata);
+    try global_type_map.put(c_type_pool, type_metadata);
+    try global_type_map.put(zig_type_pool, type_metadata);
 }
 
 
@@ -292,26 +295,26 @@ pub fn main() !u8 {
     };
 }
 fn main2() !u8 {
-    const mainStartMillis = std.time.milliTimestamp();
-    var parseTimeMillis : i64 = 0;
-    var readTimeMillis : i64 = 0;
-    var generateTimeMillis : i64 = 0;
+    const main_start_millis = std.time.milliTimestamp();
+    var parse_time_millis : i64 = 0;
+    var read_time_millis : i64 = 0;
+    var generate_time_millis : i64 = 0;
     defer {
-        var totalMillis = std.time.milliTimestamp() - mainStartMillis;
-        if (totalMillis == 0) totalMillis = 1; // prevent divide by 0
-        std.debug.warn("Parse Time: {} millis ({}%)\n", .{parseTimeMillis, @divTrunc(100 * parseTimeMillis, totalMillis)});
-        std.debug.warn("Read Time : {} millis ({}%)\n", .{readTimeMillis , @divTrunc(100 * readTimeMillis, totalMillis)});
-        std.debug.warn("Gen Time  : {} millis ({}%)\n", .{generateTimeMillis , @divTrunc(100 * generateTimeMillis, totalMillis)});
-        std.debug.warn("Total Time: {} millis\n", .{totalMillis});
+        var total_millis = std.time.milliTimestamp() - main_start_millis;
+        if (total_millis == 0) total_millis = 1; // prevent divide by 0
+        std.debug.warn("Parse Time: {} millis ({}%)\n", .{parse_time_millis, @divTrunc(100 * parse_time_millis, total_millis)});
+        std.debug.warn("Read Time : {} millis ({}%)\n", .{read_time_millis , @divTrunc(100 * read_time_millis, total_millis)});
+        std.debug.warn("Gen Time  : {} millis ({}%)\n", .{generate_time_millis , @divTrunc(100 * generate_time_millis, total_millis)});
+        std.debug.warn("Total Time: {} millis\n", .{total_millis});
     }
 
-    for (zigKeywords) |zigKeyword| {
-        try globalZigKeywordMap.put(zigKeyword, true);
+    for (zig_keywords) |keyword| {
+        try global_zig_keyword_map.put(keyword, true);
     }
 
     {
-        const voidTypeFromPool = try globalSymbolPool.add("void");
-        try globalTypeMap.put(voidTypeFromPool, TypeEntry { .zigTypeFromPool = voidTypeFromPool, .metadata = .{ .builtin = true } });
+        const void_type_from_pool = try global_symbol_pool.add("void");
+        try global_type_map.put(void_type_from_pool, TypeEntry { .zig_type_from_pool = void_type_from_pool, .metadata = .{ .builtin = true } });
     }
     // TODO: should I have special case handling for the windws types like INT64, DWORD, etc?
     //       maybe I should just add comptime asserts for now, such as comptime { assert(@sizeOf(INT64) == 8) }, etc
@@ -341,46 +344,46 @@ fn main2() !u8 {
     try addCToZigType("long double", "c_longdouble");
 
     // Setup filter
-    for (filterFunctions) |filterFunction| {
-        const module = filterFunction[0];
-        const func = filterFunction[1];
-        const getResult = try globalFileFilterMap.getOrPut(module);
+    for (filter_funcs) |filter_func| {
+        const module = filter_func[0];
+        const func = filter_func[1];
+        const getResult = try global_file_filter_map.getOrPut(module);
         if (!getResult.found_existing) {
             getResult.entry.value = try allocator.create(SdkFileFilter);
             getResult.entry.value.* = SdkFileFilter.init();
         }
-        try getResult.entry.value.funcMap.put(func, true);
+        try getResult.entry.value.func_map.put(func, true);
     }
-    for (filterTypes) |filterType| {
-        const module = filterType[0];
-        const type_str = filterType[1];
-        const getResult = try globalFileFilterMap.getOrPut(module);
+    for (filter_types) |filter_type| {
+        const module = filter_type[0];
+        const type_str = filter_type[1];
+        const getResult = try global_file_filter_map.getOrPut(module);
         if (!getResult.found_existing) {
             getResult.entry.value = try allocator.create(SdkFileFilter);
             getResult.entry.value.* = SdkFileFilter.init();
         }
-        try getResult.entry.value.typeMap.put(type_str, true);
+        try getResult.entry.value.type_map.put(type_str, true);
     }
 
     const sdk_dir_str = "windows_sdk_data" ++ std.fs.path.sep_str ++ "data";
     var sdk_data_dir = try std.fs.cwd().openDir(sdk_dir_str, .{.iterate = true});
     defer sdk_data_dir.close();
 
-    const outDirString = "out";
+    const out_dir_string = "out";
     const cwd = std.fs.cwd();
-    try cleanDir(cwd, outDirString);
-    var outDir = try cwd.openDir(outDirString, .{});
-    defer outDir.close();
+    try cleanDir(cwd, out_dir_string);
+    var out_dir = try cwd.openDir(out_dir_string, .{});
+    defer out_dir.close();
 
-    var sdkFiles = std.ArrayList(*SdkFile).init(allocator);
-    defer sdkFiles.deinit();
+    var sdk_files = std.ArrayList(*SdkFile).init(allocator);
+    defer sdk_files.deinit();
     {
-        try outDir.makeDir("windows");
-        var outWindowsDir = try outDir.openDir("windows", .{});
-        defer outWindowsDir.close();
+        try out_dir.makeDir("windows");
+        var out_windows_dir = try out_dir.openDir("windows", .{});
+        defer out_windows_dir.close();
 
-        var dirIt = sdk_data_dir.iterate();
-        while (try dirIt.next()) |entry| {
+        var dir_it = sdk_data_dir.iterate();
+        while (try dir_it.next()) |entry| {
             // temporarily skip most files to speed up initial development
             //const optional_filter : ?[]const u8 = "w";
             const optional_filter : ?[]const u8 = null;
@@ -406,45 +409,45 @@ fn main2() !u8 {
             //
             var file = try sdk_data_dir.openFile(entry.name, .{});
             defer file.close();
-            const readStartMillis = std.time.milliTimestamp();
+            const read_start_millis = std.time.milliTimestamp();
             const content = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
-            readTimeMillis += std.time.milliTimestamp() - readStartMillis;
+            read_time_millis += std.time.milliTimestamp() - read_start_millis;
             defer allocator.free(content);
             std.debug.warn("  read {} bytes\n", .{content.len});
 
             // Parsing the JSON is VERY VERY SLOW!!!!!!
             var parser = json.Parser.init(allocator, false); // false is copy_strings
             defer parser.deinit();
-            const parseStartMillis = std.time.milliTimestamp();
+            const parse_start_millis = std.time.milliTimestamp();
             var jsonTree = try parser.parse(content);
-            parseTimeMillis += std.time.milliTimestamp() - parseStartMillis;
+            parse_time_millis += std.time.milliTimestamp() - parse_start_millis;
 
             defer jsonTree.deinit();
 
-            const sdkFile = try allocator.create(SdkFile);
-            const jsonFilename = try std.mem.dupe(allocator, u8, entry.name);
-            const name = jsonFilename[0..jsonFilename.len - ".json".len];
-            sdkFile.* = .{
-                .jsonFilename = jsonFilename,
+            const sdk_file = try allocator.create(SdkFile);
+            const json_filename = try std.mem.dupe(allocator, u8, entry.name);
+            const name = json_filename[0..json_filename.len - ".json".len];
+            sdk_file.* = .{
+                .json_filename = json_filename,
                 .name = name,
-                .zigFilename = try std.mem.concat(allocator, u8, &[_][]const u8 {name, ".zig"}),
-                .typeRefs = std.StringHashMap(TypeEntry).init(allocator),
-                .typeExports = std.StringHashMap(TypeEntry).init(allocator),
-                .funcExports = std.ArrayList([]const u8).init(allocator),
-                .constExports = std.ArrayList([]const u8).init(allocator),
-                .typeImports = std.ArrayList([]const u8).init(allocator),
+                .zig_filename = try std.mem.concat(allocator, u8, &[_][]const u8 {name, ".zig"}),
+                .type_refs = std.StringHashMap(TypeEntry).init(allocator),
+                .type_exports = std.StringHashMap(TypeEntry).init(allocator),
+                .func_exports = std.ArrayList([]const u8).init(allocator),
+                .const_exports = std.ArrayList([]const u8).init(allocator),
+                .type_imports = std.ArrayList([]const u8).init(allocator),
             };
-            try sdkFiles.append(sdkFile);
-            const generateStartMillis = std.time.milliTimestamp();
-            try generateFile(outWindowsDir, jsonTree, sdkFile);
-            generateTimeMillis += std.time.milliTimestamp() - generateStartMillis;
+            try sdk_files.append(sdk_file);
+            const generate_start_millis = std.time.milliTimestamp();
+            try generateFile(out_windows_dir, jsonTree, sdk_file);
+            generate_time_millis += std.time.milliTimestamp() - generate_start_millis;
         }
         // Write the import footer for each file
-        for (sdkFiles.items) |sdkFile| {
-            var outFile = try outWindowsDir.openFile(sdkFile.zigFilename, .{.read = false, .write = true});
-            defer outFile.close();
-            try outFile.seekFromEnd(0);
-            const writer = outFile.writer();
+        for (sdk_files.items) |sdk_file| {
+            var out_file = try out_windows_dir.openFile(sdk_file.zig_filename, .{.read = false, .write = true});
+            defer out_file.close();
+            try out_file.seekFromEnd(0);
+            const writer = out_file.writer();
             try writer.writeAll(
                 \\
                 \\//=====================================================================
@@ -453,7 +456,7 @@ fn main2() !u8 {
                 \\
             );
             try writer.print("usingnamespace struct {{\n", .{});
-            for (sdkFile.typeImports.items) |symbol| {
+            for (sdk_file.type_imports.items) |symbol| {
                 // Temporarily just define all type imports as c_int as a placeholder
                 try writer.print("    pub const {} = c_int; // c_int is a temporary placeholder\n", .{symbol});
             }
@@ -462,11 +465,11 @@ fn main2() !u8 {
     }
 
     {
-        var symbolFile = try outDir.createFile("windows.zig", .{});
-        defer symbolFile.close();
-        const writer = symbolFile.writer();
-        for (sdkFiles.items) |sdkFile| {
-            try writer.print("pub const {} = @import(\"./windows/{}.zig\");\n", .{sdkFile.name, sdkFile.name});
+        var windows_file = try out_dir.createFile("windows.zig", .{});
+        defer windows_file.close();
+        const writer = windows_file.writer();
+        for (sdk_files.items) |sdk_file| {
+            try writer.print("pub const {} = @import(\"./windows/{}.zig\");\n", .{sdk_file.name, sdk_file.name});
         }
         try writer.writeAll(
             \\
@@ -480,82 +483,82 @@ fn main2() !u8 {
 
 
     // find duplicates symbols (https://github.com/ohjeongwook/windows_sdk_data/issues/2)
-    var symbolCountMap = std.StringHashMap(u32).init(allocator);
-    defer symbolCountMap.deinit();
-    for (sdkFiles.items) |sdkFile| {
-        var exportIt = sdkFile.typeExports.iterator();
-        while (exportIt.next()) |kv| {
+    var symbol_count_map = std.StringHashMap(u32).init(allocator);
+    defer symbol_count_map.deinit();
+    for (sdk_files.items) |sdk_file| {
+        var export_it = sdk_file.type_exports.iterator();
+        while (export_it.next()) |kv| {
             const symbol = kv.key;
-            if (symbolCountMap.get(symbol)) |count| {
-                try symbolCountMap.put(symbol, count + 1);
+            if (symbol_count_map.get(symbol)) |count| {
+                try symbol_count_map.put(symbol, count + 1);
             } else {
-                try symbolCountMap.put(symbol, 1);
+                try symbol_count_map.put(symbol, 1);
             }
         }
     }
     {
-        var symbolFile = try outDir.createFile("symbols.zig", .{});
-        defer symbolFile.close();
-        const writer = symbolFile.writer();
+        var symbol_file = try out_dir.createFile("symbols.zig", .{});
+        defer symbol_file.close();
+        const writer = symbol_file.writer();
         try writer.writeAll(
             \\ //! This module contains aliases to ALL symbols inside the windows SDK.  It allows
             \\ //! an application to access any and all symbols through a single import.
             \\
         );
-        for (sdkFiles.items) |sdkFile| {
-            try writer.print("\nconst {} = @import(\"./windows/{}.zig\");\n", .{sdkFile.name, sdkFile.name});
-            try writer.print("// {} exports {} constants:\n", .{sdkFile.name, sdkFile.constExports.items.len});
-            for (sdkFile.constExports.items) |constant| {
-                try writer.print("pub const {} = {}.{};\n", .{constant, sdkFile.name, constant});
+        for (sdk_files.items) |sdk_file| {
+            try writer.print("\nconst {} = @import(\"./windows/{}.zig\");\n", .{sdk_file.name, sdk_file.name});
+            try writer.print("// {} exports {} constants:\n", .{sdk_file.name, sdk_file.const_exports.items.len});
+            for (sdk_file.const_exports.items) |constant| {
+                try writer.print("pub const {} = {}.{};\n", .{constant, sdk_file.name, constant});
             }
-            try writer.print("// {} exports {} types:\n", .{sdkFile.name, sdkFile.typeExports.count()});
-            var exportIt = sdkFile.typeExports.iterator();
-            while (exportIt.next()) |kv| {
+            try writer.print("// {} exports {} types:\n", .{sdk_file.name, sdk_file.type_exports.count()});
+            var export_it = sdk_file.type_exports.iterator();
+            while (export_it.next()) |kv| {
                 const symbol = kv.key;
-                const count = symbolCountMap.get(symbol) orelse @panic("codebug");
+                const count = symbol_count_map.get(symbol) orelse @panic("codebug");
                 if (count != 1) {
-                    try writer.print("// symbol '{}.{}' has {} conflicts\n", .{sdkFile.name, symbol, count});
+                    try writer.print("// symbol '{}.{}' has {} conflicts\n", .{sdk_file.name, symbol, count});
                 } else {
-                    try writer.print("pub const {} = {}.{};\n", .{symbol, sdkFile.name, symbol});
+                    try writer.print("pub const {} = {}.{};\n", .{symbol, sdk_file.name, symbol});
                 }
             }
-            try writer.print("// {} exports {} functions:\n", .{sdkFile.name, sdkFile.funcExports.items.len});
-            for (sdkFile.funcExports.items) |func| {
-                try writer.print("pub const {} = {}.{};\n", .{func, sdkFile.name, func});
+            try writer.print("// {} exports {} functions:\n", .{sdk_file.name, sdk_file.func_exports.items.len});
+            for (sdk_file.func_exports.items) |func| {
+                try writer.print("pub const {} = {}.{};\n", .{func, sdk_file.name, func});
             }
         }
     }
     return 0;
 }
 
-fn generateFile(outDir: std.fs.Dir, tree: json.ValueTree, sdkFile: *SdkFile) !void {
-    var outFile = try outDir.createFile(sdkFile.zigFilename, .{});
-    defer outFile.close();
-    const outWriter = outFile.writer();
+fn generateFile(out_dir: std.fs.Dir, tree: json.ValueTree, sdk_file: *SdkFile) !void {
+    var out_file = try out_dir.createFile(sdk_file.zig_filename, .{});
+    defer out_file.close();
+    const out_writer = out_file.writer();
 
     // Temporary filter code
-    const optional_filter = getFilter(sdkFile.name);
+    const optional_filter = getFilter(sdk_file.name);
 
-    const entryArray = tree.root.Array;
-    try outWriter.print("// {}: {} top level declarations\n", .{sdkFile.name, entryArray.items.len});
+    const entry_array = tree.root.Array;
+    try out_writer.print("// {}: {} top level declarations\n", .{sdk_file.name, entry_array.items.len});
     // We can't import the symbols module because it will re-introduce the same symbols we are exporting
-    //try outWriter.print("usingnamespace @import(\"../symbols.zig\");\n", .{});
-    for (entryArray.items) |declNode| {
-        try generateTopLevelDecl(sdkFile, outWriter, declNode.Object, optional_filter);
+    //try out_writer.print("usingnamespace @import(\"../symbols.zig\");\n", .{});
+    for (entry_array.items) |decl_node| {
+        try generateTopLevelDecl(sdk_file, out_writer, decl_node.Object, optional_filter);
     }
 
     {
-        var typeRefIt = sdkFile.typeRefs.iterator();
-        while (typeRefIt.next()) |kv| {
-            std.debug.assert(!kv.value.metadata.builtin); // code verifies no builtin types get added to typeRefs
+        var type_ref_it = sdk_file.type_refs.iterator();
+        while (type_ref_it.next()) |kv| {
+            std.debug.assert(!kv.value.metadata.builtin); // code verifies no builtin types get added to type_refs
             const symbol = kv.key;
-            if (sdkFile.typeExports.contains(symbol))
+            if (sdk_file.type_exports.contains(symbol))
                 continue;
-            try sdkFile.typeImports.append(symbol);
+            try sdk_file.type_imports.append(symbol);
         }
     }
 
-    try outWriter.print(
+    try out_writer.print(
         \\
         \\test "" {{
         \\    const type_import_count = {};
@@ -566,12 +569,12 @@ fn generateFile(outDir: std.fs.Dir, tree: json.ValueTree, sdkFile: *SdkFile) !vo
         \\    @import("std").meta.refAllDecls(@This());
         \\}}
         \\
-    , .{sdkFile.typeImports.items.len, sdkFile.constExports.items.len, sdkFile.typeExports.count(), sdkFile.funcExports.items.len});
+    , .{sdk_file.type_imports.items.len, sdk_file.const_exports.items.len, sdk_file.type_exports.count(), sdk_file.func_exports.items.len});
 }
 
-fn generateTopLevelDecl(sdkFile: *SdkFile, outWriter: std.fs.File.Writer, declObj: json.ObjectMap, optional_filter: ?*const SdkFileFilter) !void {
-    const name = try globalSymbolPool.add((try jsonObjGetRequired(declObj, "name", sdkFile)).String);
-    const optional_data_type = declObj.get("data_type");
+fn generateTopLevelDecl(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, decl_obj: json.ObjectMap, optional_filter: ?*const SdkFileFilter) !void {
+    const name = try global_symbol_pool.add((try jsonObjGetRequired(decl_obj, "name", sdk_file)).String);
+    const optional_data_type = decl_obj.get("data_type");
 
     if (optional_data_type) |data_type_node| {
         const data_type = data_type_node.String;
@@ -580,25 +583,25 @@ fn generateTopLevelDecl(sdkFile: *SdkFile, outWriter: std.fs.File.Writer, declOb
 
             if (optional_filter) |filter| {
                 if (filter.filterFunc(name)) {
-                    try outWriter.print("// FuncDecl has been filtered: {}\n", .{formatJson(declObj)});
+                    try out_writer.print("// FuncDecl has been filtered: {}\n", .{formatJson(decl_obj)});
                     return;
                 }
             }
-            try sdkFile.funcExports.append(name);
-            try jsonObjEnforceKnownFieldsOnly(declObj, &[_][]const u8 {"data_type", "name", "arguments", "api_locations", "type"}, sdkFile);
+            try sdk_file.func_exports.append(name);
+            try jsonObjEnforceKnownFieldsOnly(decl_obj, &[_][]const u8 {"data_type", "name", "arguments", "api_locations", "type"}, sdk_file);
 
-            const arguments = (try jsonObjGetRequired(declObj, "arguments", sdkFile)).Array;
-            const optional_api_locations = declObj.get("api_locations");
+            const arguments = (try jsonObjGetRequired(decl_obj, "arguments", sdk_file)).Array;
+            const optional_api_locations = decl_obj.get("api_locations");
 
             // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             // The return_type always seems to be an object with the function name and return type
             // not sure why the name is duplicated...https://github.com/ohjeongwook/windows_sdk_data/issues/5
             const return_type_c = init: {
-                const type_node = try jsonObjGetRequired(declObj, "type", sdkFile);
+                const type_node = try jsonObjGetRequired(decl_obj, "type", sdk_file);
                 const type_obj = type_node.Object;
-                try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"name", "type"}, sdkFile);
-                const type_sub_name = (try jsonObjGetRequired(type_obj, "name", sdkFile)).String;
-                const type_sub_type = try jsonObjGetRequired(type_obj, "type", sdkFile);
+                try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"name", "type"}, sdk_file);
+                const type_sub_name = (try jsonObjGetRequired(type_obj, "name", sdk_file)).String;
+                const type_sub_type = try jsonObjGetRequired(type_obj, "type", sdk_file);
                 if (!std.mem.eql(u8, name, type_sub_name)) {
                     std.debug.warn("Error: FuncDecl name '{}' != type.name '{}'\n", .{name, type_sub_name});
                     return error.AlreadyReported;
@@ -606,15 +609,15 @@ fn generateTopLevelDecl(sdkFile: *SdkFile, outWriter: std.fs.File.Writer, declOb
                 break :init type_sub_type.String;
             };
             const return_type = try getTypeWithTempString(return_type_c);
-            try sdkFile.noteTypeRef(return_type);
+            try sdk_file.addTypeRef(return_type);
 
             if (optional_api_locations) |api_locations_node| {
                 const api_locations = api_locations_node.Array;
-                try outWriter.print("// Function '{}' has the following {} api_locations:\n", .{name, api_locations.items.len});
+                try out_writer.print("// Function '{}' has the following {} api_locations:\n", .{name, api_locations.items.len});
                 var first_dll : ?[]const u8 = null;
                 for (api_locations.items) |api_location_node| {
                     const api_location = api_location_node.String;
-                    try outWriter.print("// - {}\n", .{api_location});
+                    try out_writer.print("// - {}\n", .{api_location});
 
                     // TODO: probably use endsWithIgnoreCase instead of checking each case
                     if (std.mem.endsWith(u8, api_location, ".dll") or std.mem.endsWith(u8, api_location, ".Dll")) {
@@ -629,29 +632,29 @@ fn generateTopLevelDecl(sdkFile: *SdkFile, outWriter: std.fs.File.Writer, declOb
                     } else if (std.mem.endsWith(u8, api_location, ".drv")) {
                     } else {
                         std.debug.warn("{}: Error: in function '{}', api_location '{}' does not have one of these extensions: dll, lib, sys, h, cpl, exe, drv\n", .{
-                            sdkFile.jsonFilename, name, api_location});
+                            sdk_file.json_filename, name, api_location});
                         return error.AlreadyReported;
                     }
                 }
                 if (first_dll == null) {
-                    try outWriter.print("// function '{}' is not in a dll, so omitting its declaration\n", .{name});
+                    try out_writer.print("// function '{}' is not in a dll, so omitting its declaration\n", .{name});
                 } else {
                     const extern_string = first_dll.?[0 .. first_dll.?.len - ".dll".len];
-                    try outWriter.print("pub extern \"{}\" fn {}() {};\n", .{extern_string, name, return_type.zigTypeFromPool});
+                    try out_writer.print("pub extern \"{}\" fn {}() {};\n", .{extern_string, name, return_type.zig_type_from_pool});
                 }
             } else {
-                try outWriter.print("// FuncDecl with no api_locations (is this a compiler intrinsic or something?): {}\n", .{formatJson(declObj)});
+                try out_writer.print("// FuncDecl with no api_locations (is this a compiler intrinsic or something?): {}\n", .{formatJson(decl_obj)});
             }
         } else {
-            try outWriter.print("// data_type '{}': {}\n", .{data_type, formatJson(declObj)});
+            try out_writer.print("// data_type '{}': {}\n", .{data_type, formatJson(decl_obj)});
         }
     } else {
-        try jsonObjEnforceKnownFieldsOnly(declObj, &[_][]const u8 {"name", "type"}, sdkFile);
-        const type_value = try jsonObjGetRequired(declObj, "type", sdkFile);
+        try jsonObjEnforceKnownFieldsOnly(decl_obj, &[_][]const u8 {"name", "type"}, sdk_file);
+        const type_value = try jsonObjGetRequired(decl_obj, "type", sdk_file);
 
         if (optional_filter) |filter| {
             if (filter.filterType(name)) {
-                try outWriter.print("// type has been filtered: {}\n", .{name});
+                try out_writer.print("// type has been filtered: {}\n", .{name});
                 return;
             }
         }
@@ -659,107 +662,107 @@ fn generateTopLevelDecl(sdkFile: *SdkFile, outWriter: std.fs.File.Writer, declOb
         const type_entry = try getTypeWithTempString(name);
         if (type_entry.metadata.builtin)
             return;
-        if (sdkFile.typeExports.get(name)) |type_entry_conflict| {
+        if (sdk_file.type_exports.get(name)) |type_entry_conflict| {
             // TODO: open an issue for these (there's over 600 redefinitions!)
-            try outWriter.print("// REDEFINITION: {} = {}\n", .{name, formatJson(type_value)});
+            try out_writer.print("// REDEFINITION: {} = {}\n", .{name, formatJson(type_value)});
             return;
         }
-        try sdkFile.typeExports.put(name, type_entry);
+        try sdk_file.type_exports.put(name, type_entry);
         switch (type_value) {
             .String => |s| {
                 const def_type = try getTypeWithTempString(s);
-                try sdkFile.noteTypeRef(def_type);
-                try outWriter.print("pub const {} = {};\n", .{name, def_type.zigTypeFromPool});
+                try sdk_file.addTypeRef(def_type);
+                try out_writer.print("pub const {} = {};\n", .{name, def_type.zig_type_from_pool});
             },
-            .Object => |type_obj| try generateType(sdkFile, outWriter, name, type_obj),
+            .Object => |type_obj| try generateType(sdk_file, out_writer, name, type_obj),
             else => @panic("got a JSON \"type\" that is neither a String nor an Object"),
         }
     }
 }
 
-fn generateType(sdkFile: *SdkFile, outWriter: std.fs.File.Writer, name: []const u8, obj: json.ObjectMap) !void {
-    //const type_obj_name = (try jsonObjGetRequired(type_obj, "name", sdkFile)).String;
+fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, name: []const u8, obj: json.ObjectMap) !void {
+    //const type_obj_name = (try jsonObjGetRequired(type_obj, "name", sdk_file)).String;
 
-    //const type_obj_data_type = (try jsonObjGetRequired(declObj, "data_type", sdkFile)).String;
+    //const type_obj_data_type = (try jsonObjGetRequired(decl_obj, "data_type", sdk_file)).String;
     // TODO: get data_type and generate Struct definitions next?
     if (obj.get("data_type")) |data_type_node| {
         const data_type = data_type_node.String;
         if (std.mem.eql(u8, data_type, "Enum")) {
-            try jsonObjEnforceKnownFieldsOnly(obj, &[_][]const u8 {"data_type", "enumerators"}, sdkFile);
-            const enumerators = (try jsonObjGetRequired(obj, "enumerators", sdkFile)).Array;
-            try outWriter.print("pub usingnamespace {};\n", .{name});
-            try outWriter.print("pub const {} = extern enum {{\n", .{name});
+            try jsonObjEnforceKnownFieldsOnly(obj, &[_][]const u8 {"data_type", "enumerators"}, sdk_file);
+            const enumerators = (try jsonObjGetRequired(obj, "enumerators", sdk_file)).Array;
+            try out_writer.print("pub usingnamespace {};\n", .{name});
+            try out_writer.print("pub const {} = extern enum {{\n", .{name});
             if (enumerators.items.len == 0) {
-                try outWriter.print("    NOVALUES, // this enum has no values?\n", .{});
+                try out_writer.print("    NOVALUES, // this enum has no values?\n", .{});
             } else for (enumerators.items) |enumerator_node| {
                 const enumerator = enumerator_node.Object;
-                try jsonObjEnforceKnownFieldsOnly(enumerator, &[_][]const u8 {"name", "value"}, sdkFile);
-                const enum_value_name = try globalSymbolPool.add((try jsonObjGetRequired(enumerator, "name", sdkFile)).String);
-                try sdkFile.constExports.append(enum_value_name);
-                const enum_value_obj = (try jsonObjGetRequired(enumerator, "value", sdkFile)).Object;
+                try jsonObjEnforceKnownFieldsOnly(enumerator, &[_][]const u8 {"name", "value"}, sdk_file);
+                const enum_value_name = try global_symbol_pool.add((try jsonObjGetRequired(enumerator, "name", sdk_file)).String);
+                try sdk_file.const_exports.append(enum_value_name);
+                const enum_value_obj = (try jsonObjGetRequired(enumerator, "value", sdk_file)).Object;
                 if (enum_value_obj.get("value")) |enum_value_value_node| {
-                    try jsonObjEnforceKnownFieldsOnly(enum_value_obj, &[_][]const u8 {"value", "type"}, sdkFile);
-                    const enum_value_type = (try jsonObjGetRequired(enum_value_obj, "type", sdkFile)).String;
+                    try jsonObjEnforceKnownFieldsOnly(enum_value_obj, &[_][]const u8 {"value", "type"}, sdk_file);
+                    const enum_value_type = (try jsonObjGetRequired(enum_value_obj, "type", sdk_file)).String;
                     const value_str = enum_value_value_node.String;
                     std.debug.assert(std.mem.eql(u8, enum_value_type, "int")); // code assumes all enum values are of type 'int'
-                    try outWriter.print("    {} = {}, // {}\n", .{enum_value_name,
+                    try out_writer.print("    {} = {}, // {}\n", .{enum_value_name,
                         fixIntegerLiteral(value_str, true), value_str});
                 } else {
-                    try outWriter.print("    {},\n", .{enum_value_name});
+                    try out_writer.print("    {},\n", .{enum_value_name});
                 }
             }
-            try outWriter.print("}};\n", .{});
+            try out_writer.print("}};\n", .{});
         } else if (std.mem.eql(u8, data_type, "Struct")) {
-            try jsonObjEnforceKnownFieldsOnly(obj, &[_][]const u8 {"data_type", "name", "elements"}, sdkFile);
+            try jsonObjEnforceKnownFieldsOnly(obj, &[_][]const u8 {"data_type", "name", "elements"}, sdk_file);
             // I think we can ignore the struct name...
-            const elements = (try jsonObjGetRequired(obj, "elements", sdkFile)).Array;
-            try outWriter.print("pub const {} = extern struct {{\n", .{name});
+            const elements = (try jsonObjGetRequired(obj, "elements", sdk_file)).Array;
+            try out_writer.print("pub const {} = extern struct {{\n", .{name});
             for (elements.items) |element_node| {
-                try generateField(sdkFile, outWriter, element_node);
+                try generateField(sdk_file, out_writer, element_node);
             }
-            try outWriter.print("}};\n", .{});
+            try out_writer.print("}};\n", .{});
         } else {
-            try outWriter.print("pub const {} = c_int; // ObjectType : data_type={}: {}\n", .{name, data_type, formatJson(obj)});
+            try out_writer.print("pub const {} = c_int; // ObjectType : data_type={}: {}\n", .{name, data_type, formatJson(obj)});
         }
     } else {
-        try outWriter.print("pub const {} = c_int; // ObjectType: {}\n", .{name, formatJson(obj)});
+        try out_writer.print("pub const {} = c_int; // ObjectType: {}\n", .{name, formatJson(obj)});
     }
 }
 
-fn generateField(sdkFile: *SdkFile, outWriter: std.fs.File.Writer, field_node: json.Value) !void {
+fn generateField(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, field_node: json.Value) !void {
     switch (field_node) {
         // This seems to happen if the struct has a base type
         .String => |base_type_str| {
             const base_type = try getTypeWithTempString(base_type_str);
-            try sdkFile.noteTypeRef(base_type);
+            try sdk_file.addTypeRef(base_type);
             // TODO: not sure if this is the right way to represent the base type
-            try outWriter.print("    __zig_basetype__: {},\n", .{base_type.zigTypeFromPool});
+            try out_writer.print("    __zig_basetype__: {},\n", .{base_type.zig_type_from_pool});
         },
         .Object => |field_obj| {
             if (field_obj.get("data_type")) |data_type_node| {
                 // TODO: can we run a version of this, either here or in one of the if/else sub code paths?
-                //try jsonObjEnforceKnownFieldsOnly(field_obj, &[_][]const u8 {"name", "data_type", "type", "dim", "elements"}, sdkFile);
+                //try jsonObjEnforceKnownFieldsOnly(field_obj, &[_][]const u8 {"name", "data_type", "type", "dim", "elements"}, sdk_file);
                 if (field_obj.get("name")) |field_obj_name_node| {
                     const field_obj_name = field_obj_name_node.String;
-                    try outWriter.print("    {}: u32, // NamedStructField: {}\n", .{formatCToZigSymbol(field_obj_name), formatJson(field_node)});
+                    try out_writer.print("    {}: u32, // NamedStructField: {}\n", .{formatCToZigSymbol(field_obj_name), formatJson(field_node)});
                 } else {
-                    try outWriter.print("    // NamelessStructFieldObj: {}\n", .{formatJson(field_node)});
+                    try out_writer.print("    // NamelessStructFieldObj: {}\n", .{formatJson(field_node)});
                 }
             } else {
-                try jsonObjEnforceKnownFieldsOnly(field_obj, &[_][]const u8 {"name", "type"}, sdkFile);
+                try jsonObjEnforceKnownFieldsOnly(field_obj, &[_][]const u8 {"name", "type"}, sdk_file);
                 // NOTE: this will fail on windef IMAGE_ARCHITECTURE_HEADER because it contains nameless
                 //       fields whose only purpose is to pad bitfields...not sure how this should be supported
                 //       yet since the json does not contain any bitfield information
-                const name = (try jsonObjGetRequired(field_obj, "name", sdkFile)).String;
-                const type_node = try jsonObjGetRequired(field_obj, "type", sdkFile);
+                const name = (try jsonObjGetRequired(field_obj, "name", sdk_file)).String;
+                const type_node = try jsonObjGetRequired(field_obj, "type", sdk_file);
                 switch (type_node) {
                     .String => |type_str| {
                         const field_type = try getTypeWithTempString(type_str);
-                        try sdkFile.noteTypeRef(field_type);
-                        try outWriter.print("    {}: {},\n", .{formatCToZigSymbol(name), field_type.zigTypeFromPool});
+                        try sdk_file.addTypeRef(field_type);
+                        try out_writer.print("    {}: {},\n", .{formatCToZigSymbol(name), field_type.zig_type_from_pool});
                     },
                     .Object => |type_obj| {
-                        try outWriter.print("    {}: u32, // actual field type={}\n", .{formatCToZigSymbol(name), formatJson(type_node)});
+                        try out_writer.print("    {}: u32, // actual field type={}\n", .{formatCToZigSymbol(name), formatJson(type_node)});
                     },
                     else => @panic("got a JSON \"type\" that is neither a String nor an Object"),
                 }
@@ -782,7 +785,7 @@ const CToZigSymbolFormatter = struct {
         options: std.fmt.FormatOptions,
         writer: anytype,
     ) !void {
-        if (globalZigKeywordMap.get(self.symbol) orelse false) {
+        if (global_zig_keyword_map.get(self.symbol) orelse false) {
             try writer.print("@\"{}\"", .{self.symbol});
         } else {
             try writer.writeAll(self.symbol);
@@ -870,22 +873,22 @@ pub fn formatSliceT(comptime T: type, slice: []const T) SliceFormatter(T) {
 //    return .{ .slice = slice };
 //}
 
-fn jsonObjEnforceKnownFieldsOnly(map: json.ObjectMap, knownFields: []const []const u8, sdkFile: *SdkFile) !void {
+fn jsonObjEnforceKnownFieldsOnly(map: json.ObjectMap, known_fields: []const []const u8, sdk_file: *SdkFile) !void {
     var it = map.iterator();
     fieldLoop: while (it.next()) |kv| {
-        for (knownFields) |knownField| {
-            if (std.mem.eql(u8, knownField, kv.key))
+        for (known_fields) |known_field| {
+            if (std.mem.eql(u8, known_field, kv.key))
                 continue :fieldLoop;
         }
-        std.debug.warn("{}: Error: JSON object has unknown field '{}', expected one of: {}\n", .{sdkFile.jsonFilename, kv.key, formatSliceT([]const u8, knownFields)});
+        std.debug.warn("{}: Error: JSON object has unknown field '{}', expected one of: {}\n", .{sdk_file.json_filename, kv.key, formatSliceT([]const u8, known_fields)});
         return error.AlreadyReported;
     }
 }
 
-fn jsonObjGetRequired(map: json.ObjectMap, field: []const u8, sdkFile: *SdkFile) !json.Value {
+fn jsonObjGetRequired(map: json.ObjectMap, field: []const u8, sdk_file: *SdkFile) !json.Value {
     return map.get(field) orelse {
         // TODO: print file location?
-        std.debug.warn("{}: json object is missing '{}' field: {}\n", .{sdkFile.jsonFilename, field, formatJson(map)});
+        std.debug.warn("{}: json object is missing '{}' field: {}\n", .{sdk_file.json_filename, field, formatJson(map)});
         return error.AlreadyReported;
     };
 }
