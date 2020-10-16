@@ -429,6 +429,13 @@ fn addCToZigType(c: []const u8, zig: []const u8) !void {
 }
 
 
+const Times = struct {
+    parse_time_millis : i64 = 0,
+    read_time_millis : i64 = 0,
+    generate_time_millis : i64 = 0,
+};
+var global_times = Times {};
+
 pub fn main() !u8 {
     return main2() catch |e| switch (e) {
         error.AlreadyReported => return 0xff,
@@ -437,15 +444,12 @@ pub fn main() !u8 {
 }
 fn main2() !u8 {
     const main_start_millis = std.time.milliTimestamp();
-    var parse_time_millis : i64 = 0;
-    var read_time_millis : i64 = 0;
-    var generate_time_millis : i64 = 0;
     defer {
         var total_millis = std.time.milliTimestamp() - main_start_millis;
         if (total_millis == 0) total_millis = 1; // prevent divide by 0
-        std.debug.warn("Parse Time: {} millis ({}%)\n", .{parse_time_millis, @divTrunc(100 * parse_time_millis, total_millis)});
-        std.debug.warn("Read Time : {} millis ({}%)\n", .{read_time_millis , @divTrunc(100 * read_time_millis, total_millis)});
-        std.debug.warn("Gen Time  : {} millis ({}%)\n", .{generate_time_millis , @divTrunc(100 * generate_time_millis, total_millis)});
+        std.debug.warn("Parse Time: {} millis ({}%)\n", .{global_times.parse_time_millis, @divTrunc(100 * global_times.parse_time_millis, total_millis)});
+        std.debug.warn("Read Time : {} millis ({}%)\n", .{global_times.read_time_millis , @divTrunc(100 * global_times.read_time_millis, total_millis)});
+        std.debug.warn("Gen Time  : {} millis ({}%)\n", .{global_times.generate_time_millis , @divTrunc(100 * global_times.generate_time_millis, total_millis)});
         std.debug.warn("Total Time: {} millis\n", .{total_millis});
     }
 
@@ -531,6 +535,11 @@ fn main2() !u8 {
         var dir_it = sdk_data_dir.iterate();
         var entry_index : usize = 0;
         while (try dir_it.next()) |entry| : (entry_index += 1) {
+            if (std.mem.eql(u8, entry.name, "windows.json")) {
+                // ignore this one, it's just an object with 3 empty arrays, not an array like all the others
+                continue;
+            }
+
             // temporarily skip most files to speed up initial development
             //const optional_filter : ?[]const u8 = "w";
             const optional_filter : ?[]const u8 = null;
@@ -546,54 +555,17 @@ fn main2() !u8 {
                 std.debug.warn("temporarily skipping '{}'\n", .{entry.name});
                 continue;
             }
-
             if (!std.mem.endsWith(u8, entry.name, ".json")) {
                 std.debug.warn("Error: expected all files to end in '.json' but got '{}'\n", .{entry.name});
                 return 1; // fail
             }
-            if (std.mem.eql(u8, entry.name, "windows.json")) {
-                // ignore this one, it's just an object with 3 empty arrays, not an array like all the others
-                continue;
-            }
-
             std.debug.warn("{}: loading '{}'\n", .{entry_index, entry.name});
             //
             // TODO: would things run faster if I just memory mapped the file?
             //
             var file = try sdk_data_dir.openFile(entry.name, .{});
             defer file.close();
-            const read_start_millis = std.time.milliTimestamp();
-            const content = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
-            read_time_millis += std.time.milliTimestamp() - read_start_millis;
-            defer allocator.free(content);
-            std.debug.warn("  read {} bytes\n", .{content.len});
-
-            // Parsing the JSON is VERY VERY SLOW!!!!!!
-            var parser = json.Parser.init(allocator, false); // false is copy_strings
-            defer parser.deinit();
-            const parse_start_millis = std.time.milliTimestamp();
-            var jsonTree = try parser.parse(content);
-            parse_time_millis += std.time.milliTimestamp() - parse_start_millis;
-
-            defer jsonTree.deinit();
-
-            const sdk_file = try allocator.create(SdkFile);
-            const json_filename = try std.mem.dupe(allocator, u8, entry.name);
-            const name = json_filename[0..json_filename.len - ".json".len];
-            sdk_file.* = .{
-                .json_filename = json_filename,
-                .name = name,
-                .zig_filename = try std.mem.concat(allocator, u8, &[_][]const u8 {name, ".zig"}),
-                .type_refs = std.StringHashMap(TypeEntry).init(allocator),
-                .type_exports = std.StringHashMap(TypeEntry).init(allocator),
-                .func_exports = std.ArrayList([]const u8).init(allocator),
-                .const_exports = std.ArrayList([]const u8).init(allocator),
-                .type_imports = std.ArrayList([]const u8).init(allocator),
-            };
-            try sdk_files.append(sdk_file);
-            const generate_start_millis = std.time.milliTimestamp();
-            try generateFile(out_windows_dir, jsonTree, sdk_file);
-            generate_time_millis += std.time.milliTimestamp() - generate_start_millis;
+            try readAndGenerateFile(out_windows_dir, &sdk_files, entry.name, file);
         }
 
         // populate the shared_type_export_map
@@ -717,6 +689,42 @@ fn main2() !u8 {
     }
 
     return 0;
+}
+
+fn readAndGenerateFile(out_dir: std.fs.Dir, sdk_files: *std.ArrayList(*SdkFile), json_basename: []const u8, file: std.fs.File) !void {
+
+    const read_start_millis = std.time.milliTimestamp();
+    const content = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
+    global_times.read_time_millis += std.time.milliTimestamp() - read_start_millis;
+    defer allocator.free(content);
+    std.debug.warn("  read {} bytes\n", .{content.len});
+
+    // Parsing the JSON is VERY VERY SLOW!!!!!!
+    var parser = json.Parser.init(allocator, false); // false is copy_strings
+    defer parser.deinit();
+    const parse_start_millis = std.time.milliTimestamp();
+    var jsonTree = try parser.parse(content);
+    global_times.parse_time_millis += std.time.milliTimestamp() - parse_start_millis;
+
+    defer jsonTree.deinit();
+
+    const sdk_file = try allocator.create(SdkFile);
+    const json_filename = try std.mem.dupe(allocator, u8, json_basename);
+    const name = json_filename[0..json_filename.len - ".json".len];
+    sdk_file.* = .{
+        .json_filename = json_filename,
+        .name = name,
+        .zig_filename = try std.mem.concat(allocator, u8, &[_][]const u8 {name, ".zig"}),
+        .type_refs = std.StringHashMap(TypeEntry).init(allocator),
+        .type_exports = std.StringHashMap(TypeEntry).init(allocator),
+        .func_exports = std.ArrayList([]const u8).init(allocator),
+        .const_exports = std.ArrayList([]const u8).init(allocator),
+        .type_imports = std.ArrayList([]const u8).init(allocator),
+    };
+    try sdk_files.append(sdk_file);
+    const generate_start_millis = std.time.milliTimestamp();
+    try generateFile(out_dir, jsonTree, sdk_file);
+    global_times.generate_time_millis += std.time.milliTimestamp() - generate_start_millis;
 }
 
 fn generateFile(out_dir: std.fs.Dir, tree: json.ValueTree, sdk_file: *SdkFile) !void {
