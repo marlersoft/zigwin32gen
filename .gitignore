@@ -1,1 +1,3 @@
 zig-cache/
+out/
+/windows_sdk_data/
