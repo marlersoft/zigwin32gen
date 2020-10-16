@@ -1,0 +1,7 @@
+[
+    {
+        "name": "LPOVERLAPPED",
+        "data_type": "Ptr",
+        "type": "OVERLAPPED"
+    }
+]

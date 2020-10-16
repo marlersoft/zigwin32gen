@@ -421,6 +421,8 @@ const filter_types = [_][2][]const u8 {
     .{ "winbase", "MENUTEMPLATEA" },
     .{ "winbase", "MENUTEMPLATEW" },
 
+    // these are pointer types that are not actually defined as pointer types!
+    .{ "winbase", "LPOVERLAPPED" }, // This one is included in fixed.json
 };
 
 const SdkFileFilter = struct {
@@ -560,10 +562,10 @@ fn main2() !u8 {
         defer out_windows_dir.close();
 
         try generateNonEnumConstantsModule(out_windows_dir, &sdk_files);
-        {
-            var file = try cwd.openFile("missing.json", .{});
+        for ([_][]const u8 { "missing.json", "fixed.json" }) |extra_json_file| {
+            var file = try cwd.openFile(extra_json_file, .{});
             defer file.close();
-            try readAndGenerateFile(out_windows_dir, &sdk_files, "missing.json", file);
+            try readAndGenerateFile(out_windows_dir, &sdk_files, extra_json_file, file);
         }
 
         var dir_it = sdk_data_dir.iterate();

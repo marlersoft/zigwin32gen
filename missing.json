@@ -1,0 +1,19 @@
+[
+    {
+        "data_type": "FuncDecl",
+        "type": {"name":"GetStdHandle","type":"HANDLE"},
+        "name": "GetStdHandle",
+        "arguments": [
+            {
+                "name": "nStdHandle",
+                "type": "DWORD",
+                "sal": [
+                    "in"
+                ]
+            }
+        ],
+        "api_locations": [
+            "Kernel32.dll"
+        ]
+    }
+]

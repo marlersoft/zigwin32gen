@@ -16,3 +16,8 @@ zig build
 ```
 
 This will generate the bindings in the "out" directory.  The file `out/windows.zig` is the main package file.  It will contain pub imports to all sub modules in the "windows" directory.  It will also contain a special pub symbol `everything` that provides direct access all symbols in the windows SDK through a single namespace.
+
+# Extra Json Files
+
+* `missing.json`: contains stuff that is missing from the windows_sdk_data repo
+* `fixed.json`: contains stuff that is filtered from windows_sdk_data repo and is fixed
