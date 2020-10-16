@@ -1,13 +1,13 @@
 usingnamespace @import("windows").everything;
 
-pub export fn WinMainCRTStartup() callconv(.Stdcall) u8 {
+pub export fn WinMainCRTStartup() callconv(.Stdcall) c_int {
     // TODO: call getstdhandle and writefile
     const hStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
     if (hStdOut == INVALID_HANDLE_VALUE) {
         //std.debug.warn("Error: GetStdHandle failed with {}\n", .{GetLastError()});
-        return 0xff; // fail
+        return -1; // fail
     }
-    writeAll(hStdOut, "Hello, World!") catch return 0xff; // fail
+    writeAll(hStdOut, "Hello, World!") catch return -1; // fail
     return 0; // success
 }
 
