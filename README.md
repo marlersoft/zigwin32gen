@@ -41,6 +41,16 @@ This will generate the bindings in the "out" directory.  The file `out/windows.z
 * `missing.json`: contains stuff that is missing from the windows_sdk_data repo
 * `fixed.json`: contains stuff that is filtered from windows_sdk_data repo and is fixed
 
+## Next Idea
+
+Try generating the Windows API data by including the windows headers inside a zig program and using comptime reflection.  Ive included `winreflector.zig` to experiment with.
+
+```batch
+zig run winreflector.zig -lc
+```
+
+There are currently bugs in zig translate C that prevent this from getting off the ground.
+
 ## TODO
 
 * use in/out parameter information to add const to pointer types
