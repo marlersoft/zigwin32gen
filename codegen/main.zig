@@ -76,6 +76,121 @@ const filter_funcs = [_][2][]const u8 {
     .{ "ole", "OleLoadFromStream" },
     .{ "ole", "OleSaveToStream" },
     .{ "ole", "OleDraw" },
+    // function argument is missing "name" field, it is located within the "type" field instead? (open issue for this)
+    // This seems to be the case with like 30% of all functions, so I implemented a workaround in generateFuncArg for now
+    //.{ "aclapi", "SetEntriesInAclA" },
+    //.{ "aclapi", "SetEntriesInAclW" },
+    //.{ "aclapi", "GetExplicitEntriesFromAclA" },
+    //.{ "aclapi", "GetExplicitEntriesFromAclW" },
+
+    // these functions have some unexpected JSON in one of their argument type objects (TODO: open an issue for this)
+    .{ "combaseapi", "RoGetAgileReference" }, // 'options' argument just says it's an enum, but it should just be a reference to 'AgileReferenceOptions'
+    .{ "dwmapi", "DwmTransitionOwnedWindow" },
+    .{ "dwmapi", "DwmRenderGesture" },
+    .{ "dwmapi", "DwmShowContact" },
+    .{ "ntdsapi", "DsReplicaSyncAllA" },
+    .{ "ntdsapi", "DsReplicaSyncAllW" },
+    .{ "ras", "RasGetProjectionInfoA" },
+    .{ "ras", "RasGetProjectionInfoW" },
+    .{ "uxtheme", "GetThemePartSize" },
+    .{ "uxtheme", "SetWindowThemeAttribute" },
+
+    // these functions have one or more arguments with no name (TODO: open issue for this)
+    // There's too many examples of this (more than listed below), so I've commented them out and implemented a workaround for now
+    //.{ "atlthunk", "AtlThunk_DataToCode" },
+    //.{ "commctrl", "FlatSB_EnableScrollBar" },
+    //.{ "commctrl", "FlatSB_ShowScrollBar" },
+    //.{ "commctrl", "FlatSB_GetScrollRange" },
+    //.{ "commctrl", "FlatSB_GetScrollInfo" },
+    //.{ "commctrl", "FlatSB_GetScrollPos" },
+    //.{ "commctrl", "FlatSB_GetScrollProp" },
+    //.{ "commctrl", "FlatSB_GetScrollPropPtr" },
+    //.{ "commctrl", "FlatSB_SetScrollPos" },
+    //.{ "commctrl", "FlatSB_SetScrollInfo" },
+    //.{ "commctrl", "FlatSB_SetScrollRange" },
+    //.{ "commctrl", "FlatSB_SetScrollProp" },
+    //.{ "commctrl", "InitializeFlatSB" },
+    //.{ "commctrl", "UninitializeFlatSB" },
+    //.{ "commdlg", "GetOpenFileNameA" },
+    //.{ "commdlg", "GetOpenFileNameW" },
+    //.{ "commdlg", "GetSaveFileNameA" },
+    //.{ "commdlg", "GetSaveFileNameW" },
+    //.{ "commdlg", "GetFileTitleA" },
+    //.{ "commdlg", "GetFileTitleW" },
+    //.{ "commdlg", "FindTextA" },
+    //.{ "commdlg", "FindTextW" },
+    //.{ "commdlg", "ReplaceTextA" },
+    //.{ "commdlg", "ReplaceTextW" },
+    //.{ "d3d9", "Direct3DCreate9Ex" },
+    //.{ "icwcfg", "CheckConnectionWizard" },
+    //.{ "ime", "SendIMEMessageExA" },
+    //.{ "ime", "SendIMEMessageExW" },
+    //.{ "imm", "ImmGetDefaultIMEWnd" },
+    //.{ "imm", "ImmGetDescriptionA" },
+    //.{ "imm", "ImmGetDescriptionW" },
+    //.{ "imm", "ImmGetIMEFileNameA" },
+    //.{ "imm", "ImmGetIMEFileNameW" },
+    //.{ "imm", "ImmGetProperty" },
+    //.{ "imm", "ImmIsIME" },
+    //.{ "imm", "ImmSimulateHotKey" },
+    //.{ "imm", "ImmDestroyContext" },
+    //.{ "imm", "ImmGetContext" },
+    //.{ "imm", "ImmReleaseContext" },
+    //.{ "imm", "ImmAssociateContext" },
+    //.{ "imm", "ImmAssociateContextEx" },
+    //.{ "imm", "ImmGetCompositionStringA" },
+    //.{ "imm", "ImmGetCompositionStringW" },
+    //.{ "imm", "ImmSetCompositionStringA" },
+    //.{ "imm", "ImmSetCompositionStringW" },
+    //.{ "imm", "ImmGetCandidateListCountA" },
+    //.{ "imm", "ImmGetCandidateListCountW" },
+    //.{ "imm", "ImmGetCandidateListA" },
+    //.{ "imm", "ImmGetCandidateListW" },
+    //.{ "imm", "ImmGetGuideLineA" },
+    //.{ "imm", "ImmGetGuideLineW" },
+    //.{ "imm", "ImmGetConversionStatus" },
+    //.{ "imm", "ImmSetConversionStatus" },
+    //.{ "imm", "ImmGetOpenStatus" },
+    //.{ "imm", "ImmSetOpenStatus" },
+    //.{ "imm", "ImmGetCompositionFontA" },
+    //.{ "imm", "ImmGetCompositionFontW" },
+    //.{ "imm", "ImmSetCompositionFontA" },
+    //.{ "imm", "ImmSetCompositionFontW" },
+    //.{ "imm", "ImmConfigureIMEA" },
+    //.{ "imm", "ImmConfigureIMEW" },
+    //.{ "imm", "ImmEscapeA" },
+    //.{ "imm", "ImmEscapeW" },
+    //.{ "imm", "ImmGetConversionListA" },
+    //.{ "imm", "ImmGetConversionListW" },
+    //.{ "imm", "ImmNotifyIME" },
+    //.{ "imm", "ImmGetStatusWindowPos" },
+    //.{ "imm", "ImmSetStatusWindowPos" },
+    //.{ "imm", "ImmGetCompositionWindow" },
+    //.{ "imm", "ImmSetCompositionWindow" },
+    //.{ "imm", "ImmGetCandidateWindow" },
+    //.{ "imm", "ImmSetCandidateWindow" },
+
+
+    // these functions have a non-empty argument array, but it's just a single object with "type": "void
+    // TODO: is this an issue or do I need to handle it?
+    //.{ "authz", "AuthzFreeCentralAccessPolicyCache" },
+    //.{ "avrfsdk", "VerifierIsPerUserSettingsEnabled" },
+    //.{ "cfgmgr32", "CM_Get_Version" },
+    //.{ "cfgmgr32", "CM_Request_Eject_PC" },
+    //.{ "combaseapi", "CoUninitialize" },
+    //.{ "combaseapi", "CoGetCurrentProcess" },
+    //.{ "combaseapi", "CoResumeClassObjects" },
+    //.{ "combaseapi", "CoSuspendClassObjects" },
+    //.{ "combaseapi", "CoAddRefServerProcess" },
+    //.{ "combaseapi", "CoReleaseServerProcess" },
+    //.{ "combaseapi", "CoFreeUnusedLibraries" },
+    //.{ "combaseapi", "CoImpersonateClient" },
+    //.{ "combaseapi", "CoRevertToSelf" },
+    //.{ "combaseapi", "CoTestCancel" },
+    //.{ "commctrl", "InitCommonControls" },
+    //.{ "commctrl", "ImageList_EndDrag" },
+    //.{ "commctrl", "GetMUILanguage" },
+
     // "type" field is one nest level too much (see https://github.com/ohjeongwook/windows_sdk_data/issues/6)
     .{ "atlthunk", "AtlThunk_AllocateData" },
     .{ "comsvcs", "SafeRef" },
@@ -274,6 +389,11 @@ const filter_types = [_][2][]const u8 {
     .{ "winbase", "LPSTORAGE" },
     .{ "winbase", "LPOLECLIENTSITE" },
     .{ "winbase", "LPDATAOBJECT" },
+
+    // these types are just defined as void (TODO: open an issue for this)
+    .{ "winbase", "MENUTEMPLATEA" },
+    .{ "winbase", "MENUTEMPLATEW" },
+
 };
 
 const SdkFileFilter = struct {
@@ -409,7 +529,8 @@ fn main2() !u8 {
         defer out_windows_dir.close();
 
         var dir_it = sdk_data_dir.iterate();
-        while (try dir_it.next()) |entry| {
+        var entry_index : usize = 0;
+        while (try dir_it.next()) |entry| : (entry_index += 1) {
             // temporarily skip most files to speed up initial development
             //const optional_filter : ?[]const u8 = "w";
             const optional_filter : ?[]const u8 = null;
@@ -418,6 +539,12 @@ fn main2() !u8 {
                     std.debug.warn("temporarily skipping '{}'\n", .{entry.name});
                     continue;
                 }
+            }
+            // Temporary code to skip the first N modules
+            const SKIP_COUNT = 0;
+            if (entry_index < SKIP_COUNT) {
+                std.debug.warn("temporarily skipping '{}'\n", .{entry.name});
+                continue;
             }
 
             if (!std.mem.endsWith(u8, entry.name, ".json")) {
@@ -429,7 +556,7 @@ fn main2() !u8 {
                 continue;
             }
 
-            std.debug.warn("loading '{}'\n", .{entry.name});
+            std.debug.warn("{}: loading '{}'\n", .{entry_index, entry.name});
             //
             // TODO: would things run faster if I just memory mapped the file?
             //
@@ -683,13 +810,15 @@ fn generateTopLevelDecl(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, opti
                     try out_writer.print("// function '{}' is not in a dll, so omitting its declaration\n", .{name});
                 } else {
                     const extern_string = first_dll.?[0 .. first_dll.?.len - ".dll".len];
-                    try out_writer.print("pub extern \"{}\" fn {}() callconv(.Stdcall) {};\n", .{extern_string, name, return_type.zig_type_from_pool});
+                    try out_writer.print("pub extern \"{}\" fn {}(", .{extern_string, name});
+                    try generateFuncArgs(sdk_file, out_writer, arguments.items);
+                    try out_writer.print(") callconv(.Stdcall) {};\n", .{return_type.zig_type_from_pool});
                 }
             } else {
                 try out_writer.print("// FuncDecl with no api_locations (is this a compiler intrinsic or something?): {}\n", .{formatJson(decl_obj)});
             }
         } else {
-            try out_writer.print("// data_type '{}': {}\n", .{data_type, formatJson(decl_obj)});
+            try out_writer.print("// unhandled data_type '{}': {}\n", .{data_type, formatJson(decl_obj)});
         }
     } else {
         try jsonObjEnforceKnownFieldsOnly(decl_obj, &[_][]const u8 {"name", "type"}, sdk_file);
@@ -734,6 +863,107 @@ fn generateTopLevelType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, opti
     }
 }
 
+fn generateFuncArgs(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, arguments: []json.Value) !void {
+
+    // Handle the "arguments: [ { "type" : "void" }] case
+    // TODO: is this an issue? Should arguments just be an empty array?
+    //       There's over 200 functions with this, but not sure if it is all empty functions.
+    if (arguments.len == 1) {
+        const arg_obj = arguments[0].Object;
+        if (arg_obj.count() == 1) {
+            if (arg_obj.get("type")) |type_node| {
+                switch (type_node) {
+                    .String => |s| if (std.mem.eql(u8, s, "void")) {
+                        return;
+                    },
+                    else => {},
+                }
+            }
+        }
+    }
+
+    var arg_prefix : []const u8 = "\n";
+    for (arguments) |arg_node| {
+        const arg_obj = arg_node.Object;
+        try jsonObjEnforceKnownFieldsOnly(arg_obj, &[_][]const u8 {"sal", "name", "type"}, sdk_file);
+        const type_node = try jsonObjGetRequired(arg_obj, "type", sdk_file);
+        const sal_array = if (arg_obj.get("sal")) |sal_node| sal_node.Array.items else &[0]json.Value { };
+        const name = init: {
+            // handle when we have { "name" : ... }
+            if (arg_obj.get("name")) |name| break :init name.String;
+            // handle when we have { "type" : { "name" : ... } }
+            switch (type_node) {
+                .Object => |type_obj| {
+                    if (type_obj.get("name")) |name| break :init name.String;
+                },
+                else => {},
+            }
+            // TODO: this should be an error, but there are too many examples of it right now to filter
+            //       so I've included this workaround
+            //std.debug.warn("Error: function argument does not have a name: {}\n", .{formatJson(arg_node)});
+            //return error.AlreadyReported;
+            break :init "_";
+        };
+
+        // TODO: make this const once workaround below is removed
+        var arg_type_info : struct { name: []const u8, ptr_level: u2 } = init: {
+            switch (type_node) {
+                .String => |s| break :init .{ .name = s, .ptr_level = 0 },
+                .Object => |type_obj| {
+                    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"data_type", "name", "type"}, sdk_file);
+                    const sub_type_node = try jsonObjGetRequired(type_obj, "type", sdk_file);
+                    if (type_obj.get("name")) |type_name_field| {
+                        std.debug.assert(std.mem.eql(u8, name, type_name_field.String));
+                    }
+                    const ptr_level : u2 = init_ptr_level: {
+                        if (type_obj.get("data_type")) |data_type_node| {
+                            const data_type = data_type_node.String;
+                            if (std.mem.eql(u8, data_type, "Ptr")) break :init_ptr_level 1;
+                            if (std.mem.eql(u8, data_type, "PtrPtr")) break :init_ptr_level 2;
+                            std.debug.warn("Error: unexpected argument type data_type '{}', expected 'Ptr' or 'PtrPtr'\n", .{data_type});
+                            return error.AlreadyReported;
+                        }
+                        break :init_ptr_level 0;
+                    };
+                    switch (sub_type_node) {
+                        .String => |s| break :init .{ .name = s, .ptr_level = ptr_level },
+                        .Object => {
+                            // TODO: handle this (there's like 100 cases of this), use usize a placeholder for now
+                            break :init .{ .name = "usize", .ptr_level = ptr_level };
+                        },
+                        else => @panic("here"),
+                    }
+                },
+                else => {
+                    std.debug.warn("Error: expected function argument type to be a String or Object but got: {}\n", .{formatJson(type_node)});
+                    return error.AlreadyReported;
+                },
+            }
+        };
+
+        const arg_type = try getTypeWithTempString(arg_type_info.name);
+        try sdk_file.addTypeRef(arg_type);
+
+        // Workaround an issue where many argument void types are missing the "Ptr" data_type
+        // TODO: open an issue for this
+        if (arg_type.zig_type_from_pool.ptr == global_void_type_from_pool_ptr) {
+            if (arg_type_info.ptr_level == 0) {
+                std.debug.warn("WARNING: function argument '{}' is void? (making it a pointer)\n", .{name});
+                arg_type_info.ptr_level = 1; // force it to be a pointer
+            }
+        }
+
+        if (arg_type_info.ptr_level == 0) {
+            try out_writer.print("{}    {}: {}, // sal={}\n", .{arg_prefix, formatCToZigSymbol(name), arg_type.zig_type_from_pool, formatJson(sal_array)});
+        } else {
+            const type_prefix : []const u8 = if (arg_type_info.ptr_level == 1) "" else "[*c]";
+            std.debug.assert(arg_type_info.ptr_level <= 2); // code assumes this for now
+            try out_writer.print("{}    {}: {}{}, // sal={}\n", .{arg_prefix, formatCToZigSymbol(name),
+                type_prefix, formatCToZigPtr(arg_type.zig_type_from_pool), formatJson(sal_array)});
+        }
+        arg_prefix = "";
+    }
+}
 
 fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, name: []const u8, obj: json.ObjectMap) !void {
     //std.debug.warn("[DEBUG] generating type '{}'\n", .{name});
@@ -767,12 +997,27 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, name: []cons
         } else if (std.mem.eql(u8, data_type, "Struct")) {
             try jsonObjEnforceKnownFieldsOnly(obj, &[_][]const u8 {"data_type", "name", "elements"}, sdk_file);
             // I think we can ignore the struct name...
-            const elements = (try jsonObjGetRequired(obj, "elements", sdk_file)).Array;
-            try out_writer.print("pub const {} = extern struct {{\n", .{name});
-            for (elements.items) |element_node| {
-                try generateField(sdk_file, out_writer, element_node);
+            const elements = (try jsonObjGetRequired(obj, "elements", sdk_file)).Array.items;
+            if (elements.len == 0) {
+                // zig doesn't allow empty structs for lots of things, so if it's actually empty, we need to
+                // declare it as an opaque type
+                // HOWEVER, it seems that the problem is just that some types are missing their fields and they
+                // need to be passed by value, so for now, opaque type won't work in all cases, so wer're just going to set
+                // these to a non-empty struct as a placeholder (TODO: file an issue for this, identify all the types that missing their fields)
+                //try out_writer.print("pub const {} = opaque {{ }};\n", .{name});
+                try out_writer.print("pub const {} = extern struct {{ _: usize }}; // TODO: this should either be opaque or the original JSON is missing the fields for this struct type\n", .{name});
+            } else {
+                try out_writer.print("pub const {} = extern struct {{\n", .{name});
+                for (elements) |element_node, element_index| {
+                    try generateField(sdk_file, out_writer, element_node, element_index);
+                }
+                // WORKAROUND: don't generate empty structs because zig doesn't like it. We only hit
+                //             this case because we haven't implemented generating all field types yet
+                //if (generated_count == 0) {
+                //    try out_writer.print("    _: usize, // WARNING: including a dummy field to temporarily keep this struct from being empty\n", .{});
+                //}
+                try out_writer.print("}};\n", .{});
             }
-            try out_writer.print("}};\n", .{});
         } else {
             try out_writer.print("pub const {} = c_int; // ObjectType : data_type={}: {}\n", .{name, data_type, formatJson(obj)});
         }
@@ -781,7 +1026,7 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, name: []cons
     }
 }
 
-fn generateField(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, field_node: json.Value) !void {
+fn generateField(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, field_node: json.Value, field_index_for_workarounds: usize) !void {
     switch (field_node) {
         // This seems to happen if the struct has a base type
         .String => |base_type_str| {
@@ -798,7 +1043,7 @@ fn generateField(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, field_node:
                     const field_obj_name = field_obj_name_node.String;
                     try out_writer.print("    {}: u32, // NamedStructField: {}\n", .{formatCToZigSymbol(field_obj_name), formatJson(field_node)});
                 } else {
-                    try out_writer.print("    // NamelessStructFieldObj: {}\n", .{formatJson(field_node)});
+                    try out_writer.print("    _{}: u32, // NamelessStructFieldObj: {}\n", .{field_index_for_workarounds, formatJson(field_node)});
                 }
             } else {
                 try jsonObjEnforceKnownFieldsOnly(field_obj, &[_][]const u8 {"name", "type"}, sdk_file);
@@ -978,6 +1223,12 @@ const JsonFormatter = struct {
 pub fn formatJson(value: anytype) JsonFormatter {
     if (@TypeOf(value) == json.ObjectMap) {
         return .{ .value = .{ .Object = value } };
+    }
+    if (@TypeOf(value) == json.Array) {
+        return .{ .value = .{ .Array = value } };
+    }
+    if (@TypeOf(value) == []json.Value) {
+        return .{ .value = .{ .Array = json.Array  { .items = value, .capacity = value.len, .allocator = undefined } } };
     }
     return .{ .value = value };
 }
