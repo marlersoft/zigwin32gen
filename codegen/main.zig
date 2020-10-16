@@ -23,7 +23,7 @@ var global_symbol_pool = StringPool.init(allocator);
 var global_type_map = std.StringHashMap(TypeEntry).init(allocator);
 
 const SdkFile = struct {
-    json_filename: []const u8,
+    json_basename: []const u8,
     name: []const u8,
     zig_filename: []const u8,
     type_refs: std.StringHashMap(TypeEntry),
@@ -34,10 +34,37 @@ const SdkFile = struct {
     /// it is populated after all type_refs and type_exports have been analyzed
     type_imports: std.ArrayList([]const u8),
 
-    fn addTypeRef(self: *SdkFile, type_entry: TypeEntry) !void {
+    pub fn create(json_basename: []const u8) !*SdkFile {
+        const sdk_file = try allocator.create(SdkFile);
+        const name = json_basename[0..json_basename.len - ".json".len];
+        sdk_file.* = .{
+            .json_basename = json_basename,
+            .name = name,
+            .zig_filename = try std.mem.concat(allocator, u8, &[_][]const u8 {name, ".zig"}),
+            .type_refs = std.StringHashMap(TypeEntry).init(allocator),
+            .type_exports = std.StringHashMap(TypeEntry).init(allocator),
+            .func_exports = std.ArrayList([]const u8).init(allocator),
+            .const_exports = std.ArrayList([]const u8).init(allocator),
+            .type_imports = std.ArrayList([]const u8).init(allocator),
+        };
+        return sdk_file;
+    }
+
+    pub fn addTypeRef(self: *SdkFile, type_entry: TypeEntry) !void {
         if (type_entry.metadata.builtin)
             return;
         try self.type_refs.put(type_entry.zig_type_from_pool, type_entry);
+    }
+
+    pub fn populateImports(self: *SdkFile) !void {
+        var type_ref_it = self.type_refs.iterator();
+        while (type_ref_it.next()) |kv| {
+            std.debug.assert(!kv.value.metadata.builtin); // code verifies no builtin types get added to type_refs
+            const symbol = kv.key;
+            if (self.type_exports.contains(symbol))
+                continue;
+            try self.type_imports.append(symbol);
+        }
     }
 };
 
@@ -532,6 +559,13 @@ fn main2() !u8 {
         var out_windows_dir = try out_dir.openDir("windows", .{});
         defer out_windows_dir.close();
 
+        try generateNonEnumConstantsModule(out_windows_dir, &sdk_files);
+        {
+            var file = try cwd.openFile("missing.json", .{});
+            defer file.close();
+            try readAndGenerateFile(out_windows_dir, &sdk_files, "missing.json", file);
+        }
+
         var dir_it = sdk_data_dir.iterate();
         var entry_index : usize = 0;
         while (try dir_it.next()) |entry| : (entry_index += 1) {
@@ -708,19 +742,7 @@ fn readAndGenerateFile(out_dir: std.fs.Dir, sdk_files: *std.ArrayList(*SdkFile),
 
     defer jsonTree.deinit();
 
-    const sdk_file = try allocator.create(SdkFile);
-    const json_filename = try std.mem.dupe(allocator, u8, json_basename);
-    const name = json_filename[0..json_filename.len - ".json".len];
-    sdk_file.* = .{
-        .json_filename = json_filename,
-        .name = name,
-        .zig_filename = try std.mem.concat(allocator, u8, &[_][]const u8 {name, ".zig"}),
-        .type_refs = std.StringHashMap(TypeEntry).init(allocator),
-        .type_exports = std.StringHashMap(TypeEntry).init(allocator),
-        .func_exports = std.ArrayList([]const u8).init(allocator),
-        .const_exports = std.ArrayList([]const u8).init(allocator),
-        .type_imports = std.ArrayList([]const u8).init(allocator),
-    };
+    var sdk_file = try SdkFile.create(try std.mem.dupe(allocator, u8, json_basename));
     try sdk_files.append(sdk_file);
     const generate_start_millis = std.time.milliTimestamp();
     try generateFile(out_dir, jsonTree, sdk_file);
@@ -743,18 +765,7 @@ fn generateFile(out_dir: std.fs.Dir, tree: json.ValueTree, sdk_file: *SdkFile) !
     for (entry_array.items) |decl_node| {
         try generateTopLevelDecl(sdk_file, out_writer, optional_filter, decl_node.Object);
     }
-
-    {
-        var type_ref_it = sdk_file.type_refs.iterator();
-        while (type_ref_it.next()) |kv| {
-            std.debug.assert(!kv.value.metadata.builtin); // code verifies no builtin types get added to type_refs
-            const symbol = kv.key;
-            if (sdk_file.type_exports.contains(symbol))
-                continue;
-            try sdk_file.type_imports.append(symbol);
-        }
-    }
-
+    try sdk_file.populateImports();
     try out_writer.print(
         \\
         \\test "" {{
@@ -833,7 +844,7 @@ fn generateTopLevelDecl(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, opti
                     } else if (std.mem.endsWith(u8, api_location, ".drv")) {
                     } else {
                         std.debug.warn("{}: Error: in function '{}', api_location '{}' does not have one of these extensions: dll, lib, sys, h, cpl, exe, drv\n", .{
-                            sdk_file.json_filename, name, api_location});
+                            sdk_file.json_basename, name, api_location});
                         return error.AlreadyReported;
                     }
                 }
@@ -1104,6 +1115,40 @@ fn generateField(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, field_node:
     }
 }
 
+// It looks like the windows_sdk_data repo may not have the ability to represent non enum constants
+// TODO: open an issue for this
+fn generateNonEnumConstantsModule(out_dir: std.fs.Dir, sdk_files: *std.ArrayList(*SdkFile)) !void {
+    var sdk_file = try SdkFile.create("nonenumconsts.json");
+    try sdk_files.append(sdk_file);
+
+    var out_file = try out_dir.createFile(sdk_file.zig_filename, .{});
+    defer out_file.close();
+    const out_writer = out_file.writer();
+
+    try out_writer.writeAll("//! This file is autogenerated\n");
+
+    const constants = [_]struct { name: []const u8, type_name: []const u8, value: []const u8} {
+        .{ .name = "STD_INPUT_HANDLE" , .type_name = "DWORD", .value = "0xFFFFFFF6" },
+        .{ .name = "STD_OUTPUT_HANDLE", .type_name = "DWORD", .value = "0xFFFFFFF5"  },
+        .{ .name = "STD_ERROR_HANDLE" , .type_name = "DWORD", .value = "0xFFFFFFF4"  },
+        .{ .name = "INVALID_HANDLE_VALUE" , .type_name = "HANDLE", .value = "@intToPtr(HANDLE, @import(\"std\").math.maxInt(usize))"  },
+    };
+
+    for (constants) |constant| {
+        try sdk_file.const_exports.append(try global_symbol_pool.add(constant.name));
+        const const_type = try getTypeWithTempString(constant.type_name);
+        try sdk_file.addTypeRef(const_type);
+        try out_writer.print("pub const {} : {} = {};\n", .{constant.name, const_type.zig_type_from_pool, constant.value});
+    }
+    try sdk_file.populateImports();
+    try out_writer.writeAll(
+        \\
+        \\test "" {{
+        \\    @import("std").meta.refAllDecls(@This());
+        \\}}
+        \\
+    );
+}
 
 const CToZigSymbolFormatter = struct {
     symbol: []const u8,
@@ -1227,7 +1272,7 @@ fn jsonObjEnforceKnownFieldsOnly(map: json.ObjectMap, known_fields: []const []co
             if (std.mem.eql(u8, known_field, kv.key))
                 continue :fieldLoop;
         }
-        std.debug.warn("{}: Error: JSON object has unknown field '{}', expected one of: {}\n", .{sdk_file.json_filename, kv.key, formatSliceT([]const u8, known_fields)});
+        std.debug.warn("{}: Error: JSON object has unknown field '{}', expected one of: {}\n", .{sdk_file.json_basename, kv.key, formatSliceT([]const u8, known_fields)});
         return error.AlreadyReported;
     }
 }
@@ -1235,7 +1280,7 @@ fn jsonObjEnforceKnownFieldsOnly(map: json.ObjectMap, known_fields: []const []co
 fn jsonObjGetRequired(map: json.ObjectMap, field: []const u8, sdk_file: *SdkFile) !json.Value {
     return map.get(field) orelse {
         // TODO: print file location?
-        std.debug.warn("{}: json object is missing '{}' field: {}\n", .{sdk_file.json_filename, field, formatJson(map)});
+        std.debug.warn("{}: json object is missing '{}' field: {}\n", .{sdk_file.json_basename, field, formatJson(map)});
         return error.AlreadyReported;
     };
 }
