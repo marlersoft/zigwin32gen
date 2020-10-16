@@ -14,3 +14,5 @@ git clone https://github.com/ohjeongwook/windows_sdk_data
 zig build
 ./zig-cache/bin/codegen
 ```
+
+This will generate the bindings in the "out" directory.  The file `out/windows.zig` is the main package file.  It will contain pub imports to all sub modules in the "windows" directory.  It will also contain a special pub symbol `everything` that provides direct access all symbols in the windows SDK through a single namespace.
