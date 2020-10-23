@@ -14,8 +14,8 @@ pub fn build(b: *Builder) !void {
     const run_sdkdata_exe = sdkdata_exe.run();
     run_sdkdata_exe.step.dependOn(b.getInstallStep());
 
-    const run_sdk_data = b.step("run-sdk-data", "Run the windows_sdk_data repo code generator");
-    run_sdk_data.dependOn(&run_sdkdata_exe.step);
+    const run_sdkdata = b.step("run-sdk-data", "Run the windows_sdk_data repo code generator");
+    run_sdkdata.dependOn(&run_sdkdata_exe.step);
 
     //const clone_sdkdata = try b.allocator.create(CloneRepoStep);
     //clone_sdkdata.* = CloneRepoStep.init(b, .{
@@ -24,6 +24,17 @@ pub fn build(b: *Builder) !void {
     //});
     //const clone_sdkdata_top_level = b.step("clone-sdkdata", "Clone the windows_sdk_data repository");
     //clone_sdkdata_top_level.dependOn(&clone_sdkdata.step);
+
+    const apijson_exe = b.addExecutable("apijson", "src/apijson.zig");
+    apijson_exe.setTarget(target);
+    apijson_exe.setBuildMode(mode);
+    apijson_exe.install();
+
+    const run_apijson_exe = apijson_exe.run();
+    run_apijson_exe.step.dependOn(b.getInstallStep());
+
+    const run_apijson = b.step("run-api-json", "Run the winapi-json repo code generator");
+    run_apijson.dependOn(&run_apijson_exe.step);
 }
 
 //const CloneRepoStep = struct {

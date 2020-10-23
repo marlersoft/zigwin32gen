@@ -544,20 +544,20 @@ fn main2() !u8 {
         try getResult.entry.value.type_map.put(type_str, true);
     }
 
-    const sdk_dir_str = "deps" ++ std.fs.path.sep_str ++ "windows_sdk_data" ++ std.fs.path.sep_str ++ "data";
-    var sdk_data_dir = std.fs.cwd().openDir(sdk_dir_str, .{.iterate = true}) catch |e| switch (e) {
+    const api_dir_str = "deps" ++ std.fs.path.sep_str ++ "winapi-json" ++ std.fs.path.sep_str ++ "api_by_category";
+    var api_json_dir = std.fs.cwd().openDir(api_dir_str, .{.iterate = true}) catch |e| switch (e) {
         error.FileNotFound => {
-            std.debug.warn("Error: repository '{}' does not exist, clone it with:\n", .{sdk_dir_str});
-            std.debug.warn("    git clone https://github.com/ohjeongwook/windows_sdk_data deps" ++ std.fs.path.sep_str ++ "windows_sdk_data"
-                        ++ " && git -C deps" ++ std.fs.path.sep_str ++ "windows_sdk_data checkout 5d79e67f33da5f87c61b8970f4ff4c480daf8cc3 -b release\n", .{});
+            std.debug.warn("Error: repository '{}' does not exist, clone it with:\n", .{api_dir_str});
+            std.debug.warn("    git clone https://github.com/vadimkotov/winapi-json deps" ++ std.fs.path.sep_str ++ "winapi-json"
+                        ++ " && git -C deps" ++ std.fs.path.sep_str ++ "winapi-json checkout 63ee5058635d9adb04094a2dce4aff298aae61cb -b release\n", .{});
             print_time_summary = false;
             return error.AlreadyReported;
         },
         else => return e,
     };
-    defer sdk_data_dir.close();
+    defer api_json_dir.close();
 
-    const out_dir_string = "out-sdkdata";
+    const out_dir_string = "out-apijson";
     const cwd = std.fs.cwd();
     try cleanDir(cwd, out_dir_string);
     var out_dir = try cwd.openDir(out_dir_string, .{});
@@ -573,14 +573,7 @@ fn main2() !u8 {
         var out_windows_dir = try out_dir.openDir("windows", .{});
         defer out_windows_dir.close();
 
-        try generateNonEnumConstantsModule(out_windows_dir, &sdk_files);
-        for ([_][]const u8 { "missing.json", "fixed.json" }) |extra_json_file| {
-            var file = try cwd.openFile(extra_json_file, .{});
-            defer file.close();
-            try readAndGenerateFile(out_windows_dir, &sdk_files, extra_json_file, file);
-        }
-
-        var dir_it = sdk_data_dir.iterate();
+        var dir_it = api_json_dir.iterate();
         var entry_index : usize = 0;
         while (try dir_it.next()) |entry| : (entry_index += 1) {
             if (std.mem.eql(u8, entry.name, "windows.json")) {
@@ -611,7 +604,7 @@ fn main2() !u8 {
             //
             // TODO: would things run faster if I just memory mapped the file?
             //
-            var file = try sdk_data_dir.openFile(entry.name, .{});
+            var file = try api_json_dir.openFile(entry.name, .{});
             defer file.close();
             try readAndGenerateFile(out_windows_dir, &sdk_files, entry.name, file);
         }
@@ -796,91 +789,90 @@ fn generateFile(out_dir: std.fs.Dir, tree: json.ValueTree, sdk_file: *SdkFile) !
 
 fn generateTopLevelDecl(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, optional_filter: ?*const SdkFileFilter, decl_obj: json.ObjectMap) !void {
     const name = try global_symbol_pool.add((try jsonObjGetRequired(decl_obj, "name", sdk_file)).String);
-    const optional_data_type = decl_obj.get("data_type");
-
-    if (optional_data_type) |data_type_node| {
-        const data_type = data_type_node.String;
-        if (std.mem.eql(u8, data_type, "Ptr")) {
-            try jsonObjEnforceKnownFieldsOnly(decl_obj, &[_][]const u8 {"data_type", "name", "type"}, sdk_file);
-            const type_node = try jsonObjGetRequired(decl_obj, "type", sdk_file);
-            try generateTopLevelType(sdk_file, out_writer, optional_filter, name, type_node, .{ .is_ptr = true });
-        } else if (std.mem.eql(u8, data_type, "FuncDecl")) {
-            //std.debug.warn("[DEBUG] function '{}'\n", .{name});
-
-            if (optional_filter) |filter| {
-                if (filter.filterFunc(name)) {
-                    try out_writer.print("// FuncDecl has been filtered: {}\n", .{formatJson(decl_obj)});
-                    return;
-                }
-            }
-            try sdk_file.func_exports.append(name);
-            try jsonObjEnforceKnownFieldsOnly(decl_obj, &[_][]const u8 {"data_type", "name", "arguments", "api_locations", "type"}, sdk_file);
-
-            const arguments = (try jsonObjGetRequired(decl_obj, "arguments", sdk_file)).Array;
-            const optional_api_locations = decl_obj.get("api_locations");
-
-            // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-            // The return_type always seems to be an object with the function name and return type
-            // not sure why the name is duplicated...https://github.com/ohjeongwook/windows_sdk_data/issues/5
-            const return_type_c = init: {
-                const type_node = try jsonObjGetRequired(decl_obj, "type", sdk_file);
-                const type_obj = type_node.Object;
-                try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"name", "type"}, sdk_file);
-                const type_sub_name = (try jsonObjGetRequired(type_obj, "name", sdk_file)).String;
-                const type_sub_type = try jsonObjGetRequired(type_obj, "type", sdk_file);
-                if (!std.mem.eql(u8, name, type_sub_name)) {
-                    std.debug.warn("Error: FuncDecl name '{}' != type.name '{}'\n", .{name, type_sub_name});
-                    return error.AlreadyReported;
-                }
-                break :init type_sub_type.String;
-            };
-            const return_type = try getTypeWithTempString(return_type_c);
-            try sdk_file.addTypeRef(return_type);
-
-            if (optional_api_locations) |api_locations_node| {
-                const api_locations = api_locations_node.Array;
-                try out_writer.print("// Function '{}' has the following {} api_locations:\n", .{name, api_locations.items.len});
-                var first_dll : ?[]const u8 = null;
-                for (api_locations.items) |api_location_node| {
-                    const api_location = api_location_node.String;
-                    try out_writer.print("// - {}\n", .{api_location});
-
-                    // TODO: probably use endsWithIgnoreCase instead of checking each case
-                    if (std.mem.endsWith(u8, api_location, ".dll") or std.mem.endsWith(u8, api_location, ".Dll")) {
-                        if (first_dll) |f| { } else {
-                            first_dll = api_location;
-                        }
-                    } else if (std.mem.endsWith(u8, api_location, ".lib")) {
-                    } else if (std.mem.endsWith(u8, api_location, ".sys")) {
-                    } else if (std.mem.endsWith(u8, api_location, ".h")) {
-                    } else if (std.mem.endsWith(u8, api_location, ".cpl")) {
-                    } else if (std.mem.endsWith(u8, api_location, ".exe")) {
-                    } else if (std.mem.endsWith(u8, api_location, ".drv")) {
-                    } else {
-                        std.debug.warn("{}: Error: in function '{}', api_location '{}' does not have one of these extensions: dll, lib, sys, h, cpl, exe, drv\n", .{
-                            sdk_file.json_basename, name, api_location});
-                        return error.AlreadyReported;
-                    }
-                }
-                if (first_dll == null) {
-                    try out_writer.print("// function '{}' is not in a dll, so omitting its declaration\n", .{name});
-                } else {
-                    const extern_string = first_dll.?[0 .. first_dll.?.len - ".dll".len];
-                    try out_writer.print("pub extern \"{}\" fn {}(", .{extern_string, name});
-                    try generateFuncArgs(sdk_file, out_writer, arguments.items);
-                    try out_writer.print(") callconv(.Stdcall) {};\n", .{return_type.zig_type_from_pool});
-                }
-            } else {
-                try out_writer.print("// FuncDecl with no api_locations (is this a compiler intrinsic or something?): {}\n", .{formatJson(decl_obj)});
-            }
-        } else {
-            try out_writer.print("// unhandled data_type '{}': {}\n", .{data_type, formatJson(decl_obj)});
-        }
-    } else {
-        try jsonObjEnforceKnownFieldsOnly(decl_obj, &[_][]const u8 {"name", "type"}, sdk_file);
-        const type_node = try jsonObjGetRequired(decl_obj, "type", sdk_file);
-        try generateTopLevelType(sdk_file, out_writer, optional_filter, name, type_node, .{ .is_ptr = false });
-    }
+    try out_writer.print("// function '{}'\n", .{name});
+    //if (optional_data_type) |data_type_node| {
+    //    const data_type = data_type_node.String;
+    //    if (std.mem.eql(u8, data_type, "Ptr")) {
+    //        try jsonObjEnforceKnownFieldsOnly(decl_obj, &[_][]const u8 {"data_type", "name", "type"}, sdk_file);
+    //        const type_node = try jsonObjGetRequired(decl_obj, "type", sdk_file);
+    //        try generateTopLevelType(sdk_file, out_writer, optional_filter, name, type_node, .{ .is_ptr = true });
+    //    } else if (std.mem.eql(u8, data_type, "FuncDecl")) {
+    //        //std.debug.warn("[DEBUG] function '{}'\n", .{name});
+//
+    //        if (optional_filter) |filter| {
+    //            if (filter.filterFunc(name)) {
+    //                try out_writer.print("// FuncDecl has been filtered: {}\n", .{formatJson(decl_obj)});
+    //                return;
+    //            }
+    //        }
+    //        try sdk_file.func_exports.append(name);
+    //        try jsonObjEnforceKnownFieldsOnly(decl_obj, &[_][]const u8 {"data_type", "name", "arguments", "api_locations", "type"}, sdk_file);
+//
+    //        const arguments = (try jsonObjGetRequired(decl_obj, "arguments", sdk_file)).Array;
+    //        const optional_api_locations = decl_obj.get("api_locations");
+//
+    //        // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    //        // The return_type always seems to be an object with the function name and return type
+    //        // not sure why the name is duplicated...https://github.com/ohjeongwook/windows_sdk_data/issues/5
+    //        const return_type_c = init: {
+    //            const type_node = try jsonObjGetRequired(decl_obj, "type", sdk_file);
+    //            const type_obj = type_node.Object;
+    //            try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"name", "type"}, sdk_file);
+    //            const type_sub_name = (try jsonObjGetRequired(type_obj, "name", sdk_file)).String;
+    //            const type_sub_type = try jsonObjGetRequired(type_obj, "type", sdk_file);
+    //            if (!std.mem.eql(u8, name, type_sub_name)) {
+    //                std.debug.warn("Error: FuncDecl name '{}' != type.name '{}'\n", .{name, type_sub_name});
+    //                return error.AlreadyReported;
+    //            }
+    //            break :init type_sub_type.String;
+    //        };
+    //        const return_type = try getTypeWithTempString(return_type_c);
+    //        try sdk_file.addTypeRef(return_type);
+//
+    //        if (optional_api_locations) |api_locations_node| {
+    //            const api_locations = api_locations_node.Array;
+    //            try out_writer.print("// Function '{}' has the following {} api_locations:\n", .{name, api_locations.items.len});
+    //            var first_dll : ?[]const u8 = null;
+    //            for (api_locations.items) |api_location_node| {
+    //                const api_location = api_location_node.String;
+    //                try out_writer.print("// - {}\n", .{api_location});
+//
+    //                // TODO: probably use endsWithIgnoreCase instead of checking each case
+    //                if (std.mem.endsWith(u8, api_location, ".dll") or std.mem.endsWith(u8, api_location, ".Dll")) {
+    //                    if (first_dll) |f| { } else {
+    //                        first_dll = api_location;
+    //                    }
+    //                } else if (std.mem.endsWith(u8, api_location, ".lib")) {
+    //                } else if (std.mem.endsWith(u8, api_location, ".sys")) {
+    //                } else if (std.mem.endsWith(u8, api_location, ".h")) {
+    //                } else if (std.mem.endsWith(u8, api_location, ".cpl")) {
+    //                } else if (std.mem.endsWith(u8, api_location, ".exe")) {
+    //                } else if (std.mem.endsWith(u8, api_location, ".drv")) {
+    //                } else {
+    //                    std.debug.warn("{}: Error: in function '{}', api_location '{}' does not have one of these extensions: dll, lib, sys, h, cpl, exe, drv\n", .{
+    //                        sdk_file.json_basename, name, api_location});
+    //                    return error.AlreadyReported;
+    //                }
+    //            }
+    //            if (first_dll == null) {
+    //                try out_writer.print("// function '{}' is not in a dll, so omitting its declaration\n", .{name});
+    //            } else {
+    //                const extern_string = first_dll.?[0 .. first_dll.?.len - ".dll".len];
+    //                try out_writer.print("pub extern \"{}\" fn {}(", .{extern_string, name});
+    //                try generateFuncArgs(sdk_file, out_writer, arguments.items);
+    //                try out_writer.print(") callconv(.Stdcall) {};\n", .{return_type.zig_type_from_pool});
+    //            }
+    //        } else {
+    //            try out_writer.print("// FuncDecl with no api_locations (is this a compiler intrinsic or something?): {}\n", .{formatJson(decl_obj)});
+    //        }
+    //    } else {
+    //        try out_writer.print("// unhandled data_type '{}': {}\n", .{data_type, formatJson(decl_obj)});
+    //    }
+    //} else {
+    //    try jsonObjEnforceKnownFieldsOnly(decl_obj, &[_][]const u8 {"name", "type"}, sdk_file);
+    //    const type_node = try jsonObjGetRequired(decl_obj, "type", sdk_file);
+    //    try generateTopLevelType(sdk_file, out_writer, optional_filter, name, type_node, .{ .is_ptr = false });
+    //}
 }
 
 const GenTopLevelTypeOptions = struct {
@@ -1127,41 +1119,6 @@ fn generateField(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, field_node:
             return error.AlreadyReported;
         },
     }
-}
-
-// It looks like the windows_sdk_data repo may not have the ability to represent non enum constants
-// TODO: open an issue for this
-fn generateNonEnumConstantsModule(out_dir: std.fs.Dir, sdk_files: *std.ArrayList(*SdkFile)) !void {
-    var sdk_file = try SdkFile.create("nonenumconsts.json");
-    try sdk_files.append(sdk_file);
-
-    var out_file = try out_dir.createFile(sdk_file.zig_filename, .{});
-    defer out_file.close();
-    const out_writer = out_file.writer();
-
-    try out_writer.writeAll("//! This file is autogenerated\n");
-
-    const constants = [_]struct { name: []const u8, type_name: []const u8, value: []const u8} {
-        .{ .name = "STD_INPUT_HANDLE" , .type_name = "DWORD", .value = "0xFFFFFFF6" },
-        .{ .name = "STD_OUTPUT_HANDLE", .type_name = "DWORD", .value = "0xFFFFFFF5"  },
-        .{ .name = "STD_ERROR_HANDLE" , .type_name = "DWORD", .value = "0xFFFFFFF4"  },
-        .{ .name = "INVALID_HANDLE_VALUE" , .type_name = "HANDLE", .value = "@intToPtr(HANDLE, @import(\"std\").math.maxInt(usize))"  },
-    };
-
-    for (constants) |constant| {
-        try sdk_file.const_exports.append(try global_symbol_pool.add(constant.name));
-        const const_type = try getTypeWithTempString(constant.type_name);
-        try sdk_file.addTypeRef(const_type);
-        try out_writer.print("pub const {} : {} = {};\n", .{constant.name, const_type.zig_type_from_pool, constant.value});
-    }
-    try sdk_file.populateImports();
-    try out_writer.writeAll(
-        \\
-        \\test "" {{
-        \\    @import("std").meta.refAllDecls(@This());
-        \\}}
-        \\
-    );
 }
 
 const CToZigSymbolFormatter = struct {
