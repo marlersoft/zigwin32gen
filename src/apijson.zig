@@ -36,7 +36,12 @@ const SdkFile = struct {
 
     pub fn create(json_basename: []const u8) !*SdkFile {
         const sdk_file = try allocator.create(SdkFile);
-        const name = json_basename[0..json_basename.len - ".json".len];
+        const name = init: {
+            const name_no_ext = json_basename[0..json_basename.len - ".json".len];
+            if (std.mem.eql(u8, name_no_ext, "gdi+")) break :init "gdip";
+            if (std.mem.eql(u8, name_no_ext, "microsoft_management_console_2.0")) break :init "microsoft_management_console_2_0";
+            break :init name_no_ext;
+        };
         sdk_file.* = .{
             .json_basename = json_basename,
             .name = name,
@@ -723,7 +728,7 @@ fn main2() !u8 {
             \\
             \\const std = @import("std");
             \\test "" {
-            \\    std.meta.refAllDecls(@This());
+            \\    std.testing.refAllDecls(@This());
             \\}
             \\
         );
@@ -781,7 +786,7 @@ fn generateFile(out_dir: std.fs.Dir, tree: json.ValueTree, sdk_file: *SdkFile) !
         \\    const type_export_count = {};
         \\    const func_export_count = {};
         \\    @setEvalBranchQuota(type_import_count + constant_export_count + type_export_count + func_export_count);
-        \\    @import("std").meta.refAllDecls(@This());
+        \\    @import("std").testing.refAllDecls(@This());
         \\}}
         \\
     , .{sdk_file.type_imports.items.len, sdk_file.const_exports.items.len, sdk_file.type_exports.count(), sdk_file.func_exports.items.len});
@@ -789,7 +794,8 @@ fn generateFile(out_dir: std.fs.Dir, tree: json.ValueTree, sdk_file: *SdkFile) !
 
 fn generateTopLevelDecl(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, optional_filter: ?*const SdkFileFilter, decl_obj: json.ObjectMap) !void {
     const name = try global_symbol_pool.add((try jsonObjGetRequired(decl_obj, "name", sdk_file)).String);
-    try out_writer.print("// function '{}'\n", .{name});
+    const header = (try jsonObjGetRequired(decl_obj, "header", sdk_file)).String;
+    try out_writer.print("// header='{}' function '{}'\n", .{header, name});
     //if (optional_data_type) |data_type_node| {
     //    const data_type = data_type_node.String;
     //    if (std.mem.eql(u8, data_type, "Ptr")) {

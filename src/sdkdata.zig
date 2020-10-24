@@ -730,7 +730,7 @@ fn main2() !u8 {
             \\
             \\const std = @import("std");
             \\test "" {
-            \\    std.meta.refAllDecls(@This());
+            \\    std.testing.refAllDecls(@This());
             \\}
             \\
         );
