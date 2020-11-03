@@ -6,35 +6,24 @@ pub fn build(b: *Builder) !void {
     const target = b.standardTargetOptions(.{});
     const mode = b.standardReleaseOptions();
 
-    const sdkdata_exe = b.addExecutable("sdkdata", "src/sdkdata.zig");
-    sdkdata_exe.setTarget(target);
-    sdkdata_exe.setBuildMode(mode);
-    sdkdata_exe.install();
-
-    const run_sdkdata_exe = sdkdata_exe.run();
-    run_sdkdata_exe.step.dependOn(b.getInstallStep());
-
-    const run_sdkdata = b.step("run-sdk-data", "Run the windows_sdk_data repo code generator");
-    run_sdkdata.dependOn(&run_sdkdata_exe.step);
-
-    //const clone_sdkdata = try b.allocator.create(CloneRepoStep);
-    //clone_sdkdata.* = CloneRepoStep.init(b, .{
-    //    .repo_url = "github.com/ohjeongwook/windows_sdk_data",
-    //    .sha = "5d79e67f33da5f87c61b8970f4ff4c480daf8cc3",
+    //const clone_windows_api = try b.allocator.create(CloneRepoStep);
+    //clone_windows_api.* = CloneRepoStep.init(b, .{
+    //    .repo_url = "github.com/marler8997/windows-api",
+    //    .sha = "cc76f88be151084e1c218adf00bc758628a90fef",
     //});
-    //const clone_sdkdata_top_level = b.step("clone-sdkdata", "Clone the windows_sdk_data repository");
-    //clone_sdkdata_top_level.dependOn(&clone_sdkdata.step);
+    //const clone_windows_api_top_level = b.step("clone-windows-api", "Clone the windows-api repository");
+    //clone_windows_api_top_level.dependOn(&clone_windows_api.step);
 
-    const apijson_exe = b.addExecutable("apijson", "src/apijson.zig");
-    apijson_exe.setTarget(target);
-    apijson_exe.setBuildMode(mode);
-    apijson_exe.install();
+    const genzig_exe = b.addExecutable("genzig", "src/genzig.zig");
+    genzig_exe.setTarget(target);
+    genzig_exe.setBuildMode(mode);
+    genzig_exe.install();
 
-    const run_apijson_exe = apijson_exe.run();
-    run_apijson_exe.step.dependOn(b.getInstallStep());
+    const run_genzig_exe = genzig_exe.run();
+    run_genzig_exe.step.dependOn(b.getInstallStep());
 
-    const run_apijson = b.step("run-api-json", "Run the winapi-json repo code generator");
-    run_apijson.dependOn(&run_apijson_exe.step);
+    const run_genzig = b.step("genzig", "Generate Zig bindings from the windows-api JSON files");
+    run_genzig.dependOn(&run_genzig_exe.step);
 }
 
 //const CloneRepoStep = struct {
