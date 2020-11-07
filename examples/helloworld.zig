@@ -16,7 +16,7 @@ fn writeAll(hFile: HANDLE, buffer: []const u8) !void {
     while (written < buffer.len) {
         const next_write = @intCast(DWORD, 0xFFFFFFFF & (buffer.len - written));
         var last_written : DWORD = undefined;
-        if (1 != WriteFile(hFile, @intToPtr([*]u8, @ptrToInt(buffer.ptr + written)), next_write, &last_written, null)) {
+        if (1 != WriteFile(hFile, @ptrCast(LPCVOID, buffer.ptr + written), next_write, &last_written, null)) {
             // TODO: return from GetLastError
             return error.WriteFileFailed;
         }
