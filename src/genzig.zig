@@ -1,6 +1,9 @@
 const std = @import("std");
+const ArrayList = std.ArrayList;
+const StringHashMap = std.StringHashMap;
 const json = std.json;
 const StringPool = @import("./stringpool.zig").StringPool;
+const path_sep = std.fs.path.sep_str;
 
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const allocator = &arena.allocator;
@@ -8,7 +11,7 @@ const allocator = &arena.allocator;
 const zig_keywords = [_][]const u8 {
     "defer", "align", "error", "resume", "suspend", "var", "callconv",
 };
-var global_zig_keyword_map = std.StringHashMap(bool).init(allocator);
+var global_zig_keyword_map = StringHashMap(bool).init(allocator);
 
 const TypeMetadata = struct {
     builtin: bool,
@@ -20,19 +23,21 @@ const TypeEntry = struct {
 
 var global_void_type_from_pool_ptr : [*]const u8 = undefined;
 var global_symbol_pool = StringPool.init(allocator);
-var global_type_map = std.StringHashMap(TypeEntry).init(allocator);
+var global_type_map = StringHashMap(TypeEntry).init(allocator);
+
+var global_c_native_to_zig_map = StringHashMap([]const u8).init(allocator);
 
 const SdkFile = struct {
     json_basename: []const u8,
     name: []const u8,
     zig_filename: []const u8,
-    type_refs: std.StringHashMap(TypeEntry),
-    type_exports: std.StringHashMap(TypeEntry),
-    func_exports: std.ArrayList([]const u8),
-    const_exports: std.ArrayList([]const u8),
+    type_refs: StringHashMap(TypeEntry),
+    type_exports: StringHashMap(TypeEntry),
+    func_exports: ArrayList([]const u8),
+    const_exports: ArrayList([]const u8),
     /// type_imports is made up of all the type_refs excluding any types that have been exported
     /// it is populated after all type_refs and type_exports have been analyzed
-    type_imports: std.ArrayList([]const u8),
+    type_imports: ArrayList([]const u8),
 
     pub fn create(json_basename: []const u8) !*SdkFile {
         const sdk_file = try allocator.create(SdkFile);
@@ -46,11 +51,11 @@ const SdkFile = struct {
             .json_basename = json_basename,
             .name = name,
             .zig_filename = try std.mem.concat(allocator, u8, &[_][]const u8 {name, ".zig"}),
-            .type_refs = std.StringHashMap(TypeEntry).init(allocator),
-            .type_exports = std.StringHashMap(TypeEntry).init(allocator),
-            .func_exports = std.ArrayList([]const u8).init(allocator),
-            .const_exports = std.ArrayList([]const u8).init(allocator),
-            .type_imports = std.ArrayList([]const u8).init(allocator),
+            .type_refs = StringHashMap(TypeEntry).init(allocator),
+            .type_exports = StringHashMap(TypeEntry).init(allocator),
+            .func_exports = ArrayList([]const u8).init(allocator),
+            .const_exports = ArrayList([]const u8).init(allocator),
+            .type_imports = ArrayList([]const u8).init(allocator),
         };
         return sdk_file;
     }
@@ -92,351 +97,13 @@ const SharedTypeExportEntry = struct {
     duplicates: u32,
 };
 
-//
-// Temporary Filtering Code to disable invalid configuration
-//
-const filter_funcs = [_][2][]const u8 {
-    // these functions have invalid api_locations, it is just an array of one string "None", no issue opened for this yet
-    .{ "scrnsave", "ScreenSaverProc" },
-    .{ "scrnsave", "RegisterDialogClasses" },
-    .{ "scrnsave", "ScreenSaverConfigureDialog" },
-    .{ "scrnsave", "DefScreenSaverProc" },
-    // these functions are defined twice (see https://github.com/ohjeongwook/windows_sdk_data/issues/3)
-    .{ "perflib", "PerfStartProvider" },
-    .{ "ole", "OleCreate" },
-    .{ "ole", "OleCreateFromFile" },
-    .{ "ole", "OleLoadFromStream" },
-    .{ "ole", "OleSaveToStream" },
-    .{ "ole", "OleDraw" },
-    // function argument is missing "name" field, it is located within the "type" field instead? (open issue for this)
-    // This seems to be the case with like 30% of all functions, so I implemented a workaround in generateFuncArg for now
-    //.{ "aclapi", "SetEntriesInAclA" },
-    //.{ "aclapi", "SetEntriesInAclW" },
-    //.{ "aclapi", "GetExplicitEntriesFromAclA" },
-    //.{ "aclapi", "GetExplicitEntriesFromAclW" },
-
-    // these functions have some unexpected JSON in one of their argument type objects (TODO: open an issue for this)
-    .{ "combaseapi", "RoGetAgileReference" }, // 'options' argument just says it's an enum, but it should just be a reference to 'AgileReferenceOptions'
-    .{ "dwmapi", "DwmTransitionOwnedWindow" },
-    .{ "dwmapi", "DwmRenderGesture" },
-    .{ "dwmapi", "DwmShowContact" },
-    .{ "ntdsapi", "DsReplicaSyncAllA" },
-    .{ "ntdsapi", "DsReplicaSyncAllW" },
-    .{ "ras", "RasGetProjectionInfoA" },
-    .{ "ras", "RasGetProjectionInfoW" },
-    .{ "uxtheme", "GetThemePartSize" },
-    .{ "uxtheme", "SetWindowThemeAttribute" },
-
-    // these functions have one or more arguments with no name (TODO: open issue for this)
-    // There's too many examples of this (more than listed below), so I've commented them out and implemented a workaround for now
-    //.{ "atlthunk", "AtlThunk_DataToCode" },
-    //.{ "commctrl", "FlatSB_EnableScrollBar" },
-    //.{ "commctrl", "FlatSB_ShowScrollBar" },
-    //.{ "commctrl", "FlatSB_GetScrollRange" },
-    //.{ "commctrl", "FlatSB_GetScrollInfo" },
-    //.{ "commctrl", "FlatSB_GetScrollPos" },
-    //.{ "commctrl", "FlatSB_GetScrollProp" },
-    //.{ "commctrl", "FlatSB_GetScrollPropPtr" },
-    //.{ "commctrl", "FlatSB_SetScrollPos" },
-    //.{ "commctrl", "FlatSB_SetScrollInfo" },
-    //.{ "commctrl", "FlatSB_SetScrollRange" },
-    //.{ "commctrl", "FlatSB_SetScrollProp" },
-    //.{ "commctrl", "InitializeFlatSB" },
-    //.{ "commctrl", "UninitializeFlatSB" },
-    //.{ "commdlg", "GetOpenFileNameA" },
-    //.{ "commdlg", "GetOpenFileNameW" },
-    //.{ "commdlg", "GetSaveFileNameA" },
-    //.{ "commdlg", "GetSaveFileNameW" },
-    //.{ "commdlg", "GetFileTitleA" },
-    //.{ "commdlg", "GetFileTitleW" },
-    //.{ "commdlg", "FindTextA" },
-    //.{ "commdlg", "FindTextW" },
-    //.{ "commdlg", "ReplaceTextA" },
-    //.{ "commdlg", "ReplaceTextW" },
-    //.{ "d3d9", "Direct3DCreate9Ex" },
-    //.{ "icwcfg", "CheckConnectionWizard" },
-    //.{ "ime", "SendIMEMessageExA" },
-    //.{ "ime", "SendIMEMessageExW" },
-    //.{ "imm", "ImmGetDefaultIMEWnd" },
-    //.{ "imm", "ImmGetDescriptionA" },
-    //.{ "imm", "ImmGetDescriptionW" },
-    //.{ "imm", "ImmGetIMEFileNameA" },
-    //.{ "imm", "ImmGetIMEFileNameW" },
-    //.{ "imm", "ImmGetProperty" },
-    //.{ "imm", "ImmIsIME" },
-    //.{ "imm", "ImmSimulateHotKey" },
-    //.{ "imm", "ImmDestroyContext" },
-    //.{ "imm", "ImmGetContext" },
-    //.{ "imm", "ImmReleaseContext" },
-    //.{ "imm", "ImmAssociateContext" },
-    //.{ "imm", "ImmAssociateContextEx" },
-    //.{ "imm", "ImmGetCompositionStringA" },
-    //.{ "imm", "ImmGetCompositionStringW" },
-    //.{ "imm", "ImmSetCompositionStringA" },
-    //.{ "imm", "ImmSetCompositionStringW" },
-    //.{ "imm", "ImmGetCandidateListCountA" },
-    //.{ "imm", "ImmGetCandidateListCountW" },
-    //.{ "imm", "ImmGetCandidateListA" },
-    //.{ "imm", "ImmGetCandidateListW" },
-    //.{ "imm", "ImmGetGuideLineA" },
-    //.{ "imm", "ImmGetGuideLineW" },
-    //.{ "imm", "ImmGetConversionStatus" },
-    //.{ "imm", "ImmSetConversionStatus" },
-    //.{ "imm", "ImmGetOpenStatus" },
-    //.{ "imm", "ImmSetOpenStatus" },
-    //.{ "imm", "ImmGetCompositionFontA" },
-    //.{ "imm", "ImmGetCompositionFontW" },
-    //.{ "imm", "ImmSetCompositionFontA" },
-    //.{ "imm", "ImmSetCompositionFontW" },
-    //.{ "imm", "ImmConfigureIMEA" },
-    //.{ "imm", "ImmConfigureIMEW" },
-    //.{ "imm", "ImmEscapeA" },
-    //.{ "imm", "ImmEscapeW" },
-    //.{ "imm", "ImmGetConversionListA" },
-    //.{ "imm", "ImmGetConversionListW" },
-    //.{ "imm", "ImmNotifyIME" },
-    //.{ "imm", "ImmGetStatusWindowPos" },
-    //.{ "imm", "ImmSetStatusWindowPos" },
-    //.{ "imm", "ImmGetCompositionWindow" },
-    //.{ "imm", "ImmSetCompositionWindow" },
-    //.{ "imm", "ImmGetCandidateWindow" },
-    //.{ "imm", "ImmSetCandidateWindow" },
-
-
-    // these functions have a non-empty argument array, but it's just a single object with "type": "void
-    // TODO: is this an issue or do I need to handle it?
-    //.{ "authz", "AuthzFreeCentralAccessPolicyCache" },
-    //.{ "avrfsdk", "VerifierIsPerUserSettingsEnabled" },
-    //.{ "cfgmgr32", "CM_Get_Version" },
-    //.{ "cfgmgr32", "CM_Request_Eject_PC" },
-    //.{ "combaseapi", "CoUninitialize" },
-    //.{ "combaseapi", "CoGetCurrentProcess" },
-    //.{ "combaseapi", "CoResumeClassObjects" },
-    //.{ "combaseapi", "CoSuspendClassObjects" },
-    //.{ "combaseapi", "CoAddRefServerProcess" },
-    //.{ "combaseapi", "CoReleaseServerProcess" },
-    //.{ "combaseapi", "CoFreeUnusedLibraries" },
-    //.{ "combaseapi", "CoImpersonateClient" },
-    //.{ "combaseapi", "CoRevertToSelf" },
-    //.{ "combaseapi", "CoTestCancel" },
-    //.{ "commctrl", "InitCommonControls" },
-    //.{ "commctrl", "ImageList_EndDrag" },
-    //.{ "commctrl", "GetMUILanguage" },
-
-    // "type" field is one nest level too much (see https://github.com/ohjeongwook/windows_sdk_data/issues/6)
-    .{ "atlthunk", "AtlThunk_AllocateData" },
-    .{ "comsvcs", "SafeRef" },
-    .{ "d3d9", "Direct3DCreate9" },
-    .{ "d3d9helper", "Direct3DCreate9" },
-    .{ "inspectable", "HSTRING_UserMarshal" },
-    .{ "inspectable", "HSTRING_UserUnmarshal" },
-    .{ "inspectable", "HSTRING_UserMarshal64" },
-    .{ "inspectable", "HSTRING_UserUnmarshal64" },
-    .{ "mfapi", "MFHeapAlloc" },
-    .{ "mscat", "CryptCATStoreFromHandle" },
-    .{ "mscat", "CryptCATPutCatAttrInfo" },
-    .{ "mscat", "CryptCATEnumerateCatAttr" },
-    .{ "mscat", "CryptCATGetMemberInfo" },
-    .{ "mscat", "CryptCATGetAttrInfo" },
-    .{ "mscat", "CryptCATPutMemberInfo" },
-    .{ "mscat", "CryptCATPutAttrInfo" },
-    .{ "mscat", "CryptCATEnumerateMember" },
-    .{ "mscat", "CryptCATEnumerateAttr" },
-    .{ "mscat", "CryptCATCDFOpen" },
-    .{ "mscat", "CryptCATCDFEnumCatAttributes" },
-    .{ "oaidl", "BSTR_UserMarshal" },
-    .{ "oaidl", "BSTR_UserUnmarshal" },
-    .{ "oaidl", "VARIANT_UserMarshal" },
-    .{ "oaidl", "VARIANT_UserUnmarshal" },
-    .{ "oaidl", "BSTR_UserMarshal64" },
-    .{ "oaidl", "BSTR_UserUnmarshal64" },
-    .{ "oaidl", "VARIANT_UserMarshal64" },
-    .{ "oaidl", "VARIANT_UserUnmarshal64" },
-    .{ "oleauto", "SafeArrayCreate" },
-    .{ "oleauto", "SafeArrayCreateEx" },
-    .{ "oleauto", "SafeArrayCreateVector" },
-    .{ "oleauto", "SafeArrayCreateVectorEx" },
-    .{ "propidl", "StgConvertVariantToProperty" },
-    .{ "remotesystemadditionalinfo", "HSTRING_UserMarshal" },
-    .{ "remotesystemadditionalinfo", "HSTRING_UserUnmarshal" },
-    .{ "remotesystemadditionalinfo", "HSTRING_UserMarshal64" },
-    .{ "remotesystemadditionalinfo", "HSTRING_UserUnmarshal64" },
-    .{ "rpcndr", "NdrPointerMarshall" },
-    .{ "rpcndr", "NdrSimpleStructMarshall" },
-    .{ "rpcndr", "NdrComplexStructMarshall" },
-    .{ "rpcndr", "NdrConformantArrayMarshall" },
-    .{ "rpcndr", "NdrComplexArrayMarshall" },
-    .{ "rpcndr", "NdrConformantStringMarshall" },
-    .{ "rpcndr", "NdrUserMarshalMarshall" },
-    .{ "rpcndr", "NdrInterfacePointerMarshall" },
-    .{ "rpcndr", "NdrPointerUnmarshall" },
-    .{ "rpcndr", "NdrSimpleStructUnmarshall" },
-    .{ "rpcndr", "NdrComplexStructUnmarshall" },
-    .{ "rpcndr", "NdrComplexArrayUnmarshall" },
-    .{ "rpcndr", "NdrConformantStringUnmarshall" },
-    .{ "rpcndr", "NdrUserMarshalUnmarshall" },
-    .{ "rpcndr", "NdrInterfacePointerUnmarshall" },
-    .{ "rpcndr", "RpcSsAllocate" },
-    .{ "rpcndr", "RpcSmAllocate" },
-    .{ "rpcndr", "NdrOleAllocate" },
-    .{ "rpcproxy", "CStdStubBuffer_IsIIDSupported" },
-    .{ "shellapi", "CommandLineToArgvW" },
-    .{ "shlobj_core", "SHAlloc" },
-    .{ "shlobj_core", "OpenRegStream" },
-    .{ "shlobj_core", "SHFind_InitMenuPopup" },
-    .{ "shlwapi", "SHOpenRegStreamA" },
-    .{ "shlwapi", "SHOpenRegStreamW" },
-    .{ "shlwapi", "SHOpenRegStream2A" },
-    .{ "shlwapi", "SHOpenRegStream2W" },
-    .{ "shlwapi", "SHCreateMemStream" },
-    .{ "shlwapi", "SHLockShared" },
-    .{ "usp10", "ScriptString_pSize" },
-    .{ "usp10", "ScriptString_pcOutChars" },
-    .{ "usp10", "ScriptString_pLogAttr" },
-    .{ "wia_xp", "LPSAFEARRAY_UserMarshal" },
-    .{ "wia_xp", "LPSAFEARRAY_UserUnmarshal" },
-    .{ "wia_xp", "LPSAFEARRAY_UserMarshal64" },
-    .{ "wia_xp", "LPSAFEARRAY_UserUnmarshal64" },
-    .{ "wincrypt", "CertCreateContext" },
-    .{ "windef", "__pctype_func" },
-    .{ "windef", "__pwctype_func" },
-    .{ "windef", "__acrt_get_locale_data_prefix" },
-    .{ "windef", "ULongToHandle" },
-    .{ "windef", "LongToHandle" },
-    .{ "windef", "IntToPtr" },
-    .{ "windef", "UIntToPtr" },
-    .{ "windef", "LongToPtr" },
-    .{ "windef", "ULongToPtr" },
-    .{ "windef", "Ptr32ToPtr" },
-    .{ "windef", "Handle32ToHandle" },
-    .{ "windef", "PtrToPtr32" },
-    .{ "windef", "_errno" },
-    .{ "windef", "__doserrno" },
-    .{ "windef", "memchr" },
-    .{ "windef", "memcpy" },
-    .{ "windef", "memmove" },
-    .{ "windef", "memset" },
-    .{ "windef", "strchr" },
-    .{ "windef", "strrchr" },
-    .{ "windef", "strstr" },
-    .{ "windef", "wcschr" },
-    .{ "windef", "wcsrchr" },
-    .{ "windef", "wcsstr" },
-    .{ "windef", "memccpy" },
-    .{ "windef", "wcstok_s" },
-    .{ "windef", "_wcsdup" },
-    .{ "windef", "wcscat" },
-    .{ "windef", "wcscpy" },
-    .{ "windef", "wcsncat" },
-    .{ "windef", "wcsncpy" },
-    .{ "windef", "wcspbrk" },
-    .{ "windef", "wcstok" },
-    .{ "windef", "_wcstok" },
-    .{ "windef", "_wcserror" },
-    .{ "windef", "__wcserror" },
-    .{ "windef", "_wcsnset" },
-    .{ "windef", "_wcsrev" },
-    .{ "windef", "_wcsset" },
-    .{ "windef", "_wcslwr" },
-    .{ "windef", "_wcslwr_l" },
-    .{ "windef", "_wcsupr" },
-    .{ "windef", "_wcsupr_l" },
-    .{ "windef", "wcsdup" },
-    .{ "windef", "wcsnset" },
-    .{ "windef", "wcsrev" },
-    .{ "windef", "wcsset" },
-    .{ "windef", "wcslwr" },
-    .{ "windef", "wcsupr" },
-    .{ "windef", "strtok_s" },
-    .{ "windef", "_memccpy" },
-    .{ "windef", "strcat" },
-    .{ "windef", "strcpy" },
-    .{ "windef", "_strdup" },
-    .{ "windef", "_strerror" },
-    .{ "windef", "strerror" },
-    .{ "windef", "_strlwr" },
-    .{ "windef", "_strlwr_l" },
-    .{ "windef", "strncat" },
-    .{ "windef", "strncpy" },
-    .{ "windef", "_strnset" },
-    .{ "windef", "strpbrk" },
-    .{ "windef", "_strrev" },
-    .{ "windef", "_strset" },
-    .{ "windef", "strtok" },
-    .{ "windef", "_strupr" },
-    .{ "windef", "_strupr_l" },
-    .{ "windef", "strdup" },
-    .{ "windef", "strlwr" },
-    .{ "windef", "strnset" },
-    .{ "windef", "strrev" },
-    .{ "windef", "strset" },
-    .{ "windef", "strupr" },
-    .{ "windef", "_exception_info" },
-    .{ "windef", "NtCurrentTeb" },
-    .{ "winsock", "inet_ntoa" },
-    .{ "winsock", "gethostbyaddr" },
-    .{ "winsock", "gethostbyname" },
-    .{ "winsock", "getservbyport" },
-    .{ "winsock", "getservbyname" },
-    .{ "winsock", "getprotobynumber" },
-    .{ "winsock", "getprotobyname" },
-    .{ "winsock2", "inet_ntoa" },
-    .{ "winsock2", "gethostbyaddr" },
-    .{ "winsock2", "gethostbyname" },
-    .{ "winsock2", "getservbyport" },
-    .{ "winsock2", "getservbyname" },
-    .{ "winsock2", "getprotobynumber" },
-    .{ "winsock2", "getprotobyname" },
-    .{ "winstring", "HSTRING_UserMarshal" },
-    .{ "winstring", "HSTRING_UserUnmarshal" },
-    .{ "wintrust", "WTHelperGetProvSignerFromChain" },
-    .{ "wintrust", "WTHelperGetProvCertFromChain" },
-    .{ "wintrust", "WTHelperProvDataFromStateData" },
-    .{ "wintrust", "WTHelperGetProvPrivateDataFromChain" },
-};
-const filter_types = [_][2][]const u8 {
-    // these structs have multiple base type elements, no issue opened for this yet
-    .{ "clusapi", "CLUSPROP_RESOURCE_CLASS_INFO" },
-    .{ "clusapi", "CLUSTER_SHARED_VOLUME_RENAME_INPUT" },
-    .{ "clusapi", "CLUSTER_SHARED_VOLUME_RENAME_GUID_INPUT" },
-    .{ "clusapi", "CLUSPROP_PARTITION_INFO" },
-    .{ "clusapi", "CLUSPROP_PARTITION_INFO_EX" },
-    .{ "clusapi", "CLUSPROP_PARTITION_INFO_EX2" },
-    .{ "clusapi", "CLUSPROP_SCSI_ADDRESS" },
-    .{ "clusapi", "CLUSPROP_FTSET_INFO" },
-    .{ "clusapi", "PCLUSPROP_RESOURCE_CLASS_INFO" },
-    .{ "clusapi", "PCLUSTER_SHARED_VOLUME_RENAME_INPUT" },
-    .{ "clusapi", "PCLUSTER_SHARED_VOLUME_RENAME_GUID_INPUT" },
-    .{ "clusapi", "PCLUSPROP_PARTITION_INFO" },
-    .{ "clusapi", "PCLUSPROP_FTSET_INFO" },
-    .{ "clusapi", "PCLUSPROP_SCSI_ADDRESS" },
-    // this struct uses bitfields and the windows sdk_data doesn't contain any metadata indicating this, need to open an issue for this
-    .{ "windef", "IMAGE_ARCHITECTURE_HEADER" },
-    .{ "windef", "PIMAGE_ARCHITECTURE_HEADER" },
-    // pointer to these types are not allowed on functions with Stdcall calling convention and as
-    // extern struct fields, I think because the underlying struct type has no fields
-    .{ "winbase", "PCCERT_CHAIN_CONTEXT" },
-    .{ "winbase", "PCCERT_SERVER_OCSP_RESPONSE_CONTEXT" },
-    .{ "winbase", "LPUNKNOWN" },
-    .{ "winbase", "LPSTORAGE" },
-    .{ "winbase", "LPOLECLIENTSITE" },
-    .{ "winbase", "LPDATAOBJECT" },
-
-    // these types are just defined as void (TODO: open an issue for this)
-    .{ "winbase", "MENUTEMPLATEA" },
-    .{ "winbase", "MENUTEMPLATEW" },
-
-    // these are pointer types that are not actually defined as pointer types!
-    .{ "winbase", "LPOVERLAPPED" }, // This one is included in fixed.json
-};
-
 const SdkFileFilter = struct {
-    func_map: std.StringHashMap(bool),
-    type_map: std.StringHashMap(bool),
+    func_map: StringHashMap(bool),
+    type_map: StringHashMap(bool),
     pub fn init() SdkFileFilter {
         return SdkFileFilter {
-            .func_map = std.StringHashMap(bool).init(allocator),
-            .type_map = std.StringHashMap(bool).init(allocator),
+            .func_map = StringHashMap(bool).init(allocator),
+            .type_map = StringHashMap(bool).init(allocator),
         };
     }
     pub fn filterFunc(self: SdkFileFilter, func: []const u8) bool {
@@ -446,7 +113,7 @@ const SdkFileFilter = struct {
         return self.type_map.get(type_str) orelse false;
     }
 };
-var global_file_filter_map = std.StringHashMap(*SdkFileFilter).init(allocator);
+var global_file_filter_map = StringHashMap(*SdkFileFilter).init(allocator);
 fn getFilter(name: []const u8) ?*const SdkFileFilter {
     return global_file_filter_map.get(name);
 }
@@ -459,7 +126,7 @@ fn addCToZigType(c: []const u8, zig: []const u8) !void {
         .metadata = .{ .builtin = true },
     };
     try global_type_map.put(c_type_pool, type_metadata);
-    try global_type_map.put(zig_type_pool, type_metadata);
+    //try global_type_map.put(zig_type_pool, type_metadata);
 }
 
 
@@ -477,8 +144,8 @@ pub fn main() !u8 {
     };
 }
 fn main2() !u8 {
-    var print_time_summary = false;
     const main_start_millis = std.time.milliTimestamp();
+    var print_time_summary = false;
     defer {
         if (print_time_summary) {
             var total_millis = std.time.milliTimestamp() - main_start_millis;
@@ -502,73 +169,59 @@ fn main2() !u8 {
     // TODO: should I have special case handling for the windws types like INT64, DWORD, etc?
     //       maybe I should just add comptime asserts for now, such as comptime { assert(@sizeOf(INT64) == 8) }, etc
 
-    try addCToZigType("char", "i8");
-    try addCToZigType("signed char", "i8");
-    try addCToZigType("unsigned char", "u8");
+    // native types taken from https://github.com/marler8997/windows-api/blob/master/nativetypes.py
+    //try addCToZigType("void", "");
+    //try addCToZigType("int", "c_int");
+    //try addCToZigType("unsigned", "c_uint");
+    //try addCToZigType("uint8_t", "u8");
+    //try addCToZigType("uint16_t", "u16");
+    //try addCToZigType("uint32_t", "u32");
+    //try addCToZigType("uint64_t", "u64");
+    //try addCToZigType("size_t", "usize");
+    //try addCToZigType("int8_t", "i8");
+    //try addCToZigType("int16_t", "i16");
+    //try addCToZigType("int32_t", "i32");
+    //try addCToZigType("int64_t", "i64");
+    //try addCToZigType("ssize_t", "isize");
+    //try addCToZigType("char", "u8");
+    //try addCToZigType("wchar_t", "u16");
+    try global_c_native_to_zig_map.put("void", "opaque{}");
+    try global_c_native_to_zig_map.put("int", "c_int");
+    try global_c_native_to_zig_map.put("unsigned", "c_uint");
+    try global_c_native_to_zig_map.put("uint8_t", "u8");
+    try global_c_native_to_zig_map.put("uint16_t", "u16");
+    try global_c_native_to_zig_map.put("uint32_t", "u32");
+    try global_c_native_to_zig_map.put("uint64_t", "u64");
+    try global_c_native_to_zig_map.put("size_t", "usize");
+    try global_c_native_to_zig_map.put("int8_t", "i8");
+    try global_c_native_to_zig_map.put("int16_t", "i16");
+    try global_c_native_to_zig_map.put("int32_t", "i32");
+    try global_c_native_to_zig_map.put("int64_t", "i64");
+    try global_c_native_to_zig_map.put("ssize_t", "isize");
+    try global_c_native_to_zig_map.put("char", "u8");
+    try global_c_native_to_zig_map.put("wchar_t", "u16");
 
-    try addCToZigType("short", "c_short");
-    try addCToZigType("signed short", "c_short");
-    try addCToZigType("unsigned short", "c_ushort");
-
-    try addCToZigType("int", "c_int");
-    try addCToZigType("signed int", "c_int");
-    try addCToZigType("unsigned int", "c_uint");
-
-    try addCToZigType("long", "c_long");
-    try addCToZigType("signed long", "c_long");
-    try addCToZigType("unsigned long", "c_ulong");
-
-    try addCToZigType("long long", "c_longlong");
-    try addCToZigType("long long int", "c_longlong");
-    try addCToZigType("signed long long int", "c_longlong");
-    try addCToZigType("unsigned long long int", "c_ulonglong");
-
-    try addCToZigType("size_t", "usize");
-
-    try addCToZigType("long double", "c_longdouble");
-
-    // Setup filter
-    for (filter_funcs) |filter_func| {
-        const module = filter_func[0];
-        const func = filter_func[1];
-        const getResult = try global_file_filter_map.getOrPut(module);
-        if (!getResult.found_existing) {
-            getResult.entry.value = try allocator.create(SdkFileFilter);
-            getResult.entry.value.* = SdkFileFilter.init();
-        }
-        try getResult.entry.value.func_map.put(func, true);
-    }
-    for (filter_types) |filter_type| {
-        const module = filter_type[0];
-        const type_str = filter_type[1];
-        const getResult = try global_file_filter_map.getOrPut(module);
-        if (!getResult.found_existing) {
-            getResult.entry.value = try allocator.create(SdkFileFilter);
-            getResult.entry.value.* = SdkFileFilter.init();
-        }
-        try getResult.entry.value.type_map.put(type_str, true);
-    }
-
-    const windows_api_dir_name = "deps" ++ std.fs.path.sep_str ++ "windows-api";
+    const windows_api_dir_name = "deps" ++ path_sep ++ "windows-api";
     // TODO: change this to a SHA!!!
     const windows_api_checkout = "master";
     var windows_api_dir = std.fs.cwd().openDir(windows_api_dir_name, .{}) catch |e| switch (e) {
         error.FileNotFound => {
             std.debug.warn("Error: repository '{}' does not exist, clone it with:\n", .{windows_api_dir_name});
-            std.debug.warn("    git clone https://github.com/marler8997/windows-api deps" ++ std.fs.path.sep_str ++ "windows-api"
-                        ++ " && git -C deps" ++ std.fs.path.sep_str ++ "windows-api checkout " ++ windows_api_checkout ++ " -b release\n", .{});
-            print_time_summary = false;
+            std.debug.warn("    git clone https://github.com/marler8997/windows-api deps" ++ path_sep ++ "windows-api"
+                        ++ " && git -C deps" ++ path_sep ++ "windows-api checkout " ++ windows_api_checkout ++ " -b release\n", .{});
             return error.AlreadyReported;
         },
         else => return e,
     };
     defer windows_api_dir.close();
-    const api_json_sub_path = "out" ++ std.fs.path.sep_str ++ "json";
+
+    const func_dll_map = try loadDllJson(windows_api_dir_name, &windows_api_dir);
+
+    const api_json_sub_path = "out" ++ path_sep ++ "json";
     var api_json_dir = windows_api_dir.openDir(api_json_sub_path, .{.iterate = true}) catch |e| switch (e) {
         error.FileNotFound => {
-            std.debug.warn("Error: JSON files have not been generated in '{}{}{}', generate them with:\n", .{windows_api_dir_name, std.fs.path.sep_str, api_json_sub_path});
+            std.debug.warn("Error: JSON files have not been generated in '{}{}{}', generate them with:\n", .{windows_api_dir_name, path_sep, api_json_sub_path});
             std.debug.warn("    python3 deps/windows-api/json-gen\n", .{});
-            print_time_summary = false;
             return error.AlreadyReported;
         },
         else => return e,
@@ -581,50 +234,31 @@ fn main2() !u8 {
     var out_dir = try cwd.openDir(out_dir_string, .{});
     defer out_dir.close();
 
-    var shared_type_export_map = std.StringHashMap(SharedTypeExportEntry).init(allocator);
+    var shared_type_export_map = StringHashMap(SharedTypeExportEntry).init(allocator);
     defer shared_type_export_map.deinit();
 
-    var sdk_files = std.ArrayList(*SdkFile).init(allocator);
+    var sdk_files = ArrayList(*SdkFile).init(allocator);
     defer sdk_files.deinit();
     {
         try out_dir.makeDir("windows");
         var out_windows_dir = try out_dir.openDir("windows", .{});
         defer out_windows_dir.close();
 
+        std.debug.warn("-----------------------------------------------------------------------\n", .{});
+        std.debug.warn("loading api json files...\n", .{});
         var dir_it = api_json_dir.iterate();
-        var entry_index : usize = 0;
-        while (try dir_it.next()) |entry| : (entry_index += 1) {
-            if (std.mem.eql(u8, entry.name, "windows.json")) {
-                // ignore this one, it's just an object with 3 empty arrays, not an array like all the others
-                continue;
-            }
-
-            // temporarily skip most files to speed up initial development
-            //const optional_filter : ?[]const u8 = "w";
-            const optional_filter : ?[]const u8 = null;
-            if (optional_filter) |filter| {
-                if (!std.mem.startsWith(u8, entry.name, filter)) {
-                    std.debug.warn("temporarily skipping '{}'\n", .{entry.name});
-                    continue;
-                }
-            }
-            // Temporary code to skip the first N modules
-            const SKIP_COUNT = 0;
-            if (entry_index < SKIP_COUNT) {
-                std.debug.warn("temporarily skipping '{}'\n", .{entry.name});
-                continue;
-            }
+        while (try dir_it.next()) |entry| {
             if (!std.mem.endsWith(u8, entry.name, ".json")) {
                 std.debug.warn("Error: expected all files to end in '.json' but got '{}'\n", .{entry.name});
-                return 1; // fail
+                return error.AlreadyReported;
             }
-            std.debug.warn("{}: loading '{}'\n", .{entry_index, entry.name});
+            std.debug.warn("loading '{}'\n", .{entry.name});
             //
             // TODO: would things run faster if I just memory mapped the file?
             //
             var file = try api_json_dir.openFile(entry.name, .{});
             defer file.close();
-            try readAndGenerateFile(out_windows_dir, &sdk_files, entry.name, file);
+            try readAndGenerateApiFile(out_windows_dir, func_dll_map, &sdk_files, entry.name, file);
         }
 
         // populate the shared_type_export_map
@@ -685,9 +319,9 @@ fn main2() !u8 {
             // TODO: workaround issue where constants/functions are defined more than once, not sure what the right solution
             //       is for all these, maybe some modules are not compatible with each other.  This could just be the permanent
             //       solution as well, if there are conflicts, we could just say the user has to import the specific module they want.
-            var shared_const_map = std.StringHashMap(*SdkFile).init(allocator);
+            var shared_const_map = StringHashMap(*SdkFile).init(allocator);
             defer shared_const_map.deinit();
-            var shared_func_map = std.StringHashMap(*SdkFile).init(allocator);
+            var shared_func_map = StringHashMap(*SdkFile).init(allocator);
             defer shared_func_map.deinit();
 
             for (sdk_files.items) |sdk_file| {
@@ -746,11 +380,73 @@ fn main2() !u8 {
             \\
         );
     }
-
+    print_time_summary = true;
     return 0;
 }
 
-fn readAndGenerateFile(out_dir: std.fs.Dir, sdk_files: *std.ArrayList(*SdkFile), json_basename: []const u8, file: std.fs.File) !void {
+const FuncDllEntry = struct {
+    dlls: ArrayList([]const u8),
+};
+fn loadDllJson(windows_api_dir_name: []const u8, windows_api_dir: *std.fs.Dir) !StringHashMap(*FuncDllEntry) {
+    const dll_json_sub_path = "out" ++ path_sep ++ "dll-json";
+    var dll_json_dir = windows_api_dir.openDir(dll_json_sub_path, .{.iterate = true}) catch |e| switch (e) {
+        error.FileNotFound => {
+            std.debug.warn("Error: dll JSON files have not been generated in '{}{}{}'.\n", .{windows_api_dir_name, path_sep, dll_json_sub_path});
+            std.debug.warn("    !! Run the following in a Visual Studio Command Prompt !!\n", .{});
+            std.debug.warn("    python3 {}{}{}{}dll-json-gen\n", .{
+                try getcwd(allocator), path_sep, windows_api_dir_name, path_sep});
+            return error.AlreadyReported;
+        },
+        else => return e,
+    };
+    defer dll_json_dir.close();
+
+    var func_dll_map = StringHashMap(*FuncDllEntry).init(allocator);
+
+    std.debug.warn("Loading dll json files...\n", .{});
+    var dir_it = dll_json_dir.iterate();
+    while (try dir_it.next()) |dir_entry| {
+        const json_basename = dir_entry.name;
+        if (!std.mem.endsWith(u8, json_basename, ".json")) {
+            std.debug.warn("Error: expected all files to end in '.json' but got '{}'\n", .{json_basename});
+            return error.AlreadyReported;
+        }
+        std.debug.warn("loading '{}'\n", .{json_basename});
+        const dll_name = try global_symbol_pool.add(json_basename[0..json_basename.len - 5]);
+        //
+        // TODO: would things run faster if I just memory mapped the file?
+        //
+        var file = try dll_json_dir.openFile(json_basename, .{});
+        defer file.close();
+        const content = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
+        defer allocator.free(content);
+        std.debug.warn("  read {} bytes\n", .{content.len});
+        var parser = json.Parser.init(allocator, false); // false is copy_strings
+        defer parser.deinit();
+        var jsonTree = try parser.parse(content);
+        defer jsonTree.deinit();
+        for (jsonTree.root.Array.items) |func_node| {
+            const func_obj = func_node.Object;
+            try jsonObjEnforceKnownFieldsOnly(func_obj, &[_][]const u8 {"name", "ordinal"}, json_basename);
+            const name_tmp = (try jsonObjGetRequired(func_obj, "name", json_basename)).String;
+            const ordinal = (try jsonObjGetRequired(func_obj, "ordinal", json_basename)).Integer;
+            const name_pool = try global_symbol_pool.add(name_tmp);
+            var func_entry = init: {
+                if (func_dll_map.get(name_pool)) |existing| break :init existing;
+                var new_entry = try allocator.create(FuncDllEntry);
+                new_entry.* = .{
+                    .dlls = ArrayList([]const u8).init(allocator),
+                };
+                try func_dll_map.put(name_pool, new_entry);
+                break :init new_entry;
+            };
+            try func_entry.dlls.append(dll_name);
+        }
+    }
+    return func_dll_map;
+}
+
+fn readAndGenerateApiFile(out_dir: std.fs.Dir, func_dll_map: StringHashMap(*FuncDllEntry), sdk_files: *ArrayList(*SdkFile), json_basename: []const u8, file: std.fs.File) !void {
 
     const read_start_millis = std.time.milliTimestamp();
     const content = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
@@ -770,11 +466,11 @@ fn readAndGenerateFile(out_dir: std.fs.Dir, sdk_files: *std.ArrayList(*SdkFile),
     var sdk_file = try SdkFile.create(try std.mem.dupe(allocator, u8, json_basename));
     try sdk_files.append(sdk_file);
     const generate_start_millis = std.time.milliTimestamp();
-    try generateFile(out_dir, jsonTree, sdk_file);
+    try generateFile(out_dir, func_dll_map, sdk_file, jsonTree);
     global_times.generate_time_millis += std.time.milliTimestamp() - generate_start_millis;
 }
 
-fn generateFile(out_dir: std.fs.Dir, tree: json.ValueTree, sdk_file: *SdkFile) !void {
+fn generateFile(out_dir: std.fs.Dir, func_dll_map: StringHashMap(*FuncDllEntry), sdk_file: *SdkFile, tree: json.ValueTree) !void {
     var out_file = try out_dir.createFile(sdk_file.zig_filename, .{});
     defer out_file.close();
     const out_writer = out_file.writer();
@@ -787,15 +483,26 @@ fn generateFile(out_dir: std.fs.Dir, tree: json.ValueTree, sdk_file: *SdkFile) !
     //try out_writer.print("usingnamespace @import(\"./everything.zig\");\n", .{});
     const root_obj = tree.root.Object;
     const types_array = (try jsonObjGetRequired(root_obj, "types", sdk_file)).Array;
-    for (types_array.items) |decl_node| {
-        try out_writer.print("// type {}\n", .{formatJson(decl_node)});
-        //try generateTopLevelDecl(sdk_file, out_writer, optional_filter, decl_node.Object);
-    }
     const constants_array = (try jsonObjGetRequired(root_obj, "constants", sdk_file)).Array;
     const functions_array = (try jsonObjGetRequired(root_obj, "functions", sdk_file)).Array;
-    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    // TODO: generate stuff from types_obj, constants_obj and functions_obj
-    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    try out_writer.print("//\n", .{});
+    try out_writer.print("// {} types\n", .{types_array.items.len});
+    try out_writer.print("//\n", .{});
+    for (types_array.items) |type_node| {
+        try generateTypeLevelType(sdk_file, out_writer, type_node.Object);
+    }
+    try out_writer.print("//\n", .{});
+    try out_writer.print("// {} constants\n", .{constants_array.items.len});
+    try out_writer.print("//\n", .{});
+    for (constants_array.items) |constant_node| {
+        try generateConstant(sdk_file, out_writer, constant_node.Object);
+    }
+    try out_writer.print("//\n", .{});
+    try out_writer.print("// {} functions\n", .{functions_array.items.len});
+    try out_writer.print("//\n", .{});
+    for (functions_array.items) |function_node| {
+        try generateFunction(func_dll_map, sdk_file, out_writer, function_node.Object);
+    }
     try sdk_file.populateImports();
     try out_writer.print(
         \\
@@ -809,6 +516,188 @@ fn generateFile(out_dir: std.fs.Dir, tree: json.ValueTree, sdk_file: *SdkFile) !
         \\}}
         \\
     , .{sdk_file.type_imports.items.len, sdk_file.const_exports.items.len, sdk_file.type_exports.count(), sdk_file.func_exports.items.len});
+}
+
+fn typeIsVoid(type_obj: json.ObjectMap, sdk_file: *SdkFile) !bool {
+    const kind = (try jsonObjGetRequired(type_obj, "kind", sdk_file)).String;
+    if (std.mem.eql(u8, kind, "native")) {
+        const name = (try jsonObjGetRequired(type_obj, "name", sdk_file)).String;
+        return std.mem.eql(u8, name, "void");
+    }
+    return false;
+}
+
+fn addTypeRefs(sdk_file: *SdkFile, type_ref: json.ObjectMap) anyerror!void {
+    const kind = (try jsonObjGetRequired(type_ref, "kind", sdk_file)).String;
+    if (std.mem.eql(u8, kind, "native")) {
+        try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"kind", "name"}, sdk_file);
+    } else if (std.mem.eql(u8, kind, "alias")) {
+        try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"kind", "name"}, sdk_file);
+        const type_entry = try getTypeWithTempString((try jsonObjGetRequired(type_ref, "name", sdk_file)).String);
+        try sdk_file.addTypeRef(type_entry);
+    } else {
+        const is_arrayptr = std.mem.eql(u8, kind, "arrayptr");
+        if (is_arrayptr or std.mem.eql(u8, kind, "singleptr")) {
+            try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"kind", "const", "subtype"}, sdk_file);
+            try addTypeRefs(sdk_file, (try jsonObjGetRequired(type_ref, "subtype", sdk_file)).Object);
+        } else {
+            std.debug.assert(std.mem.eql(u8, kind, "funcptr"));
+            try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"kind", "return_type", "args"}, sdk_file);
+            try addTypeRefs(sdk_file, (try jsonObjGetRequired(type_ref, "return_type", sdk_file)).Object);
+            for ((try jsonObjGetRequired(type_ref, "args", sdk_file)).Array.items) |arg_node| {
+                const arg_obj = arg_node.Object;
+                try jsonObjEnforceKnownFieldsOnly(arg_obj, &[_][]const u8 {"type", "name"}, sdk_file);
+                try addTypeRefs(sdk_file, (try jsonObjGetRequired(arg_obj, "type", sdk_file)).Object);
+            }
+        }
+    }
+}
+
+const TypeRefFormatter = struct {
+    type_ref: json.ObjectMap,
+    sdk_file: *SdkFile,
+    pub fn format(
+        self: @This(),
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) std.os.WriteError!void {
+        const kind = (jsonObjGetRequired(self.type_ref, "kind", self.sdk_file) catch unreachable).String;
+        if (std.mem.eql(u8, kind, "native")) {
+            jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"kind", "name"}, self.sdk_file) catch unreachable;
+            const name = (jsonObjGetRequired(self.type_ref, "name", self.sdk_file) catch unreachable).String;
+            try writer.writeAll(global_c_native_to_zig_map.get(name) orelse std.debug.panic("unhandled native type '{}'", .{name}));
+        } else if (std.mem.eql(u8, kind, "alias")) {
+            jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"kind", "name"}, self.sdk_file) catch unreachable;
+            try writer.writeAll((jsonObjGetRequired(self.type_ref, "name", self.sdk_file) catch unreachable).String);
+        } else {
+            const is_arrayptr = std.mem.eql(u8, kind, "arrayptr");
+            if (is_arrayptr or std.mem.eql(u8, kind, "singleptr")) {
+                // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                // TODO: need to know if this is a sentinal terminated pointer
+                // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                const is_const = (jsonObjGetRequired(self.type_ref, "const", self.sdk_file) catch unreachable).Bool;
+                const subtype = (jsonObjGetRequired(self.type_ref, "subtype", self.sdk_file) catch unreachable).Object;
+                try writer.writeAll(if (is_arrayptr) "[*]" else "*");
+                if (is_const) {
+                    try writer.writeAll("const ");
+                }
+                try formatTypeRef(subtype, self.sdk_file).format(fmt, options, writer);
+            } else {
+                std.debug.assert(std.mem.eql(u8, kind, "funcptr"));
+                jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"kind", "return_type", "args"}, self.sdk_file) catch unreachable;
+                try writer.writeAll("fn(");
+                var arg_prefix : []const u8 = "";
+                for ((jsonObjGetRequired(self.type_ref, "args", self.sdk_file) catch unreachable).Array.items) |arg_node| {
+                    const arg_obj = arg_node.Object;
+                    jsonObjEnforceKnownFieldsOnly(arg_obj, &[_][]const u8 {"name", "type"}, self.sdk_file) catch unreachable;
+                    const arg_name = (jsonObjGetRequired(arg_obj, "name", self.sdk_file) catch unreachable).String;
+                    const arg_type = (jsonObjGetRequired(arg_obj, "type", self.sdk_file) catch unreachable).Object;
+                    try writer.print("{}{}: ", .{arg_prefix, arg_name});
+                    try formatTypeRef(arg_type, self.sdk_file).format(fmt, options, writer);
+                    arg_prefix = ", ";
+                }
+                try writer.writeAll(")");
+                const return_type = (jsonObjGetRequired(self.type_ref, "return_type", self.sdk_file) catch unreachable).Object;
+                try formatTypeRef(return_type, self.sdk_file).format(fmt, options, writer);
+            }
+        }
+    }
+};
+pub fn formatTypeRef(type_ref: json.ObjectMap, sdk_file: *SdkFile) TypeRefFormatter {
+    return .{ .type_ref = type_ref, .sdk_file = sdk_file };
+}
+
+fn generateTypeLevelType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap) !void {
+    const kind = (try jsonObjGetRequired(type_obj, "kind", sdk_file)).String;
+    const name_tmp = (try jsonObjGetRequired(type_obj, "name", sdk_file)).String;
+    const type_entry = try getTypeWithTempString(name_tmp);
+    if (type_entry.metadata.builtin) {
+        std.debug.warn("Error: type '{}' is defined and builtin?\n", .{name_tmp});
+        return error.AlreadyReported;
+    }
+    std.debug.assert(std.mem.eql(u8, name_tmp, type_entry.zig_type_from_pool));
+    if (sdk_file.type_exports.get(name_tmp)) |type_entry_conflict| {
+        // TODO: open an issue for these (there's over 600 redefinitions!)
+        std.debug.warn("Error: redefinition of type '{}' in the same module\n", .{name_tmp});
+        return error.AlreadyReported;
+    }
+    try sdk_file.type_exports.put(type_entry.zig_type_from_pool, type_entry);
+
+    if (std.mem.eql(u8, kind, "typedef")) {
+        try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"kind", "name", "definition"}, sdk_file);
+        const def_type = (try jsonObjGetRequired(type_obj, "definition", sdk_file)).Object;
+        try addTypeRefs(sdk_file, def_type);
+        try out_writer.print("pub const {} = {};\n", .{name_tmp, formatTypeRef(def_type, sdk_file)});
+    } else if (std.mem.eql(u8, kind, "struct")) {
+        try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"kind", "name", "fields"}, sdk_file);
+        const struct_name = (try jsonObjGetRequired(type_obj, "name", sdk_file)).String;
+        const fields = (try jsonObjGetRequired(type_obj, "fields", sdk_file)).Array;
+        try out_writer.print("pub const {} = struct {{\n", .{struct_name});
+        for (fields.items) |field_node| {
+            const field_obj = field_node.Object;
+            const field_name = (try jsonObjGetRequired(field_obj, "name", sdk_file)).String;
+            const field_type = (try jsonObjGetRequired(field_obj, "type", sdk_file)).Object;
+            try out_writer.print("    {}: u32, // {}\n", .{field_name, formatJson(field_type)});
+        }
+        try out_writer.print("}};\n", .{});
+    } else {
+            std.debug.warn("{}: Error: unknown type kind '{}'", .{sdk_file.name, kind});
+            return error.AlreadyReported;
+    }
+}
+fn generateConstant(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, constant_obj: json.ObjectMap) !void {
+    try jsonObjEnforceKnownFieldsOnly(constant_obj, &[_][]const u8 {"name", "type", "value"}, sdk_file);
+    const name_tmp = (try jsonObjGetRequired(constant_obj, "name", sdk_file)).String;
+    const constant_type = (try jsonObjGetRequired(constant_obj, "type", sdk_file)).Object;
+    const value = (try jsonObjGetRequired(constant_obj, "value", sdk_file)).String;
+
+    const name_pool = try global_symbol_pool.add(name_tmp);
+    try sdk_file.const_exports.append(name_pool);
+    if (try typeIsVoid(constant_type, sdk_file)) {
+        try out_writer.print("pub const {} = {};\n", .{name_pool, value});
+    } else {
+        try addTypeRefs(sdk_file, constant_type);
+        try out_writer.print("pub const {} = {}; // TODO: support type {}\n", .{name_pool, value, formatTypeRef(constant_type, sdk_file)});
+    }
+}
+
+fn generateFunction(func_dll_map: StringHashMap(*FuncDllEntry), sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function_obj: json.ObjectMap) !void {
+    try jsonObjEnforceKnownFieldsOnly(function_obj, &[_][]const u8 {"name", "return_type", "args"}, sdk_file);
+    const func_name_tmp = (try jsonObjGetRequired(function_obj, "name", sdk_file)).String;
+    const return_type = (try jsonObjGetRequired(function_obj, "return_type", sdk_file)).Object;
+    const args = (try jsonObjGetRequired(function_obj, "args", sdk_file)).Array;
+
+    const func_name_pool = try global_symbol_pool.add(func_name_tmp);
+    try sdk_file.func_exports.append(func_name_pool);
+
+    const func_entry = func_dll_map.get(func_name_pool) orelse {
+        std.debug.warn("Error: function '{}' is not in any dll json file\n", .{func_name_pool});
+        return error.AlreadyReported;
+    };
+    if (func_entry.dlls.items.len != 1) {
+        std.debug.warn("Error: function '{}' is found in these {} dlls:\n", .{func_name_pool, func_entry.dlls.items.len});
+        for (func_entry.dlls.items) |dll| {
+            std.debug.warn("    {}\n", .{dll});
+        }
+        return error.AlreadyReported;
+    }
+
+    try out_writer.print("pub extern \"{}\" fn {}(\n", .{func_entry.dlls.items[0], func_name_pool});
+    for (args.items) |arg_node| {
+        const arg_obj = arg_node.Object;
+        try jsonObjEnforceKnownFieldsOnly(arg_obj, &[_][]const u8 {"name", "type"}, sdk_file);
+        const arg_name = (try jsonObjGetRequired(arg_obj, "name", sdk_file)).String;
+        const arg_type = (try jsonObjGetRequired(arg_obj, "type", sdk_file)).Object;
+        try addTypeRefs(sdk_file, arg_type);
+        try out_writer.print("    {}: {},\n", .{arg_name, formatTypeRef(arg_type, sdk_file)});
+    }
+    try addTypeRefs(sdk_file, return_type);
+    try out_writer.print(") callconv(.Stdcall) {};\n", .{formatTypeRef(return_type, sdk_file)});
 }
 
 fn generateTopLevelDecl(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, optional_filter: ?*const SdkFileFilter, decl_obj: json.ObjectMap) !void {
@@ -1261,22 +1150,37 @@ pub fn formatSliceT(comptime T: type, slice: []const T) SliceFormatter(T) {
 //    return .{ .slice = slice };
 //}
 
-fn jsonObjEnforceKnownFieldsOnly(map: json.ObjectMap, known_fields: []const []const u8, sdk_file: *SdkFile) !void {
+fn jsonObjEnforceKnownFieldsOnly(map: json.ObjectMap, known_fields: []const []const u8, file_thing: anytype) !void {
+    if (@TypeOf(file_thing) == *SdkFile)
+        return jsonObjEnforceKnownFieldsOnlyImpl(map, known_fields, file_thing.json_basename);
+    if (@TypeOf(file_thing) == []const u8)
+        return jsonObjEnforceKnownFieldsOnlyImpl(map, known_fields, file_thing);
+    @compileError("unhandled file_thing type: " ++ @typeName(@TypeOf(file_thing)));
+}
+
+fn jsonObjEnforceKnownFieldsOnlyImpl(map: json.ObjectMap, known_fields: []const []const u8, file_for_error: []const u8) !void {
     var it = map.iterator();
     fieldLoop: while (it.next()) |kv| {
         for (known_fields) |known_field| {
             if (std.mem.eql(u8, known_field, kv.key))
                 continue :fieldLoop;
         }
-        std.debug.warn("{}: Error: JSON object has unknown field '{}', expected one of: {}\n", .{sdk_file.json_basename, kv.key, formatSliceT([]const u8, known_fields)});
+        std.debug.warn("{}: Error: JSON object has unknown field '{}', expected one of: {}\n", .{file_for_error, kv.key, formatSliceT([]const u8, known_fields)});
         return error.AlreadyReported;
     }
 }
 
-fn jsonObjGetRequired(map: json.ObjectMap, field: []const u8, sdk_file: *SdkFile) !json.Value {
+fn jsonObjGetRequired(map: json.ObjectMap, field: []const u8, file_thing: anytype) !json.Value {
+    if (@TypeOf(file_thing) == *SdkFile)
+        return jsonObjGetRequiredImpl(map, field, file_thing.json_basename);
+    if (@TypeOf(file_thing) == []const u8)
+        return jsonObjGetRequiredImpl(map, field, file_thing);
+    @compileError("unhandled file_thing type: " ++ @typeName(@TypeOf(file_thing)));
+}
+fn jsonObjGetRequiredImpl(map: json.ObjectMap, field: []const u8, file_for_error: []const u8) !json.Value {
     return map.get(field) orelse {
         // TODO: print file location?
-        std.debug.warn("{}: json object is missing '{}' field: {}\n", .{sdk_file.json_basename, field, formatJson(map)});
+        std.debug.warn("{}: json object is missing '{}' field: {}\n", .{file_for_error, field, formatJson(map)});
         return error.AlreadyReported;
     };
 }
@@ -1325,4 +1229,12 @@ fn cleanDir(dir: std.fs.Dir, sub_path: []const u8) !void {
         break;
     }
 
+}
+
+fn getcwd(a: *std.mem.Allocator) ![]u8 {
+    var path_buf : [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    const path = try std.os.getcwd(&path_buf);
+    const path_allocated = try a.alloc(u8, path.len);
+    std.mem.copy(u8, path_allocated, path);
+    return path_allocated;
 }
