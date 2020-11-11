@@ -311,6 +311,7 @@ fn main2() !u8 {
                 \\//! This module contains aliases to ALL symbols inside the windows SDK.  It allows
                 \\//! an application to access any and all symbols through a single import.
                 \\
+                \\pub const L = @import("./header/gluezig.zig").L;
             );
 
             // TODO: workaround issue where constants/functions are defined more than once, not sure what the right solution
@@ -542,8 +543,7 @@ fn addTypeRefs(sdk_file: *SdkFile, type_ref: json.ObjectMap) anyerror!void {
         if (is_arrayptr or std.mem.eql(u8, kind, "singleptr")) {
             try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"kind", "const", "subtype"}, sdk_file);
             try addTypeRefs(sdk_file, (try jsonObjGetRequired(type_ref, "subtype", sdk_file)).Object);
-        } else {
-            std.debug.assert(std.mem.eql(u8, kind, "funcptr"));
+        } else if (std.mem.eql(u8, kind, "funcptr")) {
             try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"kind", "return_type", "args"}, sdk_file);
             try addTypeRefs(sdk_file, (try jsonObjGetRequired(type_ref, "return_type", sdk_file)).Object);
             for ((try jsonObjGetRequired(type_ref, "args", sdk_file)).Array.items) |arg_node| {
@@ -551,6 +551,10 @@ fn addTypeRefs(sdk_file: *SdkFile, type_ref: json.ObjectMap) anyerror!void {
                 try jsonObjEnforceKnownFieldsOnly(arg_obj, &[_][]const u8 {"type", "name"}, sdk_file);
                 try addTypeRefs(sdk_file, (try jsonObjGetRequired(arg_obj, "type", sdk_file)).Object);
             }
+        } else {
+            std.debug.assert(std.mem.eql(u8, kind, "fixedlenarray"));
+            try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"kind", "len", "subtype"}, sdk_file);
+            try addTypeRefs(sdk_file, (try jsonObjGetRequired(type_ref, "subtype", sdk_file)).Object);
         }
     }
 }
@@ -592,6 +596,7 @@ const TypeRefFormatter = struct {
                 // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
                 // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
                 // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"kind", "const", "subtype"}, self.sdk_file) catch unreachable;
                 const is_const = (jsonObjGetRequired(self.type_ref, "const", self.sdk_file) catch unreachable).Bool;
                 const subtype = (jsonObjGetRequired(self.type_ref, "subtype", self.sdk_file) catch unreachable).Object;
                 try writer.writeAll(if (is_arrayptr) "?[*]" else "?*");
@@ -599,8 +604,7 @@ const TypeRefFormatter = struct {
                     try writer.writeAll("const ");
                 }
                 try formatTypeRef(subtype, .child, self.sdk_file).format(fmt, options, writer);
-            } else {
-                std.debug.assert(std.mem.eql(u8, kind, "funcptr"));
+            } else if (std.mem.eql(u8, kind, "funcptr")) {
                 jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"kind", "return_type", "args"}, self.sdk_file) catch unreachable;
                 try writer.writeAll("fn(");
                 var arg_prefix : []const u8 = "";
@@ -616,6 +620,13 @@ const TypeRefFormatter = struct {
                 try writer.writeAll(") callconv(.Stdcall) ");
                 const return_type = (jsonObjGetRequired(self.type_ref, "return_type", self.sdk_file) catch unreachable).Object;
                 try formatTypeRef(return_type, .top_level, self.sdk_file).format(fmt, options, writer);
+            } else {
+                std.debug.assert(std.mem.eql(u8, kind, "fixedlenarray"));
+                jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"kind", "len", "subtype"}, self.sdk_file) catch unreachable;
+                const len = (jsonObjGetRequired(self.type_ref, "len", self.sdk_file) catch unreachable).Integer;
+                const subtype = (jsonObjGetRequired(self.type_ref, "subtype", self.sdk_file) catch unreachable).Object;
+                try writer.print("[{}]", .{len});
+                try formatTypeRef(subtype, .child, self.sdk_file).format(fmt, options, writer);
             }
         }
     }
@@ -649,7 +660,7 @@ fn generateTypeLevelType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, typ
         try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"kind", "name", "fields"}, sdk_file);
         const struct_name = (try jsonObjGetRequired(type_obj, "name", sdk_file)).String;
         const fields = (try jsonObjGetRequired(type_obj, "fields", sdk_file)).Array;
-        try out_writer.print("pub const {} = struct {{\n", .{struct_name});
+        try out_writer.print("pub const {} = extern struct {{\n", .{struct_name});
         for (fields.items) |field_node| {
             const field_obj = field_node.Object;
             const field_name = (try jsonObjGetRequired(field_obj, "name", sdk_file)).String;
