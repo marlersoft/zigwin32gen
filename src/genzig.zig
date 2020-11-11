@@ -185,7 +185,6 @@ fn main2() !u8 {
     //try addCToZigType("ssize_t", "isize");
     //try addCToZigType("char", "u8");
     //try addCToZigType("wchar_t", "u16");
-    try global_c_native_to_zig_map.put("void", "opaque{}");
     try global_c_native_to_zig_map.put("int", "c_int");
     try global_c_native_to_zig_map.put("unsigned", "c_uint");
     try global_c_native_to_zig_map.put("uint8_t", "u8");
@@ -582,8 +581,13 @@ fn addTypeRefs(sdk_file: *SdkFile, type_ref: json.ObjectMap) anyerror!void {
     }
 }
 
+const DepthContext = enum {top_level, child};
 const TypeRefFormatter = struct {
     type_ref: json.ObjectMap,
+    // we need to know if the type is the top-level type or a child type of something like a pointer
+    // so we can generate the correct `void` type.  Top level void types become void, but pointers
+    // to void types must become pointers to the `opaque{}` type.
+    depth_context: DepthContext,
     sdk_file: *SdkFile,
     pub fn format(
         self: @This(),
@@ -595,7 +599,12 @@ const TypeRefFormatter = struct {
         if (std.mem.eql(u8, kind, "native")) {
             jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"kind", "name"}, self.sdk_file) catch unreachable;
             const name = (jsonObjGetRequired(self.type_ref, "name", self.sdk_file) catch unreachable).String;
-            try writer.writeAll(global_c_native_to_zig_map.get(name) orelse std.debug.panic("unhandled native type '{}'", .{name}));
+            // void is special
+            if (std.mem.eql(u8, name, "void")) {
+                try writer.writeAll(if (self.depth_context == .child) "opaque{}" else "void");
+            } else {
+                try writer.writeAll(global_c_native_to_zig_map.get(name) orelse std.debug.panic("unhandled native type '{}'", .{name}));
+            }
         } else if (std.mem.eql(u8, kind, "alias")) {
             jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"kind", "name"}, self.sdk_file) catch unreachable;
             try writer.writeAll((jsonObjGetRequired(self.type_ref, "name", self.sdk_file) catch unreachable).String);
@@ -615,7 +624,7 @@ const TypeRefFormatter = struct {
                 if (is_const) {
                     try writer.writeAll("const ");
                 }
-                try formatTypeRef(subtype, self.sdk_file).format(fmt, options, writer);
+                try formatTypeRef(subtype, .child, self.sdk_file).format(fmt, options, writer);
             } else {
                 std.debug.assert(std.mem.eql(u8, kind, "funcptr"));
                 jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"kind", "return_type", "args"}, self.sdk_file) catch unreachable;
@@ -627,18 +636,18 @@ const TypeRefFormatter = struct {
                     const arg_name = (jsonObjGetRequired(arg_obj, "name", self.sdk_file) catch unreachable).String;
                     const arg_type = (jsonObjGetRequired(arg_obj, "type", self.sdk_file) catch unreachable).Object;
                     try writer.print("{}{}: ", .{arg_prefix, arg_name});
-                    try formatTypeRef(arg_type, self.sdk_file).format(fmt, options, writer);
+                    try formatTypeRef(arg_type, .top_level, self.sdk_file).format(fmt, options, writer);
                     arg_prefix = ", ";
                 }
                 try writer.writeAll(") callconv(.Stdcall) ");
                 const return_type = (jsonObjGetRequired(self.type_ref, "return_type", self.sdk_file) catch unreachable).Object;
-                try formatTypeRef(return_type, self.sdk_file).format(fmt, options, writer);
+                try formatTypeRef(return_type, .top_level, self.sdk_file).format(fmt, options, writer);
             }
         }
     }
 };
-pub fn formatTypeRef(type_ref: json.ObjectMap, sdk_file: *SdkFile) TypeRefFormatter {
-    return .{ .type_ref = type_ref, .sdk_file = sdk_file };
+pub fn formatTypeRef(type_ref: json.ObjectMap, depth_context: DepthContext, sdk_file: *SdkFile) TypeRefFormatter {
+    return .{ .type_ref = type_ref, .depth_context = depth_context, .sdk_file = sdk_file };
 }
 
 fn generateTypeLevelType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap) !void {
@@ -661,7 +670,7 @@ fn generateTypeLevelType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, typ
         try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"kind", "name", "definition"}, sdk_file);
         const def_type = (try jsonObjGetRequired(type_obj, "definition", sdk_file)).Object;
         try addTypeRefs(sdk_file, def_type);
-        try out_writer.print("pub const {} = {};\n", .{name_tmp, formatTypeRef(def_type, sdk_file)});
+        try out_writer.print("pub const {} = {};\n", .{name_tmp, formatTypeRef(def_type, .top_level, sdk_file)});
     } else if (std.mem.eql(u8, kind, "struct")) {
         try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"kind", "name", "fields"}, sdk_file);
         const struct_name = (try jsonObjGetRequired(type_obj, "name", sdk_file)).String;
@@ -672,7 +681,7 @@ fn generateTypeLevelType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, typ
             const field_name = (try jsonObjGetRequired(field_obj, "name", sdk_file)).String;
             const field_type = (try jsonObjGetRequired(field_obj, "type", sdk_file)).Object;
             try addTypeRefs(sdk_file, field_type);
-            try out_writer.print("    {}: {},\n", .{field_name, formatTypeRef(field_type, sdk_file)});
+            try out_writer.print("    {}: {},\n", .{field_name, formatTypeRef(field_type, .top_level, sdk_file)});
         }
         try out_writer.print("}};\n", .{});
     } else {
@@ -692,7 +701,7 @@ fn generateConstant(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, constant
         try out_writer.print("pub const {} = {};\n", .{name_pool, value});
     } else {
         try addTypeRefs(sdk_file, constant_type);
-        try out_writer.print("pub const {} = @import(\"gluezig.zig\").typedConstant({}, {});\n", .{name_pool, formatTypeRef(constant_type, sdk_file), value});
+        try out_writer.print("pub const {} = @import(\"gluezig.zig\").typedConstant({}, {});\n", .{name_pool, formatTypeRef(constant_type, .top_level, sdk_file), value});
     }
 }
 
@@ -724,10 +733,10 @@ fn generateFunction(func_dll_map: StringHashMap(*FuncDllEntry), sdk_file: *SdkFi
         const arg_name = (try jsonObjGetRequired(arg_obj, "name", sdk_file)).String;
         const arg_type = (try jsonObjGetRequired(arg_obj, "type", sdk_file)).Object;
         try addTypeRefs(sdk_file, arg_type);
-        try out_writer.print("    {}: {},\n", .{arg_name, formatTypeRef(arg_type, sdk_file)});
+        try out_writer.print("    {}: {},\n", .{arg_name, formatTypeRef(arg_type, .top_level, sdk_file)});
     }
     try addTypeRefs(sdk_file, return_type);
-    try out_writer.print(") callconv(.Stdcall) {};\n", .{formatTypeRef(return_type, sdk_file)});
+    try out_writer.print(") callconv(.Stdcall) {};\n", .{formatTypeRef(return_type, .top_level, sdk_file)});
 }
 
 fn generateTopLevelDecl(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, optional_filter: ?*const SdkFileFilter, decl_obj: json.ObjectMap) !void {
