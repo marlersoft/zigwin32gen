@@ -34,6 +34,13 @@ python3 deps/windows-api/json-gen
 
 The JSON files will now be in `deps/windows-api/out/json`
 
+* Generate the DLL function json files
+
+Run the following inside a Visual Studio Command Prompt (because it requires `dumpbin`):
+```
+python3 D:\git\zig-os-windows\deps\windows-api\dll-json-gen
+```
+
 * Generate the Zig bindings
 ```
 zig build genzig

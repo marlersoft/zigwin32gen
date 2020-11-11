@@ -207,8 +207,10 @@ fn main2() !u8 {
     var windows_api_dir = std.fs.cwd().openDir(windows_api_dir_name, .{}) catch |e| switch (e) {
         error.FileNotFound => {
             std.debug.warn("Error: repository '{}' does not exist, clone it with:\n", .{windows_api_dir_name});
-            std.debug.warn("    git clone https://github.com/marler8997/windows-api deps" ++ path_sep ++ "windows-api"
-                        ++ " && git -C deps" ++ path_sep ++ "windows-api checkout " ++ windows_api_checkout ++ " -b release\n", .{});
+            std.debug.warn("    git clone https://github.com/marler8997/windows-api {0}" ++ path_sep ++ windows_api_dir_name
+                ++ " && git -C {0}" ++ path_sep ++ windows_api_dir_name ++ " checkout " ++ windows_api_checkout ++ " -b release\n", .{
+                    try getcwd(allocator)
+            });
             return error.AlreadyReported;
         },
         else => return e,
@@ -221,7 +223,7 @@ fn main2() !u8 {
     var api_json_dir = windows_api_dir.openDir(api_json_sub_path, .{.iterate = true}) catch |e| switch (e) {
         error.FileNotFound => {
             std.debug.warn("Error: JSON files have not been generated in '{}{}{}', generate them with:\n", .{windows_api_dir_name, path_sep, api_json_sub_path});
-            std.debug.warn("    python3 deps/windows-api/json-gen\n", .{});
+            std.debug.warn("    python3 {}" ++ path_sep ++ windows_api_dir_name ++ path_sep ++ "json-gen\n", .{try getcwd(allocator)});
             return error.AlreadyReported;
         },
         else => return e,
