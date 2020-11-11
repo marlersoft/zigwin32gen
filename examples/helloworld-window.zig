@@ -1,10 +1,5 @@
 //! This example is ported from : https://github.com/microsoft/Windows-classic-samples/blob/master/Samples/Win7Samples/begin/LearnWin32/HelloWorld/cpp/main.cpp
 
-//#ifndef UNICODE
-//#define UNICODE
-//#endif 
-
-// TODO: make this work, the windows generated zig code should check the root module for this definition
 pub const UNICODE = true;
 
 const std = @import("std");
@@ -18,8 +13,7 @@ pub export fn wWinMain(hInstance: HINSTANCE, _: HINSTANCE, pCmdLine: PWSTR, nCmd
     //};
     const CLASS_NAME : []const u16 = std.unicode.utf8ToUtf16LeStringLiteral("Sample Window Class");
 
-    // TODO: set unicode and use WNDCLASS instead of WNDCLASSW
-    var wc = WNDCLASSW {
+    const wc = WNDCLASS {
         .style = 0,
         .lpfnWndProc = WindowProc,
         .cbClsExtra = 0,

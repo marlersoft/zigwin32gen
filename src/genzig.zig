@@ -27,13 +27,15 @@ var global_type_map = StringHashMap(TypeEntry).init(allocator);
 
 var global_c_native_to_zig_map = StringHashMap([]const u8).init(allocator);
 
+const Nothing = struct {};
+
 const SdkFile = struct {
     json_basename: []const u8,
     name: []const u8,
     zig_filename: []const u8,
     type_refs: StringHashMap(TypeEntry),
     type_exports: StringHashMap(TypeEntry),
-    func_exports: ArrayList([]const u8),
+    func_exports: StringHashMap(Nothing),
     const_exports: ArrayList([]const u8),
     /// type_imports is made up of all the type_refs excluding any types that have been exported
     /// it is populated after all type_refs and type_exports have been analyzed
@@ -53,7 +55,7 @@ const SdkFile = struct {
             .zig_filename = try std.mem.concat(allocator, u8, &[_][]const u8 {name, ".zig"}),
             .type_refs = StringHashMap(TypeEntry).init(allocator),
             .type_exports = StringHashMap(TypeEntry).init(allocator),
-            .func_exports = ArrayList([]const u8).init(allocator),
+            .func_exports = StringHashMap(Nothing).init(allocator),
             .const_exports = ArrayList([]const u8).init(allocator),
             .type_imports = ArrayList([]const u8).init(allocator),
         };
@@ -343,8 +345,10 @@ fn main2() !u8 {
                         try writer.print("pub const {} = {}.{};\n", .{type_name, sdk_file.name, type_name});
                     }
                 }
-                try writer.print("// {} exports {} functions:\n", .{sdk_file.name, sdk_file.func_exports.items.len});
-                for (sdk_file.func_exports.items) |func| {
+                try writer.print("// {} exports {} functions:\n", .{sdk_file.name, sdk_file.func_exports.count()});
+                var func_it = sdk_file.func_exports.iterator();
+                while (func_it.next()) |kv| {
+                    const func = kv.key;
                     if (shared_func_map.get(func)) |other_sdk_file| {
                         try writer.print("// WARNING: redifinition of function '{}' in module '{}' (going with module '{}')\n", .{
                             func, sdk_file.name, other_sdk_file.name});
@@ -475,6 +479,7 @@ fn generateFile(out_dir: std.fs.Dir, func_dll_map: StringHashMap(*FuncDllEntry),
     const types_array = (try jsonObjGetRequired(root_obj, "types", sdk_file)).Array;
     const constants_array = (try jsonObjGetRequired(root_obj, "constants", sdk_file)).Array;
     const functions_array = (try jsonObjGetRequired(root_obj, "functions", sdk_file)).Array;
+    const unicode_names = (try jsonObjGetRequired(root_obj, "unicode_names", sdk_file)).Array;
     try out_writer.print("//\n", .{});
     try out_writer.print("// {} types\n", .{types_array.items.len});
     try out_writer.print("//\n", .{});
@@ -493,6 +498,13 @@ fn generateFile(out_dir: std.fs.Dir, func_dll_map: StringHashMap(*FuncDllEntry),
     for (functions_array.items) |function_node| {
         try generateFunction(func_dll_map, sdk_file, out_writer, function_node.Object);
     }
+    try out_writer.print("//\n", .{});
+    try out_writer.print("// {} unicode_names\n", .{unicode_names.items.len});
+    try out_writer.print("//\n", .{});
+    for (unicode_names.items) |unicode_name_node| {
+        try generateUnicodeName(sdk_file, out_writer, unicode_name_node.Object);
+    }
+
     try sdk_file.populateImports();
     try out_writer.print(
         \\
@@ -505,7 +517,7 @@ fn generateFile(out_dir: std.fs.Dir, func_dll_map: StringHashMap(*FuncDllEntry),
         \\    @import("std").testing.refAllDecls(@This());
         \\}}
         \\
-    , .{sdk_file.type_imports.items.len, sdk_file.const_exports.items.len, sdk_file.type_exports.count(), sdk_file.func_exports.items.len});
+    , .{sdk_file.type_imports.items.len, sdk_file.const_exports.items.len, sdk_file.type_exports.count(), sdk_file.func_exports.count()});
 }
 
 fn typeIsVoid(type_obj: json.ObjectMap, sdk_file: *SdkFile) !bool {
@@ -674,7 +686,7 @@ fn generateFunction(func_dll_map: StringHashMap(*FuncDllEntry), sdk_file: *SdkFi
     const args = (try jsonObjGetRequired(function_obj, "args", sdk_file)).Array;
 
     const func_name_pool = try global_symbol_pool.add(func_name_tmp);
-    try sdk_file.func_exports.append(func_name_pool);
+    try sdk_file.func_exports.put(func_name_pool, .{});
 
     const func_entry = func_dll_map.get(func_name_pool) orelse {
         std.debug.warn("Error: function '{}' is not in any dll json file\n", .{func_name_pool});
@@ -699,6 +711,63 @@ fn generateFunction(func_dll_map: StringHashMap(*FuncDllEntry), sdk_file: *SdkFi
     }
     try addTypeRefs(sdk_file, return_type);
     try out_writer.print(") callconv(.Stdcall) {};\n", .{formatTypeRef(return_type, .top_level, sdk_file)});
+}
+
+fn getPoolStringWithParts(a: *std.mem.Allocator, slices: []const []const u8) ![]const u8 {
+    const tmp = try std.mem.concat(a, u8, slices);
+    defer a.free(tmp);
+    return try global_symbol_pool.add(tmp);
+}
+
+fn generateUnicodeName(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, unicode_name_obj: json.ObjectMap) !void {
+    try jsonObjEnforceKnownFieldsOnly(unicode_name_obj, &[_][]const u8 {"name"}, sdk_file);
+    const name_tmp = (try jsonObjGetRequired(unicode_name_obj, "name", sdk_file)).String;
+
+    const name_ansi_pool = try getPoolStringWithParts(allocator, &[_][]const u8 {name_tmp, "A"});
+    const name_unicode_pool = try getPoolStringWithParts(allocator, &[_][]const u8 {name_tmp, "W"});
+
+    const NameKind = enum { none, type, func };
+    const ansi_kind : NameKind = init: {
+        if (sdk_file.type_exports.get(name_ansi_pool)) |_| break :init .type;
+        if (sdk_file.func_exports.get(name_ansi_pool)) |_| break :init .func;
+        break :init .none;
+    };
+    const unicode_kind : NameKind = init: {
+        if (sdk_file.type_exports.get(name_unicode_pool)) |_| break :init .type;
+        if (sdk_file.func_exports.get(name_unicode_pool)) |_| break :init .func;
+        break :init .none;
+    };
+    if (ansi_kind == .none and unicode_kind == .none) {
+        std.debug.warn("Error: unicode name '{}' does not have a corresponding Ansi or Unicode name ({} or {})\n", .{name_tmp, name_ansi_pool, name_unicode_pool});
+        return error.AlreadyReported;
+    }
+    if (ansi_kind != .none and unicode_kind != .none and ansi_kind != unicode_kind) {
+        std.debug.warn("Error: ansi name '{}' is a {} but the unicode name '{}' is a {}\n", .{name_ansi_pool, ansi_kind, name_unicode_pool, unicode_kind});
+        return error.AlreadyReported;
+    }
+
+    const name_pool = try global_symbol_pool.add(name_tmp);
+    const common_kind = if (ansi_kind != .none) ansi_kind else unicode_kind;
+    switch (common_kind) {
+        .none => unreachable,
+        .type => try sdk_file.type_exports.put(name_pool, try getTypeWithPoolString(name_pool)),
+        .func => try sdk_file.func_exports.put(name_pool, .{}),
+    }
+
+    // TODO: would it be better to generate code that checks the unicode mode once for all symbols?
+    try out_writer.print("pub const {} = switch (@import(\"gluezig.zig\").unicode_mode) {{\n", .{name_pool});
+    if (ansi_kind == .none) {
+        try out_writer.print("    .ansi    => @compileError(\"'{}' does not exist\"),\n", .{name_ansi_pool});
+    } else {
+        try out_writer.print("    .ansi    => {},\n", .{name_ansi_pool});
+    }
+    if (unicode_kind == .none) {
+        try out_writer.print("    .unicode => @compileError(\"'{}' does not exist\"),\n", .{name_unicode_pool});
+    } else {
+        try out_writer.print("    .unicode => {},\n", .{name_unicode_pool});
+    }
+    try out_writer.print("    .unspecified => if (@import(\"builtin\").is_test) opaque{{}} else @compileError(\"Cannot call '{}' because the root module has not set UNICODE to true or false.\"),\n", .{name_pool});
+    try out_writer.print("}};\n", .{});
 }
 
 //const CToZigSymbolFormatter = struct {

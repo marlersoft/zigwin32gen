@@ -2,6 +2,10 @@
 const std = @import("std");
 const testing = std.testing;
 
+const root = @import("root");
+pub const UnicodeMode = enum { ansi, unicode, unspecified };
+pub const unicode_mode : UnicodeMode = if (@hasDecl(root, "UNICODE")) (if (root.UNICODE) .unicode else .ansi) else .unspecified;
+
 /// Converts comptime values to the given type.
 /// Note that this function is called at compile time rather than converting constant values earlier at code generation time.
 /// The reason for doing it a compile time is because genzig.zig generates all constants as they are encountered which can
