@@ -33,6 +33,7 @@ const SdkFile = struct {
     json_basename: []const u8,
     name: []const u8,
     zig_filename: []const u8,
+    includes: ArrayList([]const u8),
     type_refs: StringHashMap(TypeEntry),
     type_exports: StringHashMap(TypeEntry),
     func_exports: StringHashMap(Nothing),
@@ -53,6 +54,7 @@ const SdkFile = struct {
             .json_basename = json_basename,
             .name = name,
             .zig_filename = try std.mem.concat(allocator, u8, &[_][]const u8 {name, ".zig"}),
+            .includes = ArrayList([]const u8).init(allocator),
             .type_refs = StringHashMap(TypeEntry).init(allocator),
             .type_exports = StringHashMap(TypeEntry).init(allocator),
             .func_exports = StringHashMap(Nothing).init(allocator),
@@ -477,10 +479,21 @@ fn generateFile(out_dir: std.fs.Dir, func_dll_map: StringHashMap(*FuncDllEntry),
     // We can't import the everything module because it will re-introduce the same symbols we are exporting
     //try out_writer.print("usingnamespace @import(\"./everything.zig\");\n", .{});
     const root_obj = tree.root.Object;
+    const includes_array = (try jsonObjGetRequired(root_obj, "includes", sdk_file)).Array;
     const types_array = (try jsonObjGetRequired(root_obj, "types", sdk_file)).Array;
     const constants_array = (try jsonObjGetRequired(root_obj, "constants", sdk_file)).Array;
     const functions_array = (try jsonObjGetRequired(root_obj, "functions", sdk_file)).Array;
     const unicode_names = (try jsonObjGetRequired(root_obj, "unicode_names", sdk_file)).Array;
+    try out_writer.print("//\n", .{});
+    try out_writer.print("// {} includes\n", .{includes_array.items.len});
+    try out_writer.print("//\n", .{});
+    for (includes_array.items) |include_node| {
+        const include_obj = include_node.Object;
+        try jsonObjEnforceKnownFieldsOnly(include_obj, &[_][]const u8 {"filename"}, sdk_file);
+        const filename = (try jsonObjGetRequired(include_obj, "filename", sdk_file)).String;
+        try out_writer.print("// this creates symbol conflicts because of: https://github.com/ziglang/zig/issues/7085\n", .{});
+        try out_writer.print("// pub usingnamespace @import(\"./{}.zig\");\n", .{filename});
+    }
     try out_writer.print("//\n", .{});
     try out_writer.print("// {} types\n", .{types_array.items.len});
     try out_writer.print("//\n", .{});
