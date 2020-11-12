@@ -491,7 +491,7 @@ fn generateFile(out_dir: std.fs.Dir, func_dll_map: StringHashMap(*FuncDllEntry),
         const include_obj = include_node.Object;
         try jsonObjEnforceKnownFieldsOnly(include_obj, &[_][]const u8 {"filename"}, sdk_file);
         const filename = (try jsonObjGetRequired(include_obj, "filename", sdk_file)).String;
-        try out_writer.print("// this creates symbol conflicts because of: https://github.com/ziglang/zig/issues/7085\n", .{});
+        try out_writer.print("// this creates symbol conflicts because of: https://github.com/ziglang/zig/issues/6445\n", .{});
         try out_writer.print("// pub usingnamespace @import(\"./{}.zig\");\n", .{filename});
     }
     try out_writer.print("//\n", .{});
