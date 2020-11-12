@@ -53,4 +53,5 @@ test "typedConstant" {
     testing.expectEqual(@bitCast(usize, @as(isize, -1)),  @ptrToInt(typedConstant(?*opaque{}, -1)));
     testing.expectEqual(@bitCast(usize, @as(isize, -12)),  @ptrToInt(typedConstant(?*opaque{}, -12)));
     testing.expectEqual(@as(u32, 0xffffffff), typedConstant(u32, 0xffffffff));
+    testing.expectEqual(@bitCast(i32, @as(u32, 0x80000000)), typedConstant(i32, 0x80000000));
 }
