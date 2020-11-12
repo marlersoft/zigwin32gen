@@ -678,15 +678,17 @@ fn generateConstant(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, constant
     try jsonObjEnforceKnownFieldsOnly(constant_obj, &[_][]const u8 {"name", "type", "value"}, sdk_file);
     const name_tmp = (try jsonObjGetRequired(constant_obj, "name", sdk_file)).String;
     const constant_type = (try jsonObjGetRequired(constant_obj, "type", sdk_file)).Object;
-    const value = (try jsonObjGetRequired(constant_obj, "value", sdk_file)).String;
+    // TODO: need to resolve value_node correctly, it can reference other constants from
+    //       other files
+    const value_node = try jsonObjGetRequired(constant_obj, "value", sdk_file);
 
     const name_pool = try global_symbol_pool.add(name_tmp);
     try sdk_file.const_exports.append(name_pool);
     if (try typeIsVoid(constant_type, sdk_file)) {
-        try out_writer.print("pub const {} = {};\n", .{name_pool, value});
+        try out_writer.print("pub const {} = {};\n", .{name_pool, formatJson(value_node)});
     } else {
         try addTypeRefs(sdk_file, constant_type);
-        try out_writer.print("pub const {} = @import(\"gluezig.zig\").typedConstant({}, {});\n", .{name_pool, formatTypeRef(constant_type, .top_level, sdk_file), value});
+        try out_writer.print("pub const {} = @import(\"gluezig.zig\").typedConstant({}, {});\n", .{name_pool, formatTypeRef(constant_type, .top_level, sdk_file), formatJson(value_node)});
     }
 }
 
