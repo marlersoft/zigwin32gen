@@ -1,8 +1,8 @@
 //! This example is ported from : https://github.com/microsoft/Windows-classic-samples/blob/master/Samples/Win7Samples/begin/LearnWin32/HelloWorld/cpp/main.cpp
 pub const UNICODE = true;
 
-usingnamespace @import("windows").glue;
-usingnamespace @import("windows").header.windows;
+usingnamespace @import("win32").zig;
+usingnamespace @import("win32").header.windows;
 
 // TODO: define this in windows headers:
 const WS_OVERLAPPEDWINDOW = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;

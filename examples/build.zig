@@ -18,8 +18,8 @@ fn makeExe(b: *Builder, target: CrossTarget, mode: Mode, root: []const u8) !void
     exe.setBuildMode(mode);
     exe.install();
     exe.addPackage(.{
-        .name = "windows",
-        .path = "../out/windows.zig",
+        .name = "win32",
+        .path = "../out/win32.zig",
     });
 
     //const run_cmd = exe.run();

@@ -1,4 +1,4 @@
-usingnamespace @import("windows").everything;
+usingnamespace @import("win32").everything;
 
 pub export fn WinMainCRTStartup() callconv(.Stdcall) c_int {
     // TODO: call getstdhandle and writefile

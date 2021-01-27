@@ -6,13 +6,13 @@ pub fn build(b: *Builder) !void {
     const target = b.standardTargetOptions(.{});
     const mode = b.standardReleaseOptions();
 
-    //const clone_windows_api = try b.allocator.create(CloneRepoStep);
-    //clone_windows_api.* = CloneRepoStep.init(b, .{
-    //    .repo_url = "github.com/marler8997/windows-api",
+    //const clone_win32json = try b.allocator.create(CloneRepoStep);
+    //clone_win32json.* = CloneRepoStep.init(b, .{
+    //    .repo_url = "github.com/marlersoft/win32json",
     //    .sha = "cc76f88be151084e1c218adf00bc758628a90fef",
     //});
-    //const clone_windows_api_top_level = b.step("clone-windows-api", "Clone the windows-api repository");
-    //clone_windows_api_top_level.dependOn(&clone_windows_api.step);
+    //const clone_win32json_top_level = b.step("clone-win32json", "Clone the win32json repository");
+    //clone_win32json_top_level.dependOn(&clone_win32json.step);
 
     const genzig_exe = b.addExecutable("genzig", "src/genzig.zig");
     genzig_exe.setTarget(target);
@@ -22,7 +22,7 @@ pub fn build(b: *Builder) !void {
     const run_genzig_exe = genzig_exe.run();
     run_genzig_exe.step.dependOn(b.getInstallStep());
 
-    const run_genzig = b.step("genzig", "Generate Zig bindings from the windows-api JSON files");
+    const run_genzig = b.step("genzig", "Generate Zig bindings from the win32json JSON files");
     run_genzig.dependOn(&run_genzig_exe.step);
 }
 
