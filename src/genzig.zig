@@ -32,6 +32,8 @@ const NativeType = enum {
     Single,
     Double,
     String,
+    IntPtr,
+    UIntPtr,
 };
 const global_native_type_map = std.ComptimeStringMap(NativeType, .{
     .{ "Byte", NativeType.Byte },
@@ -42,6 +44,8 @@ const global_native_type_map = std.ComptimeStringMap(NativeType, .{
     .{ "Single", NativeType.Single },
     .{ "Double", NativeType.Double },
     .{ "String", NativeType.String },
+    .{ "IntPtr", NativeType.IntPtr },
+    .{ "UIntPtr", NativeType.UIntPtr },
 });
 fn nativeTypeToZigType(t: NativeType) []const u8 {
     return switch (t) {
@@ -53,6 +57,8 @@ fn nativeTypeToZigType(t: NativeType) []const u8 {
         .Single => return "f32",
         .Double => return "f64",
         .String => return "[]const u8",
+        .IntPtr => return "?*opaque{}",
+        .UIntPtr => return "?*opaque{}",
     };
 }
 
@@ -454,24 +460,30 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
     for (constants_array.items) |constant_node| {
         try generateConstant(sdk_file, out_writer, constant_node.Object);
     }
+    std.debug.assert(constants_array.items.len == sdk_file.const_exports.items.len);
     try out_writer.print("//\n", .{});
     try out_writer.print("// {} Types\n", .{types_array.items.len});
     try out_writer.print("//\n", .{});
     for (types_array.items) |type_node| {
-        //try generateType(sdk_file, out_writer, type_node.Object);
+        try generateType(sdk_file, out_writer, type_node.Object);
     }
+    std.debug.assert(types_array.items.len == sdk_file.type_exports.count());
     try out_writer.print("//\n", .{});
     try out_writer.print("// {} Functions\n", .{functions_array.items.len});
     try out_writer.print("//\n", .{});
     for (functions_array.items) |function_node| {
         //try generateFunction(sdk_file, out_writer, function_node.Object);
     }
+    // TODO: uncomment this when I start generating functions
+    //std.debug.assert(functions_array.items.len == sdk_file.func_exports.count());
     try out_writer.print("//\n", .{});
     try out_writer.print("// {} Unicode Aliases\n", .{unicode_aliases.items.len});
     try out_writer.print("//\n", .{});
     for (unicode_aliases.items) |unicode_alias_node| {
         //try generateUnicodeName(sdk_file, out_writer, unicode_alias_node.Object);
     }
+    // TODO: uncomment this when I start generating aliases
+    //std.debug.assert(unicode_aliases.items.len == sdk_file.unicode_aliases.count());
 
     try sdk_file.populateImports();
     try out_writer.print(
@@ -511,9 +523,13 @@ fn typeIsVoid(type_obj: json.ObjectMap, sdk_file: *SdkFile) !bool {
 }
 
 fn addTypeRefs(sdk_file: *SdkFile, type_ref: json.ObjectMap) anyerror!void {
-    const kind = (try jsonObjGetRequired(type_ref, "kind", sdk_file)).String;
-    if (std.mem.eql(u8, kind, "native")) {
-        try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"kind", "name"}, sdk_file);
+    const kind = (try jsonObjGetRequired(type_ref, "Kind", sdk_file)).String;
+    if (std.mem.eql(u8, kind, "Native")) {
+        try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"Kind", "Name"}, sdk_file);
+        const name = (try jsonObjGetRequired(type_ref, "Name", sdk_file)).String;
+        if (global_native_type_map.get(name) == null) {
+            std.debug.panic("unknown Native type '{s}'", .{name});
+        }
     } else if (std.mem.eql(u8, kind, "alias")) {
         try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"kind", "name"}, sdk_file);
         const type_entry = try getTypeWithTempString((try jsonObjGetRequired(type_ref, "name", sdk_file)).String);
@@ -570,7 +586,7 @@ const ConstValueFormatter = struct {
                         try writer.print("= @import(\"std\").math.nan({s})", .{zig_type});
                         return;
                     } else {
-                        std.debug.panic("unexpected float string value '{0}'", .{float_str});
+                        std.debug.panic("unexpected float string value '{s}'", .{float_str});
                     }
                     return;
                 },
@@ -597,15 +613,15 @@ const TypeRefFormatter = struct {
         options: std.fmt.FormatOptions,
         writer: anytype,
     ) std.os.WriteError!void {
-        const kind = (jsonObjGetRequired(self.type_ref, "kind", self.sdk_file) catch unreachable).String;
-        if (std.mem.eql(u8, kind, "native")) {
-            jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"kind", "name"}, self.sdk_file) catch unreachable;
-            const name = (jsonObjGetRequired(self.type_ref, "name", self.sdk_file) catch unreachable).String;
-            // void is special
-            if (std.mem.eql(u8, name, "void")) {
+        const kind = (jsonObjGetRequired(self.type_ref, "Kind", self.sdk_file) catch unreachable).String;
+        if (std.mem.eql(u8, kind, "Native")) {
+            jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"Kind", "Name"}, self.sdk_file) catch unreachable;
+            const name = (jsonObjGetRequired(self.type_ref, "Name", self.sdk_file) catch unreachable).String;
+            if (std.mem.eql(u8, name, "Void")) {
                 try writer.writeAll(if (self.depth_context == .child) "opaque{}" else "void");
             } else {
-                try writer.writeAll(global_c_native_to_zig_map.get(name) orelse std.debug.panic("unhandled native type '{s}'", .{name}));
+                const native_type = global_native_type_map.get(name) orelse std.debug.panic("unknown Native type '{0}'", .{name});
+                try writer.writeAll(nativeTypeToZigType(native_type));
             }
         } else if (std.mem.eql(u8, kind, "alias")) {
             jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"kind", "name"}, self.sdk_file) catch unreachable;
@@ -679,43 +695,41 @@ fn generateConstant(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, constant
     try out_writer.print("pub const {s} {};\n", .{name_pool, fmtConstAssign(native_type, value_node)});
 }
 
-fn generateTopLevelType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap) !void {
-    const kind = (try jsonObjGetRequired(type_obj, "kind", sdk_file)).String;
-    const name_tmp = (try jsonObjGetRequired(type_obj, "name", sdk_file)).String;
+fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap) !void {
+    const kind = (try jsonObjGetRequired(type_obj, "Kind", sdk_file)).String;
+    const name_tmp = (try jsonObjGetRequired(type_obj, "Name", sdk_file)).String;
     const type_entry = try getTypeWithTempString(name_tmp);
     if (type_entry.metadata.builtin) {
         std.debug.warn("Error: type '{s}' is defined and builtin?\n", .{name_tmp});
         return error.AlreadyReported;
     }
     std.debug.assert(std.mem.eql(u8, name_tmp, type_entry.zig_type_from_pool));
-    if (sdk_file.type_exports.get(name_tmp)) |type_entry_conflict| {
-        // TODO: open an issue for these (there's over 600 redefinitions!)
-        std.debug.warn("Error: redefinition of type '{s}' in the same module\n", .{name_tmp});
-        return error.AlreadyReported;
-    }
+
+    std.debug.assert(sdk_file.type_exports.get(name_tmp) == null);
     try sdk_file.type_exports.put(type_entry.zig_type_from_pool, type_entry);
 
-    if (std.mem.eql(u8, kind, "typedef")) {
-        try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"kind", "name", "definition"}, sdk_file);
-        const def_type = (try jsonObjGetRequired(type_obj, "definition", sdk_file)).Object;
+    if (std.mem.eql(u8, kind, "NativeTypedef")) {
+        try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Kind", "Def"}, sdk_file);
+        const def_type = (try jsonObjGetRequired(type_obj, "Def", sdk_file)).Object;
         try addTypeRefs(sdk_file, def_type);
         try out_writer.print("pub const {s} = {};\n", .{name_tmp, formatTypeRef(def_type, .top_level, sdk_file)});
-    } else if (std.mem.eql(u8, kind, "struct")) {
-        try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"kind", "name", "fields"}, sdk_file);
-        const struct_name = (try jsonObjGetRequired(type_obj, "name", sdk_file)).String;
-        const fields = (try jsonObjGetRequired(type_obj, "fields", sdk_file)).Array;
-        try out_writer.print("pub const {s} = extern struct {{\n", .{struct_name});
-        for (fields.items) |field_node| {
-            const field_obj = field_node.Object;
-            const field_name = (try jsonObjGetRequired(field_obj, "name", sdk_file)).String;
-            const field_type = (try jsonObjGetRequired(field_obj, "type", sdk_file)).Object;
-            try addTypeRefs(sdk_file, field_type);
-            try out_writer.print("    {s}: {},\n", .{field_name, formatTypeRef(field_type, .top_level, sdk_file)});
-        }
-        try out_writer.print("}};\n", .{});
+//  } else if (std.mem.eql(u8, kind, "struct")) {
+//        try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"kind", "name", "fields"}, sdk_file);
+//        const struct_name = (try jsonObjGetRequired(type_obj, "name", sdk_file)).String;
+//        const fields = (try jsonObjGetRequired(type_obj, "fields", sdk_file)).Array;
+//        try out_writer.print("pub const {s} = extern struct {{\n", .{struct_name});
+//        for (fields.items) |field_node| {
+//            const field_obj = field_node.Object;
+//            const field_name = (try jsonObjGetRequired(field_obj, "name", sdk_file)).String;
+//            const field_type = (try jsonObjGetRequired(field_obj, "type", sdk_file)).Object;
+//            try addTypeRefs(sdk_file, field_type);
+//            try out_writer.print("    {s}: {},\n", .{field_name, formatTypeRef(field_type, .top_level, sdk_file)});
+//        }
+//        try out_writer.print("}};\n", .{});
     } else {
-            std.debug.warn("{s}: Error: unknown type kind '{s}'", .{sdk_file.name, kind});
-            return error.AlreadyReported;
+        try out_writer.print("pub const {s} = u32; // unhandled Kind '{s}'\n", .{name_tmp, kind});
+        //std.debug.warn("{s}: Error: unknown type kind '{s}'", .{sdk_file.name, kind});
+        //return error.AlreadyReported;
     }
 }
 
