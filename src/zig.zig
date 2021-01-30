@@ -8,6 +8,10 @@ pub const unicode_mode : UnicodeMode = if (@hasDecl(root, "UNICODE")) (if (root.
 
 pub const L = std.unicode.utf8ToUtf16LeStringLiteral;
 
+pub const Guid = extern struct {
+    bytes: [16]u8,
+};
+
 //
 // I used this typedConstant function with the old metadata (https://github.com/marler8997/windows-api)
 // but I may not need it with the new metadata (https://github.com/marlersoft/win32json)

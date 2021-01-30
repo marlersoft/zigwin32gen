@@ -21,8 +21,40 @@ const TypeEntry = struct {
 var global_void_type_from_pool_ptr : [*]const u8 = undefined;
 var global_symbol_pool = StringPool.init(allocator);
 var global_type_map = StringHashMap(TypeEntry).init(allocator);
-
 var global_c_native_to_zig_map = StringHashMap([]const u8).init(allocator);
+
+const NativeType = enum {
+    Byte,
+    UInt16,
+    Int32,
+    UInt32,
+    UInt64,
+    Single,
+    Double,
+    String,
+};
+const global_native_type_map = std.ComptimeStringMap(NativeType, .{
+    .{ "Byte", NativeType.Byte },
+    .{ "UInt16", NativeType.UInt16 },
+    .{ "Int32", NativeType.Int32 },
+    .{ "UInt32", NativeType.UInt32 },
+    .{ "UInt64", NativeType.UInt64 },
+    .{ "Single", NativeType.Single },
+    .{ "Double", NativeType.Double },
+    .{ "String", NativeType.String },
+});
+fn nativeTypeToZigType(t: NativeType) []const u8 {
+    return switch (t) {
+        .Byte => return "u8",
+        .UInt16 => return "u16",
+        .Int32 => return "i32",
+        .UInt32 => return "u32",
+        .UInt64 => return "u64",
+        .Single => return "f32",
+        .Double => return "f64",
+        .String => return "[]const u8",
+    };
+}
 
 const Nothing = struct {};
 
@@ -420,7 +452,7 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
     try out_writer.print("// {} Constants\n", .{constants_array.items.len});
     try out_writer.print("//\n", .{});
     for (constants_array.items) |constant_node| {
-        //try generateConstant(sdk_file, out_writer, constant_node.Object);
+        try generateConstant(sdk_file, out_writer, constant_node.Object);
     }
     try out_writer.print("//\n", .{});
     try out_writer.print("// {} Types\n", .{types_array.items.len});
@@ -449,7 +481,13 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
         \\    const constant_export_count = {};
         \\    const type_export_count = {};
         \\    const func_export_count = {};
-        \\    @setEvalBranchQuota(type_import_count + constant_export_count + type_export_count + func_export_count);
+        \\    @setEvalBranchQuota(
+        \\        type_import_count +
+        \\        constant_export_count +
+        \\        type_export_count +
+        \\        func_export_count +
+        \\        2 // TODO: why do I need these extra 2?
+        \\    );
         \\    @import("std").testing.refAllDecls(@This());
         \\}}
         \\
@@ -457,9 +495,9 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
 }
 
 fn typeIsVoid(type_obj: json.ObjectMap, sdk_file: *SdkFile) !bool {
-    const kind = (try jsonObjGetRequired(type_obj, "kind", sdk_file)).String;
-    if (std.mem.eql(u8, kind, "native")) {
-        const name = (try jsonObjGetRequired(type_obj, "name", sdk_file)).String;
+    const kind = (try jsonObjGetRequired(type_obj, "Kind", sdk_file)).String;
+    if (std.mem.eql(u8, kind, "Native")) {
+        const Name = (try jsonObjGetRequired(type_obj, "Name", sdk_file)).String;
         return std.mem.eql(u8, name, "void");
     }
     return false;
@@ -493,6 +531,50 @@ fn addTypeRefs(sdk_file: *SdkFile, type_ref: json.ObjectMap) anyerror!void {
         }
     }
 }
+
+
+fn fmtConstAssign(native_type: NativeType, value: json.Value) ConstValueFormatter {
+    return .{ .native_type = native_type, .value = value };
+}
+const ConstValueFormatter = struct {
+    native_type: NativeType,
+    value: json.Value,
+    pub fn format(
+        self: @This(),
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) std.os.WriteError!void {
+        if (self.native_type == .String) {
+            try writer.print("= {}", .{fmtJson(self.value)});
+            return;
+        }
+        const zig_type = nativeTypeToZigType(self.native_type);
+        if (self.native_type == .Single or self.native_type == .Double) {
+            switch (self.value) {
+                .String => |float_str| {
+                    if (std.mem.eql(u8, float_str, "inf")) {
+                        try writer.print("= @import(\"std\").math.inf({s})", .{zig_type});
+                        return;
+                    } else if (std.mem.eql(u8, float_str, "-inf")) {
+                        try writer.print("= -@import(\"std\").math.inf({s})", .{zig_type});
+                        return;
+                    } else if (std.mem.eql(u8, float_str, "nan")) {
+                        try writer.print("= @import(\"std\").math.nan({s})", .{zig_type});
+                        return;
+                    } else {
+                        std.debug.panic("unexpected float string value '{0}'", .{float_str});
+                    }
+                    return;
+                },
+                else => {},
+            }
+        }
+        try writer.print(": {s} = {}", .{zig_type, fmtJson(self.value)});
+    }
+};
+
+
 
 const DepthContext = enum {top_level, child};
 const TypeRefFormatter = struct {
@@ -571,21 +653,23 @@ pub fn formatTypeRef(type_ref: json.ObjectMap, depth_context: DepthContext, sdk_
 }
 
 fn generateConstant(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, constant_obj: json.ObjectMap) !void {
-    try jsonObjEnforceKnownFieldsOnly(constant_obj, &[_][]const u8 {"name", "type", "value"}, sdk_file);
-    const name_tmp = (try jsonObjGetRequired(constant_obj, "name", sdk_file)).String;
-    const constant_type = (try jsonObjGetRequired(constant_obj, "type", sdk_file)).Object;
-    // TODO: need to resolve value_node correctly, it can reference other constants from
-    //       other files
-    const value_node = try jsonObjGetRequired(constant_obj, "value", sdk_file);
+    try jsonObjEnforceKnownFieldsOnly(constant_obj, &[_][]const u8 {"Name", "NativeType", "Value","Attrs"}, sdk_file);
+    const name_tmp = (try jsonObjGetRequired(constant_obj, "Name", sdk_file)).String;
+    const native_type_str = (try jsonObjGetRequired(constant_obj, "NativeType", sdk_file)).String;
+    const value_node = try jsonObjGetRequired(constant_obj, "Value", sdk_file);
+
+    // TODO: handle Attrs
+    const attrs_node = (try jsonObjGetRequired(constant_obj, "Attrs", sdk_file)).Array;
 
     const name_pool = try global_symbol_pool.add(name_tmp);
     try sdk_file.const_exports.append(name_pool);
-    if (try typeIsVoid(constant_type, sdk_file)) {
-        try out_writer.print("pub const {s} = {};\n", .{name_pool, formatJson(value_node)});
-    } else {
-        try addTypeRefs(sdk_file, constant_type);
-        try out_writer.print("pub const {s} = @import(\"../zig.zig\").typedConstant({}, {});\n", .{name_pool, formatTypeRef(constant_type, .top_level, sdk_file), formatJson(value_node)});
-    }
+
+    const native_type = global_native_type_map.get(native_type_str) orelse {
+        std.log.err("constant '{s}' has an unknown NativeType '{s}'\n", .{name_pool, native_type_str});
+        return error.AlreadyReported;
+    };
+
+    try out_writer.print("pub const {s} {};\n", .{name_pool, fmtConstAssign(native_type, value_node)});
 }
 
 fn generateTopLevelType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap) !void {
@@ -862,7 +946,7 @@ fn jsonObjGetRequired(map: json.ObjectMap, field: []const u8, file_thing: anytyp
 fn jsonObjGetRequiredImpl(map: json.ObjectMap, field: []const u8, file_for_error: []const u8) !json.Value {
     return map.get(field) orelse {
         // TODO: print file location?
-        std.debug.warn("{s}: json object is missing '{s}' field: {}\n", .{file_for_error, field, formatJson(map)});
+        std.debug.warn("{s}: json object is missing '{s}' field: {}\n", .{file_for_error, field, fmtJson(map)});
         jsonPanic();
     };
 }
@@ -878,7 +962,7 @@ const JsonFormatter = struct {
         try std.json.stringify(self.value, .{}, writer);
     }
 };
-pub fn formatJson(value: anytype) JsonFormatter {
+pub fn fmtJson(value: anytype) JsonFormatter {
     if (@TypeOf(value) == json.ObjectMap) {
         return .{ .value = .{ .Object = value } };
     }
