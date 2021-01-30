@@ -522,7 +522,12 @@ fn typeIsVoid(type_obj: json.ObjectMap, sdk_file: *SdkFile) !bool {
     return false;
 }
 
-fn addTypeRefs(sdk_file: *SdkFile, type_ref: json.ObjectMap) anyerror!void {
+fn addTypeRefs(sdk_file: *SdkFile, type_ref: json.ObjectMap) anyerror!TypeRefFormatter {
+    try addTypeRefsNoFormatter(sdk_file, type_ref);
+    return formatTypeRef(type_ref, .top_level, sdk_file);
+}
+
+fn addTypeRefsNoFormatter(sdk_file: *SdkFile, type_ref: json.ObjectMap) anyerror!void {
     const kind = (try jsonObjGetRequired(type_ref, "Kind", sdk_file)).String;
     if (std.mem.eql(u8, kind, "Native")) {
         try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"Kind", "Name"}, sdk_file);
@@ -538,19 +543,19 @@ fn addTypeRefs(sdk_file: *SdkFile, type_ref: json.ObjectMap) anyerror!void {
         const is_arrayptr = std.mem.eql(u8, kind, "arrayptr");
         if (is_arrayptr or std.mem.eql(u8, kind, "singleptr")) {
             try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"kind", "const", "subtype"}, sdk_file);
-            try addTypeRefs(sdk_file, (try jsonObjGetRequired(type_ref, "subtype", sdk_file)).Object);
+            try addTypeRefsNoFormatter(sdk_file, (try jsonObjGetRequired(type_ref, "subtype", sdk_file)).Object);
         } else if (std.mem.eql(u8, kind, "funcptr")) {
             try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"kind", "return_type", "args"}, sdk_file);
-            try addTypeRefs(sdk_file, (try jsonObjGetRequired(type_ref, "return_type", sdk_file)).Object);
+            try addTypeRefsNoFormatter(sdk_file, (try jsonObjGetRequired(type_ref, "return_type", sdk_file)).Object);
             for ((try jsonObjGetRequired(type_ref, "args", sdk_file)).Array.items) |arg_node| {
                 const arg_obj = arg_node.Object;
                 try jsonObjEnforceKnownFieldsOnly(arg_obj, &[_][]const u8 {"type", "name"}, sdk_file);
-                try addTypeRefs(sdk_file, (try jsonObjGetRequired(arg_obj, "type", sdk_file)).Object);
+                try addTypeRefsNoFormatter(sdk_file, (try jsonObjGetRequired(arg_obj, "type", sdk_file)).Object);
             }
         } else {
             std.debug.assert(std.mem.eql(u8, kind, "fixedlenarray"));
             try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"kind", "len", "subtype"}, sdk_file);
-            try addTypeRefs(sdk_file, (try jsonObjGetRequired(type_ref, "subtype", sdk_file)).Object);
+            try addTypeRefsNoFormatter(sdk_file, (try jsonObjGetRequired(type_ref, "subtype", sdk_file)).Object);
         }
     }
 }
@@ -711,8 +716,24 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
     if (std.mem.eql(u8, kind, "NativeTypedef")) {
         try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Kind", "Def"}, sdk_file);
         const def_type = (try jsonObjGetRequired(type_obj, "Def", sdk_file)).Object;
-        try addTypeRefs(sdk_file, def_type);
-        try out_writer.print("pub const {s} = {};\n", .{name_tmp, formatTypeRef(def_type, .top_level, sdk_file)});
+        const zig_type_formatter = try addTypeRefs(sdk_file, def_type);
+        try out_writer.print("pub const {s} = {};\n", .{name_tmp, zig_type_formatter});
+    } else if (std.mem.eql(u8, kind, "Enum")) {
+        try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Kind", "Values"}, sdk_file);
+        const values = (try jsonObjGetRequired(type_obj, "Values", sdk_file)).Array;
+        try out_writer.print("pub const {s} = extern enum(i64) {{ // TODO: get actual base type\n", .{name_tmp});
+        if (values.items.len == 0) {
+            // zig doesn't allow empty enums
+            try out_writer.print("    _\n", .{});
+        } else for (values.items) |value_node| {
+            const value_obj = value_node.Object;
+            try jsonObjEnforceKnownFieldsOnly(value_obj, &[_][]const u8 {"Name", "Value"}, sdk_file);
+            const value_name_tmp = (try jsonObjGetRequired(value_obj, "Name", sdk_file)).String;
+            const value_literal = try jsonObjGetRequired(value_obj, "Value", sdk_file);
+            try out_writer.print("    {s} = {},\n", .{value_name_tmp, fmtJson(value_literal)});
+            // TODO: should we generate a "_" field?  How do we know whether these enums are exhaustive?
+        }
+        try out_writer.print("}};\n", .{});
 //  } else if (std.mem.eql(u8, kind, "struct")) {
 //        try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"kind", "name", "fields"}, sdk_file);
 //        const struct_name = (try jsonObjGetRequired(type_obj, "name", sdk_file)).String;
