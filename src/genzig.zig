@@ -734,19 +734,28 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
             // TODO: should we generate a "_" field?  How do we know whether these enums are exhaustive?
         }
         try out_writer.print("}};\n", .{});
-//  } else if (std.mem.eql(u8, kind, "struct")) {
-//        try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"kind", "name", "fields"}, sdk_file);
-//        const struct_name = (try jsonObjGetRequired(type_obj, "name", sdk_file)).String;
-//        const fields = (try jsonObjGetRequired(type_obj, "fields", sdk_file)).Array;
-//        try out_writer.print("pub const {s} = extern struct {{\n", .{struct_name});
-//        for (fields.items) |field_node| {
-//            const field_obj = field_node.Object;
-//            const field_name = (try jsonObjGetRequired(field_obj, "name", sdk_file)).String;
-//            const field_type = (try jsonObjGetRequired(field_obj, "type", sdk_file)).Object;
-//            try addTypeRefs(sdk_file, field_type);
-//            try out_writer.print("    {s}: {},\n", .{field_name, formatTypeRef(field_type, .top_level, sdk_file)});
-//        }
-//        try out_writer.print("}};\n", .{});
+    } else if (std.mem.eql(u8, kind, "Struct")) {
+        try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Kind", "Name", "Size", "PackingSize", "Fields", "Comment", "NestedTypes"}, sdk_file);
+        const struct_name = (try jsonObjGetRequired(type_obj, "Name", sdk_file)).String;
+        const struct_size = (try jsonObjGetRequired(type_obj, "Size", sdk_file)).Integer;
+        const struct_packing_size = (try jsonObjGetRequired(type_obj, "PackingSize", sdk_file)).Integer;
+        const struct_fields = (try jsonObjGetRequired(type_obj, "Fields", sdk_file)).Array;
+        const struct_nested_types = (try jsonObjGetRequired(type_obj, "NestedTypes", sdk_file)).Array;
+        if (struct_fields.items.len == 0) {
+            try out_writer.print("pub const {s} = opaque{{}}; // an empty struct?\n", .{struct_name});
+        } else {
+            try out_writer.print("pub const {s} = extern struct {{\n", .{struct_name});
+            for (struct_fields.items) |field_node| {
+                const field_obj = field_node.Object;
+                try jsonObjEnforceKnownFieldsOnly(field_obj, &[_][]const u8 {"Name", "Type"}, sdk_file);
+                const field_name = (try jsonObjGetRequired(field_obj, "Name", sdk_file)).String;
+                //const field_type = (try jsonObjGetRequired(field_obj, "Type", sdk_file)).Object;
+                //const field_type_formatter = try addTypeRefs(sdk_file, field_type);
+                //try out_writer.print("    {}: {},\n", .{std.zig.fmtId(field_name), field_type_formatter});
+                try out_writer.print("    {}: u32, // TODO: format field type\n", .{std.zig.fmtId(field_name)});
+            }
+            try out_writer.print("}};\n", .{});
+        }
     } else {
         try out_writer.print("pub const {s} = u32; // unhandled Kind '{s}'\n", .{name_tmp, kind});
         //std.debug.warn("{s}: Error: unknown type kind '{s}'", .{sdk_file.name, kind});
@@ -832,25 +841,6 @@ fn generateUnicodeName(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, unico
     try out_writer.print("    .unspecified => if (@import(\"builtin\").is_test) opaque{{}} else @compileError(\"Cannot call '{s}' because the root module has not set UNICODE to true or false.\"),\n", .{name_pool});
     try out_writer.print("}};\n", .{});
 }
-
-//const CToZigSymbolFormatter = struct {
-//    symbol: []const u8,
-//    pub fn format(
-//        self: @This(),
-//        comptime fmt: []const u8,
-//        options: std.fmt.FormatOptions,
-//        writer: anytype,
-//    ) !void {
-//        if (std.zig.tokenizer.Tokenizer.getKeyword(self.symbol) orelse false) {
-//            try writer.print("@\"{s}\"", .{self.symbol});
-//        } else {
-//            try writer.writeAll(self.symbol);
-//        }
-//    }
-//};
-//pub fn formatCToZigSymbol(symbol: []const u8) CToZigSymbolFormatter {
-//    return .{ .symbol = symbol };
-//}
 
 //const FixIntegerLiteralFormatter = struct {
 //    literal: []const u8,
