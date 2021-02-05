@@ -484,10 +484,9 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
     try out_writer.print("// {} Functions\n", .{functions_array.items.len});
     try out_writer.print("//\n", .{});
     for (functions_array.items) |function_node| {
-        //try generateFunction(sdk_file, out_writer, function_node.Object);
+        try generateFunction(sdk_file, out_writer, function_node.Object);
     }
-    // TODO: uncomment this when I start generating functions
-    //std.debug.assert(functions_array.items.len == sdk_file.func_exports.count());
+    std.debug.assert(functions_array.items.len == sdk_file.func_exports.count());
     try out_writer.print("//\n", .{});
     try out_writer.print("// {} Unicode Aliases\n", .{unicode_aliases.items.len});
     try out_writer.print("//\n", .{});
@@ -776,25 +775,27 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
 }
 
 fn generateFunction(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function_obj: json.ObjectMap) !void {
-    try jsonObjEnforceKnownFieldsOnly(function_obj, &[_][]const u8 {"name", "return_type", "args"}, sdk_file);
-    const func_name_tmp = (try jsonObjGetRequired(function_obj, "name", sdk_file)).String;
-    const return_type = (try jsonObjGetRequired(function_obj, "return_type", sdk_file)).Object;
-    const args = (try jsonObjGetRequired(function_obj, "args", sdk_file)).Array;
+    try jsonObjEnforceKnownFieldsOnly(function_obj, &[_][]const u8 {"Name", "SetLastError", "DllImport", "ReturnType", "Params"}, sdk_file);
+    const func_name_tmp = (try jsonObjGetRequired(function_obj, "Name", sdk_file)).String;
+    const set_last_error = (try jsonObjGetRequired(function_obj, "SetLastError", sdk_file)).Bool;
+    const dll_import = (try jsonObjGetRequired(function_obj, "DllImport", sdk_file)).String;
+    const return_type = (try jsonObjGetRequired(function_obj, "ReturnType", sdk_file)).Object;
+    const params = (try jsonObjGetRequired(function_obj, "Params", sdk_file)).Array;
 
     const func_name_pool = try global_symbol_pool.add(func_name_tmp);
     try sdk_file.func_exports.put(func_name_pool, .{});
 
-    try out_writer.print("pub extern \"{s}\" fn {s}(\n", .{"TODO", func_name_pool});
-    for (args.items) |arg_node| {
-        const arg_obj = arg_node.Object;
-        try jsonObjEnforceKnownFieldsOnly(arg_obj, &[_][]const u8 {"name", "type"}, sdk_file);
-        const arg_name = (try jsonObjGetRequired(arg_obj, "name", sdk_file)).String;
-        const arg_type = (try jsonObjGetRequired(arg_obj, "type", sdk_file)).Object;
-        try addTypeRefs(sdk_file, arg_type);
-        try out_writer.print("    {s}: {},\n", .{arg_name, formatTypeRef(arg_type, .top_level, sdk_file)});
+    try out_writer.print("pub extern \"{s}\" fn {s}(\n", .{dll_import, func_name_pool});
+    for (params.items) |param_node| {
+        const param_obj = param_node.Object;
+        try jsonObjEnforceKnownFieldsOnly(param_obj, &[_][]const u8 {"Name", "Type"}, sdk_file);
+        const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).String;
+        const param_type = (try jsonObjGetRequired(param_obj, "Type", sdk_file)).Object;
+        //const param_type_formatter = try addTypeRefs(sdk_file, param_type);
+        try out_writer.print("    {s}: u32, // TODO: param type {},\n", .{std.zig.fmtId(param_name), fmtJson(param_type)});
     }
-    try addTypeRefs(sdk_file, return_type);
-    try out_writer.print(") callconv(.Stdcall) {};\n", .{formatTypeRef(return_type, .top_level, sdk_file)});
+    //const return_type_formatter = try addTypeRefs(sdk_file, return_type);
+    try out_writer.print(") callconv(@import(\"std\").os.windows.WINAPI) u32; // TODO: return type {}\n", .{fmtJson(return_type)});
 }
 
 fn getPoolStringWithParts(a: *std.mem.Allocator, slices: []const []const u8) ![]const u8 {
