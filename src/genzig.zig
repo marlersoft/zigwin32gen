@@ -204,7 +204,7 @@ fn main2() !u8 {
 
     const win32json_dir_name = "deps" ++ path_sep ++ "win32json";
     // TODO: change this to a SHA!!!
-    const win32json_checkout = "master";
+    const win32json_checkout = "main";
     var win32json_dir = std.fs.cwd().openDir(win32json_dir_name, .{}) catch |e| switch (e) {
         error.FileNotFound => {
             std.debug.warn("Error: repository '{s}' does not exist, clone it with:\n", .{win32json_dir_name});
@@ -223,7 +223,19 @@ fn main2() !u8 {
 
     const cwd = std.fs.cwd();
 
-    const out_dir_string = "zigwin32" ++ path_sep ++ "src";
+    const zigwin32_dir_name = "zigwin32";
+    cwd.access(zigwin32_dir_name, .{}) catch |e| switch (e) {
+        error.FileNotFound => {
+            std.debug.warn("Error: repository '{s}' does not exist, clone it with:\n", .{zigwin32_dir_name});
+            std.debug.warn("    git clone https://github.com/marlersoft/zigwin32 {s}" ++ path_sep ++ zigwin32_dir_name ++ "\n", .{
+                try getcwd(allocator)
+            });
+            return error.AlreadyReported;
+        },
+        else => return e,
+    };
+
+    const out_dir_string = zigwin32_dir_name ++ path_sep ++ "src";
     try cleanDir(cwd, out_dir_string);
     var out_dir = try cwd.openDir(out_dir_string, .{});
     defer out_dir.close();
