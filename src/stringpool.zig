@@ -9,6 +9,9 @@ const zog = @import("./zog.zig");
 pub const StringPool = struct {
     pub const Val = struct {
         slice: []const u8,
+        pub fn eql(self: Val, other: Val) bool {
+            return self.slice.ptr == other.slice.ptr;
+        }
         pub fn format(
             self: @This(),
             comptime fmt: []const u8,
