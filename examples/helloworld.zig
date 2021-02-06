@@ -1,5 +1,4 @@
-//usingnamespace @import("win32").everything;
-//usingnamespace @import("win32").everything;
+usingnamespace @import("win32").everything;
 
 pub export fn WinMainCRTStartup() callconv(@import("std").os.windows.WINAPI) c_int {
     // TODO: call getstdhandle and writefile

@@ -278,6 +278,7 @@ fn main2() !u8 {
                 \\//! an application to access any and all symbols through a single import.
                 \\
                 \\pub const L = @import("zig.zig").L;
+                \\
             );
 
             // TODO: workaround issue where constants/functions are defined more than once, not sure what the right solution
@@ -288,15 +289,21 @@ fn main2() !u8 {
             var shared_func_map = StringPool.HashMap(*SdkFile).init(allocator);
             defer shared_func_map.deinit();
 
+            // we wrap all the api symbols in a sub-struct because some of the api
+            // names conflict some of the symbols.  This prevents those conflicts.
+            try writer.print("const api = struct {{\n", .{});
             for (sdk_files.items) |sdk_file| {
-                try writer.print("\nconst {s} = @import(\"api/{0s}.zig\");\n", .{sdk_file.name_snake_case});
+                try writer.print("    const {s} = @import(\"api/{0s}.zig\");\n", .{sdk_file.name_snake_case});
+            }
+            try writer.print("}};\n", .{});
+            for (sdk_files.items) |sdk_file| {
                 try writer.print("// {s} exports {} constants:\n", .{sdk_file.name_snake_case, sdk_file.const_exports.items.len});
                 for (sdk_file.const_exports.items) |constant| {
                     if (shared_const_map.get(constant)) |other_sdk_file| {
                         try writer.print("// WARNING: redifinition of constant '{s}' in module '{s}' (going with module '{s}')\n", .{
                             constant, sdk_file.name_snake_case, other_sdk_file.name_snake_case});
                     } else {
-                        try writer.print("pub const {s} = {s}.{0s};\n", .{constant, sdk_file.name_snake_case});
+                        try writer.print("pub const {s} = api.{s}.{0s};\n", .{constant, sdk_file.name_snake_case});
                         try shared_const_map.put(constant, sdk_file);
                     }
                 }
@@ -309,7 +316,7 @@ fn main2() !u8 {
                         try writer.print("// WARNING: type '{s}.{s}' has {} definitions, going with '{s}'\n", .{
                             sdk_file.name_snake_case, type_name, type_entry.duplicates + 1, type_entry.first_sdk_file_ptr.name_snake_case});
                     } else {
-                        try writer.print("pub const {s} = {s}.{0s};\n", .{type_name, sdk_file.name_snake_case});
+                        try writer.print("pub const {s} = api.{s}.{0s};\n", .{type_name, sdk_file.name_snake_case});
                     }
                 }
                 try writer.print("// {s} exports {} functions:\n", .{sdk_file.name_snake_case, sdk_file.func_exports.count()});
@@ -320,7 +327,7 @@ fn main2() !u8 {
                         try writer.print("// WARNING: redifinition of function '{s}' in module '{s}' (going with module '{s}')\n", .{
                             func, sdk_file.name_snake_case, other_sdk_file.name_snake_case});
                     } else {
-                        try writer.print("pub const {s} = {s}.{0s};\n", .{func, sdk_file.name_snake_case});
+                        try writer.print("pub const {s} = api.{s}.{0s};\n", .{func, sdk_file.name_snake_case});
                         try shared_func_map.put(func, sdk_file);
                     }
                 }
@@ -335,7 +342,7 @@ fn main2() !u8 {
         try writer.writeAll(autogen_header ++
             \\pub const api = @import("win32/api.zig");
             \\pub const zig = @import("win32/zig.zig");
-            \\//pub const everything = @import("win32/everything.zig");
+            \\pub const everything = @import("win32/everything.zig");
             \\
             \\const std = @import("std");
             \\test "" {
