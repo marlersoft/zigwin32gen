@@ -854,9 +854,13 @@ fn generateFunction(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function
     try out_writer.print("pub extern \"{s}\" fn {s}(\n", .{dll_import, func_name_pool});
     for (params.items) |param_node| {
         const param_obj = param_node.Object;
-        try jsonObjEnforceKnownFieldsOnly(param_obj, &[_][]const u8 {"Name", "Type"}, sdk_file);
+        try jsonObjEnforceKnownFieldsOnly(param_obj, &[_][]const u8 {"Name", "Type", "Attrs"}, sdk_file);
         const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).String;
         const param_type = (try jsonObjGetRequired(param_obj, "Type", sdk_file)).Object;
+        const param_attrs = (try jsonObjGetRequired(param_obj, "Attrs", sdk_file)).Array;
+        for (param_attrs.items) |attr_node| {
+            try out_writer.print("    // TODO: handle custom attribute '{}'\n", .{fmtJson(attr_node)});
+        }
         const param_type_formatter = try addTypeRefs(sdk_file, param_type);
         try out_writer.print("    {s}: {},\n", .{std.zig.fmtId(param_name), param_type_formatter});
     }
