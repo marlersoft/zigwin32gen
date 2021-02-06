@@ -716,9 +716,17 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
         const zig_type_formatter = try addTypeRefs(sdk_file, def_type);
         try out_writer.print("pub const {s} = {};\n", .{tmp_name, zig_type_formatter});
     } else if (std.mem.eql(u8, kind, "Enum")) {
-        try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Kind", "Values"}, sdk_file);
+        try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Kind", "Values", "IntegerBase"}, sdk_file);
         const values = (try jsonObjGetRequired(type_obj, "Values", sdk_file)).Array;
-        try out_writer.print("pub const {s} = extern enum(i64) {{ // TODO: get actual base type\n", .{tmp_name});
+        const integer_base = switch (try jsonObjGetRequired(type_obj, "IntegerBase", sdk_file)) {
+            .Null => "i32",
+            .String => |s| nativeTypeToZigType(global_native_type_map.get(s) orelse {
+                std.log.err("enum '{s}' has an unknown IntegerBase '{s}'\n", .{tmp_name, s});
+                return error.AlreadyReported;
+            }),
+            else => jsonPanic(),
+        };
+        try out_writer.print("pub const {s} = extern enum({s}) {{\n", .{tmp_name, integer_base});
         if (values.items.len == 0) {
             // zig doesn't allow empty enums
             try out_writer.print("    _\n", .{});
