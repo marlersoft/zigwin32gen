@@ -192,11 +192,12 @@ fn main2() !u8 {
     var out_win32_dir = try out_dir.openDir("win32", .{});
     defer out_win32_dir.close();
 
-    // copy zig.zig module
+    // copy zig.zig and missing.zig modules
     {
         var src_dir = try cwd.openDir("src", .{});
         defer src_dir.close();
         try src_dir.copyFile("zig.zig", out_win32_dir, "zig.zig", .{});
+        try src_dir.copyFile("missing.zig", out_win32_dir, "missing.zig", .{});
     }
 
     var shared_type_export_map = StringPool.HashMap(SharedTypeExportEntry).init(allocator);
@@ -279,6 +280,8 @@ fn main2() !u8 {
                 \\
                 \\pub const L = @import("zig.zig").L;
                 \\
+                \\pub usingnamespace @import("missing.zig");
+                \\
             );
 
             // TODO: workaround issue where constants/functions are defined more than once, not sure what the right solution
@@ -342,6 +345,7 @@ fn main2() !u8 {
         try writer.writeAll(autogen_header ++
             \\pub const api = @import("win32/api.zig");
             \\pub const zig = @import("win32/zig.zig");
+            \\pub const missing = @import("win32/missing.zig");
             \\pub const everything = @import("win32/everything.zig");
             \\
             \\const std = @import("std");
