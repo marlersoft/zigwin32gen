@@ -4,6 +4,8 @@ const json = std.json;
 const StringPool = @import("stringpool.zig").StringPool;
 const path_sep = std.fs.path.sep_str;
 
+const cameltosnake = @import("cameltosnake.zig");
+
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const allocator = &arena.allocator;
 
@@ -84,7 +86,7 @@ const SdkFile = struct {
         const sdk_file = try allocator.create(SdkFile);
         errdefer allocator.destroy(sdk_file);
         const name_original_case = json_basename[0..json_basename.len - ".json".len];
-        const name_snake_case = try camelToSnake(allocator, name_original_case);
+        const name_snake_case = try cameltosnake.camelToSnakeAlloc(allocator, name_original_case);
         errdefer allocator.free(name_snake_case);
         const zig_filename = try std.mem.concat(allocator, u8, &[_][]const u8 {name_snake_case, ".zig"});
         errdefer allocator.free(zig_filename);
@@ -444,8 +446,13 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
         var it = sdk_file.top_level_api_imports.iterator();
         while (it.next()) |import| {
             const name = import.key;
-            const api = import.value;
-            try out_writer.print("const {s} = u32; // TODO: import from {s}\n", .{name, api});
+            const api_upper = import.value;
+
+            // TODO: should I cache this upper to lower mapping instead of allocating/freeing each time?
+            const api_lower = try cameltosnake.camelToSnakeAlloc(allocator, api_upper.slice);
+            defer allocator.free(api_lower);
+
+            try out_writer.print("const {s} = @import(\"{s}.zig\").{0s};\n", .{name, api_lower});
         }
     }
 
@@ -1115,34 +1122,4 @@ fn getcwd(a: *std.mem.Allocator) ![]u8 {
     const path_allocated = try a.alloc(u8, path.len);
     std.mem.copy(u8, path_allocated, path);
     return path_allocated;
-}
-
-// TODO: should this be in std lib?
-fn camelToSnake(a: *std.mem.Allocator, camel: []const u8) ![]const u8 {
-    std.debug.assert(camel.len >= 0); // code assumes this right now
-
-    var new_len = camel.len;
-    {var i : usize = 1; while (i < camel.len) : (i += 1) {
-        if (std.ascii.isUpper(camel[i]) and std.ascii.isLower(camel[i-1])) {
-            new_len += 1;
-        }
-    }}
-
-    var snake = try a.alloc(u8, new_len);
-    errdefer a.free(snake);
-
-    snake[0] = camel[0] + (if (std.ascii.isUpper(camel[0])) @as(u8, 'a'-'A') else 0);
-
-    var snake_index : usize = 1;
-    {var i: usize = 1; while (i < camel.len) : (i += 1) {
-        const is_upper = std.ascii.isUpper(camel[i]);
-        if (is_upper and std.ascii.isLower(camel[i-1])) {
-            snake[snake_index] = '_';
-            snake_index += 1;
-        }
-        snake[snake_index] = camel[i] + (if (is_upper) @as(u8, 'a'-'A') else 0);
-        snake_index += 1;
-    }}
-    std.debug.assert(snake_index == new_len);
-    return snake;
 }
