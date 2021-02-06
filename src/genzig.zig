@@ -405,10 +405,11 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
     try out_writer.print("//\n", .{});
     try out_writer.print("// {} Types\n", .{types_array.items.len});
     try out_writer.print("//\n", .{});
+    var enum_value_export_count : u32 = 0;
     for (types_array.items) |type_node| {
-        try generateType(sdk_file, out_writer, type_node.Object);
+        try generateType(sdk_file, out_writer, type_node.Object, &enum_value_export_count);
     }
-    std.debug.assert(types_array.items.len == sdk_file.type_exports.count());
+    std.debug.assert(types_array.items.len + enum_value_export_count == sdk_file.type_exports.count());
     try out_writer.print("\n", .{});
     try out_writer.print("//\n", .{});
     try out_writer.print("// {} Functions\n", .{functions_array.items.len});
@@ -449,12 +450,14 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
         \\test "" {{
         \\    const constant_export_count = {};
         \\    const type_export_count = {};
+        \\    const enum_value_export_count = {};
         \\    const func_export_count = {};
         \\    const unicode_alias_count = {};
         \\    const import_count = {};
         \\    @setEvalBranchQuota(
         \\        constant_export_count +
         \\        type_export_count +
+        \\        enum_value_export_count +
         \\        func_export_count +
         \\        unicode_alias_count +
         \\        import_count +
@@ -464,7 +467,8 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
         \\}}
         \\
     , .{sdk_file.const_exports.items.len,
-        sdk_file.type_exports.count(),
+        types_array.items.len,
+        enum_value_export_count,
         sdk_file.func_exports.count(),
         0, // TODO: uncomment when I start generating these: unicode_aliases.items.len,
         import_total,
@@ -698,15 +702,9 @@ fn generateConstant(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, constant
     try out_writer.print("pub const {s} {};\n", .{name_pool, fmtConstAssign(native_type, value_node)});
 }
 
-fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap) !void {
+fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, enum_value_export_count: *u32) !void {
     const kind = (try jsonObjGetRequired(type_obj, "Kind", sdk_file)).String;
     const tmp_name = (try jsonObjGetRequired(type_obj, "Name", sdk_file)).String;
-    //const type_entry = try getTypeWithTempString(tmp_name);
-    //if (type_entry.metadata.builtin) {
-    //    std.debug.warn("Error: type '{s}' is defined and builtin?\n", .{tmp_name});
-    //    return error.AlreadyReported;
-    //}
-    //std.debug.assert(std.mem.eql(u8, tmp_name, type_entry.zig_type_from_pool));
     const pool_name = try global_symbol_pool.add(tmp_name);
 
     std.debug.assert(sdk_file.type_exports.get(pool_name) == null);
@@ -733,6 +731,24 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
             // TODO: should we generate a "_" field?  How do we know whether these enums are exhaustive?
         }
         try out_writer.print("}};\n", .{});
+
+        if (enums_with_value_conflicts.get(tmp_name)) |_| {
+            try out_writer.print("// TODO: enum '{s}' has known value symbol conflicts, skipping the value aliases\n", .{tmp_name});
+            return;
+        }
+
+        // create aliases
+        for (values.items) |value_node| {
+            const value_obj = value_node.Object;
+            try jsonObjEnforceKnownFieldsOnly(value_obj, &[_][]const u8 {"Name", "Value"}, sdk_file);
+            const value_tmp_name = (try jsonObjGetRequired(value_obj, "Name", sdk_file)).String;
+            const value_literal = try jsonObjGetRequired(value_obj, "Value", sdk_file);
+            const pool_value_name = try global_symbol_pool.add(value_tmp_name);
+            try sdk_file.type_exports.put(pool_value_name, .{});
+            try out_writer.print("pub const {s} = {s}.{0s};\n", .{value_tmp_name, tmp_name});
+        }
+        enum_value_export_count.* += @intCast(u32, values.items.len);
+
     } else if (std.mem.eql(u8, kind, "Struct")) {
         try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Kind", "Name", "Size", "PackingSize", "Fields", "Comment", "NestedTypes"}, sdk_file);
         const struct_name = (try jsonObjGetRequired(type_obj, "Name", sdk_file)).String;
@@ -780,12 +796,22 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
 // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 const dhcp_type_conflicts = std.ComptimeStringMap(Nothing, .{
-        .{ "DHCP_SUBNET_ELEMENT_UNION", .{} },
-        .{ "DHCP_OPTION_ELEMENT_UNION", .{} },
-        .{ "DHCP_OPTION_SCOPE_UNION6", .{} },
-        .{ "DHCP_CLIENT_SEARCH_UNION", .{} },
-        .{ "DHCP_SUBNET_ELEMENT_UNION_V4", .{} },
-        .{ "DHCP_SUBNET_ELEMENT_UNION_V6", .{} },
+    .{ "DHCP_SUBNET_ELEMENT_UNION", .{} },
+    .{ "DHCP_OPTION_ELEMENT_UNION", .{} },
+    .{ "DHCP_OPTION_SCOPE_UNION6", .{} },
+    .{ "DHCP_CLIENT_SEARCH_UNION", .{} },
+    .{ "DHCP_SUBNET_ELEMENT_UNION_V4", .{} },
+    .{ "DHCP_SUBNET_ELEMENT_UNION_V6", .{} },
+});
+// TODO: this is a set of enums whose value symbols conflict with other symbols
+const enums_with_value_conflicts = std.ComptimeStringMap(Nothing, .{
+    .{ "ProcessAccessRights", .{} },
+    .{ "MLOperatorTensorDataType", .{} },
+    .{ "MLOperatorExecutionType", .{} },
+    .{ "MLOperatorEdgeType", .{} },
+    .{ "JsRuntimeVersion", .{} },
+    .{ "__MIDL___MIDL_itf_autosvcs_0001_0159_0002", .{} },
+
 });
 
 fn generateFunction(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function_obj: json.ObjectMap) !void {
