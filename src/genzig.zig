@@ -528,6 +528,12 @@ fn addTypeRefsNoFormatter(sdk_file: *SdkFile, type_ref: json.ObjectMap) anyerror
     } else if (std.mem.eql(u8, kind, "Array")) {
         try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"Kind", "Child"}, sdk_file);
         try addTypeRefsNoFormatter(sdk_file, (try jsonObjGetRequired(type_ref, "Child", sdk_file)).Object);
+    } else if (std.mem.eql(u8, kind, "LPArray")) {
+        try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"Kind", "NullNullTerm", "SizeParamIndex", "SizeConst", "ArraySubType", "Child"}, sdk_file);
+        try addTypeRefsNoFormatter(sdk_file, (try jsonObjGetRequired(type_ref, "Child", sdk_file)).Object);
+    } else if (std.mem.eql(u8, kind, "LPStr")) {
+        try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"Kind", "Wide", "NullTerm", "NullNullTerm", "Child"}, sdk_file);
+        try addTypeRefsNoFormatter(sdk_file, (try jsonObjGetRequired(type_ref, "Child", sdk_file)).Object);
     } else if (std.mem.eql(u8, kind, "MissingClrType")) {
         try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"Kind", "Name", "Namespace"}, sdk_file);
     } else {
@@ -596,12 +602,14 @@ const ConstValueFormatter = struct {
 
 
 
-const DepthContext = enum {top_level, child};
+const DepthContext = enum {top_level, child, array};
 const TypeRefFormatter = struct {
     type_ref: json.ObjectMap,
     // we need to know if the type is the top-level type or a child type of something like a pointer
     // so we can generate the correct `void` type.  Top level void types become void, but pointers
     // to void types must become pointers to the `opaque{}` type.
+    // Need to know if it is an array specifically because array pointers cannot point to opaque types
+    // with an unknown size.
     depth_context: DepthContext,
     sdk_file: *SdkFile,
     pub fn format(
@@ -615,7 +623,13 @@ const TypeRefFormatter = struct {
             jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"Kind", "Name"}, self.sdk_file) catch unreachable;
             const name = (jsonObjGetRequired(self.type_ref, "Name", self.sdk_file) catch unreachable).String;
             if (std.mem.eql(u8, name, "Void")) {
-                try writer.writeAll(if (self.depth_context == .child) "opaque{}" else "void");
+                try writer.writeAll(switch (self.depth_context) {
+                    .top_level => "void",
+                    .child => "opaque{}",
+                    // if we are rendering the element of an array, then we have to know the size, we default to u8
+                    // because most void pointers in C are measured in terms of u8 bytes
+                    .array => "u8",
+                });
             } else if (std.mem.eql(u8, name, "Guid")) {
                 try writer.writeAll("Guid");
             } else {
@@ -645,6 +659,45 @@ const TypeRefFormatter = struct {
             // TODO: get the actual size!!
             try writer.writeAll("[1]");
             try formatTypeRef(child, .child, self.sdk_file).format(fmt, options, writer);
+        } else if (std.mem.eql(u8, kind, "LPArray")) {
+            try jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"Kind", "NullNullTerm", "SizeParamIndex", "SizeConst", "ArraySubType", "Child"}, self.sdk_file);
+            const null_null_term = (try jsonObjGetRequired(self.type_ref, "NullNullTerm", self.sdk_file)).Bool;
+            const size_param_index = (try jsonObjGetRequired(self.type_ref, "SizeParamIndex", self.sdk_file)).Integer;
+            const size_const = (try jsonObjGetRequired(self.type_ref, "SizeConst", self.sdk_file)).Integer;
+            const opt_array_sub_type_node : ?[]const u8 = switch(try jsonObjGetRequired(self.type_ref, "ArraySubType", self.sdk_file)) {
+                .String => |s| s,
+                .Null => null,
+                else => jsonPanic(),
+            };
+            const type_ref_kind = (jsonObjGetRequired(self.type_ref, "Kind", self.sdk_file) catch unreachable).String;
+            // TODO: can Zig use size_param_index?
+            const child = (try jsonObjGetRequired(self.type_ref, "Child", self.sdk_file)).Object;
+
+            if (null_null_term) {
+                try writer.print("*extern struct{{comment:[*]const u8=\"TODO: LPArray with null_null_term\"}}", .{});
+            } else if (opt_array_sub_type_node) |sub_type| {
+                try writer.print("*extern struct{{comment:[*]const u8=\"TODO: LPArray with subtype {s}\"}}", .{sub_type});
+            } else {
+                if (size_const == -1 or size_const == 0) {
+                    try writer.writeAll("[*]");
+                } else {
+                    try writer.print("*[{}]", .{size_const});
+                }
+                try formatTypeRef(child, .array, self.sdk_file).format(fmt, options, writer);
+            }
+        } else if (std.mem.eql(u8, kind, "LPStr")) {
+            try jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"Kind", "Wide", "NullTerm", "NullNullTerm", "Child"}, self.sdk_file);
+            const wide = (try jsonObjGetRequired(self.type_ref, "Wide", self.sdk_file)).Bool;
+            const null_term = (try jsonObjGetRequired(self.type_ref, "NullTerm", self.sdk_file)).Bool;
+            const null_null_term = (try jsonObjGetRequired(self.type_ref, "NullNullTerm", self.sdk_file)).Bool;
+            if (null_null_term) {
+                try writer.print("*extern struct{{comment:[*]const u8=\"TODO: LPStr with null_null_term\"}}", .{});
+            } else {
+                // TODO: handle optional/const
+                const null_term_str : []const u8 = if (null_term) ":0" else "";
+                const elem : []const u8 = if (wide) "u16" else "u8";
+                try writer.print("[*{s}]{s}", .{null_term_str, elem});
+            }
         } else if (std.mem.eql(u8, kind, "MissingClrType")) {
             try jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"Kind", "Name", "Namespace"}, self.sdk_file);
             const name = (try jsonObjGetRequired(self.type_ref, "Name", self.sdk_file)).String;
@@ -784,7 +837,7 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
         const struct_nested_types = (try jsonObjGetRequired(type_obj, "NestedTypes", sdk_file)).Array;
         if (struct_fields.items.len == 0) {
             // TODO: handle nested types
-            try out_writer.print("pub const {s} = opaque{{}}; // an empty struct?\n", .{struct_name});
+            try out_writer.print("pub const {s} = extern struct {{ comment: [*]const u8 = \"TODO: why is this struct empty?\" }};\n", .{struct_name});
         } else {
             try out_writer.print("pub const {s} = extern struct {{\n", .{struct_name});
             for (struct_fields.items) |field_node| {
@@ -1040,7 +1093,7 @@ fn jsonEnforceMsg(cond: bool, comptime msg: []const u8, args: anytype) void {
 }
 
 fn jsonObjEnforceKnownFieldsOnly(map: json.ObjectMap, known_fields: []const []const u8, file_thing: anytype) !void {
-    if (@TypeOf(file_thing) == *SdkFile)
+    if (@TypeOf(file_thing) == *SdkFile or @TypeOf(file_thing) == *const SdkFile)
         return jsonObjEnforceKnownFieldsOnlyImpl(map, known_fields, file_thing.json_basename2);
     if (@TypeOf(file_thing) == []const u8)
         return jsonObjEnforceKnownFieldsOnlyImpl(map, known_fields, file_thing);
@@ -1060,7 +1113,7 @@ fn jsonObjEnforceKnownFieldsOnlyImpl(map: json.ObjectMap, known_fields: []const 
 }
 
 fn jsonObjGetRequired(map: json.ObjectMap, field: []const u8, file_thing: anytype) !json.Value {
-    if (@TypeOf(file_thing) == *SdkFile)
+    if (@TypeOf(file_thing) == *SdkFile or @TypeOf(file_thing) == *const SdkFile)
         return jsonObjGetRequiredImpl(map, field, file_thing.json_basename2);
     if (@TypeOf(file_thing) == []const u8)
         return jsonObjGetRequiredImpl(map, field, file_thing);
