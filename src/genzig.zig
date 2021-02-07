@@ -604,6 +604,7 @@ const TypeRefFormatter = struct {
     pub const Options = struct {
         is_const: bool = false,
         in: bool = false,
+        out: bool = false,
         optional: bool = false,
     };
 
@@ -656,7 +657,7 @@ const TypeRefFormatter = struct {
                 try writer.writeAll("?");
             }
             try writer.writeAll("*");
-            if (self.options.is_const or self.options.in) {
+            if (self.options.is_const) {
                 try writer.writeAll("const ");
             }
             try fmtTypeRef(child, self.options, .child, self.sdk_file).format(fmt, fmt_options, writer);
@@ -693,7 +694,7 @@ const TypeRefFormatter = struct {
                 } else {
                     try writer.print("*[{}]", .{size_const});
                 }
-                if (size_const <= 0 and (self.options.is_const or self.options.in))
+                if (size_const <= 0 and self.options.is_const)
                     try writer.writeAll("const ");
                 try fmtTypeRef(child, self.options, .array, self.sdk_file).format(fmt, fmt_options, writer);
             }
@@ -708,7 +709,7 @@ const TypeRefFormatter = struct {
                 const optional_prefix : []const u8 = if (self.options.optional) "?" else "";
                 const null_term_str : []const u8 = if (null_term) ":0" else "";
                 const elem : []const u8 = if (wide) "u16" else "u8";
-                const const_str : []const u8 = if (self.options.is_const or self.options.in) "const " else "";
+                const const_str : []const u8 = if (self.options.is_const) "const " else "";
                 try writer.print("{s}[*{s}]{s}{s}", .{optional_prefix, null_term_str, const_str, elem});
             }
         } else if (std.mem.eql(u8, kind, "MissingClrType")) {
@@ -797,8 +798,8 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
     if (std.mem.eql(u8, kind, "NativeTypedef")) {
         try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Kind", "Def"}, sdk_file);
         const def_type = (try jsonObjGetRequired(type_obj, "Def", sdk_file)).Object;
-        // TODO: set is_const and in properly
-        const zig_type_formatter = try addTypeRefs(sdk_file, def_type, .{.is_const = false, .in = false});
+        // TODO: set is_const, in and out properly
+        const zig_type_formatter = try addTypeRefs(sdk_file, def_type, .{.is_const = false, .in = false, .out = false });
         try out_writer.print("pub const {s} = {};\n", .{tmp_name, zig_type_formatter});
     } else if (std.mem.eql(u8, kind, "Enum")) {
         try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Kind", "Values", "IntegerBase"}, sdk_file);
@@ -859,8 +860,8 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
                 try jsonObjEnforceKnownFieldsOnly(field_obj, &[_][]const u8 {"Name", "Type"}, sdk_file);
                 const field_name = (try jsonObjGetRequired(field_obj, "Name", sdk_file)).String;
                 const field_type = (try jsonObjGetRequired(field_obj, "Type", sdk_file)).Object;
-                // TODO: set is_const and in properly
-                const field_type_formatter = try addTypeRefs(sdk_file, field_type, .{ .is_const = false, .in = false });
+                // TODO: set is_const, in and out properly
+                const field_type_formatter = try addTypeRefs(sdk_file, field_type, .{ .is_const = false, .in = false, .out = false });
                 try out_writer.print("    {}: {},\n", .{std.zig.fmtId(field_name), field_type_formatter});
             }
             for (struct_nested_types.items) |nested_type_node| {
@@ -933,6 +934,8 @@ fn generateFunction(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function
                 param_options.is_const = true;
             } else if (std.mem.eql(u8, attr_str, "In")) {
                 param_options.in = true;
+            } else if (std.mem.eql(u8, attr_str, "Out")) {
+                param_options.out = true;
             } else if (std.mem.eql(u8, attr_str, "Optional")) {
                 param_options.optional = true;
             } else {
@@ -942,8 +945,8 @@ fn generateFunction(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function
         const param_type_formatter = try addTypeRefs(sdk_file, param_type, param_options);
         try out_writer.print("    {s}: {},\n", .{std.zig.fmtId(param_name), param_type_formatter});
     }
-    // TODO: set is_const and in properly
-    const return_type_formatter = try addTypeRefs(sdk_file, return_type, .{ .is_const = false, .in = false });
+    // TODO: set is_const, in and out properly
+    const return_type_formatter = try addTypeRefs(sdk_file, return_type, .{ .is_const = false, .in = false, .out = false });
     try out_writer.print(") callconv(@import(\"std\").os.windows.WINAPI) {};\n", .{return_type_formatter});
 }
 
