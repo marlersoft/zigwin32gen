@@ -14,9 +14,9 @@ pub export fn WinMainCRTStartup() callconv(@import("std").os.windows.WINAPI) c_i
 fn writeAll(hFile: HANDLE, buffer: []const u8) !void {
     var written : usize = 0;
     while (written < buffer.len) {
-        const next_write = @intCast(DWORD, 0xFFFFFFFF & (buffer.len - written));
-        var last_written : DWORD = undefined;
-        if (1 != WriteFile(hFile, @ptrCast(LPCVOID, buffer.ptr + written), next_write, &last_written, null)) {
+        const next_write = @intCast(u32, 0xFFFFFFFF & (buffer.len - written));
+        var last_written : u32 = undefined;
+        if (1 != WriteFile(hFile, buffer.ptr + written, next_write, &last_written, null)) {
             // TODO: return from GetLastError
             return error.WriteFileFailed;
         }

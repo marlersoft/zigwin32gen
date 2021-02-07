@@ -1,13 +1,18 @@
 //! This example is ported from : https://github.com/microsoft/Windows-classic-samples/blob/master/Samples/Win7Samples/begin/LearnWin32/HelloWorld/cpp/main.cpp
 pub const UNICODE = true;
 
+const WINAPI = @import("std").os.windows.WINAPI;
+
 usingnamespace @import("win32").zig;
-usingnamespace @import("win32").header.windows;
+usingnamespace @import("win32").api.system_services;
+usingnamespace @import("win32").api.windows_and_messaging;
+usingnamespace @import("win32").api.gdi;
 
-// TODO: define this in windows headers:
-const WS_OVERLAPPEDWINDOW = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
+// TODO: these types don't seem to be defined in win32metadata?
+const PWSTR = [*:0]u16;
+const UINT = u32;
 
-pub export fn wWinMain(hInstance: HINSTANCE, _: HINSTANCE, pCmdLine: PWSTR, nCmdShow: c_int) callconv(.Stdcall) c_int
+pub export fn wWinMain(hInstance: HINSTANCE, _: HINSTANCE, pCmdLine: PWSTR, nCmdShow: c_int) callconv(WINAPI) c_int
 {
 
     // Register the window class.
@@ -15,7 +20,9 @@ pub export fn wWinMain(hInstance: HINSTANCE, _: HINSTANCE, pCmdLine: PWSTR, nCmd
 
     const wc = WNDCLASS {
         .style = 0,
-        .lpfnWndProc = WindowProc,
+        // TODO: uncomment when function pointers are implemented!!!!!!!!!!!
+        //.lpfnWndProc = WindowProc,
+        .lpfnWndProc = 0,
         .cbClsExtra = 0,
         .cbWndExtra = 0,
         .hInstance = hInstance,
@@ -62,7 +69,7 @@ pub export fn wWinMain(hInstance: HINSTANCE, _: HINSTANCE, pCmdLine: PWSTR, nCmd
     return 0;
 }
 
-fn WindowProc(hwnd: HWND , uMsg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.Stdcall) LRESULT
+fn WindowProc(hwnd: HWND , uMsg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(WINAPI) LRESULT
 {
     switch (uMsg)
     {
