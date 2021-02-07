@@ -429,12 +429,7 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
     try out_writer.print("//\n", .{});
     try out_writer.print("// {} Unicode Aliases\n", .{unicode_aliases.items.len});
     try out_writer.print("//\n", .{});
-    for (unicode_aliases.items) |unicode_alias_node| {
-        //try generateUnicodeName(sdk_file, out_writer, unicode_alias_node.Object);
-    }
-    // TODO: uncomment this when I start generating aliases
-    //std.debug.assert(unicode_aliases.items.len == sdk_file.unicode_aliases.count());
-
+    try generateUnicodeAliases(sdk_file, out_writer, unicode_aliases.items);
     const import_total = @boolToInt(sdk_file.uses_guid) + sdk_file.top_level_api_imports.count();
     try out_writer.print("\n", .{});
     try out_writer.print("//\n", .{});
@@ -482,7 +477,7 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
         types_array.items.len,
         enum_value_export_count,
         sdk_file.func_exports.count(),
-        0, // TODO: uncomment when I start generating these: unicode_aliases.items.len,
+        unicode_aliases.items.len,
         import_total,
     });
 }
@@ -957,55 +952,28 @@ fn getPoolStringWithParts(a: *std.mem.Allocator, slices: []const []const u8) ![]
     return try global_symbol_pool.add(tmp);
 }
 
-fn generateUnicodeName(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, unicode_name_obj: json.ObjectMap) !void {
-    try jsonObjEnforceKnownFieldsOnly(unicode_name_obj, &[_][]const u8 {"name"}, sdk_file);
-    const name_tmp = (try jsonObjGetRequired(unicode_name_obj, "name", sdk_file)).String;
-
-    const name_ansi_pool = try getPoolStringWithParts(allocator, &[_][]const u8 {name_tmp, "A"});
-    const name_unicode_pool = try getPoolStringWithParts(allocator, &[_][]const u8 {name_tmp, "W"});
-
-    const NameKind = enum { none, type, func };
-    const ansi_kind : NameKind = init: {
-        if (sdk_file.type_exports.get(name_ansi_pool)) |_| break :init .type;
-        if (sdk_file.func_exports.get(name_ansi_pool)) |_| break :init .func;
-        break :init .none;
-    };
-    const unicode_kind : NameKind = init: {
-        if (sdk_file.type_exports.get(name_unicode_pool)) |_| break :init .type;
-        if (sdk_file.func_exports.get(name_unicode_pool)) |_| break :init .func;
-        break :init .none;
-    };
-    if (ansi_kind == .none and unicode_kind == .none) {
-        std.debug.warn("Error: unicode name '{s}' does not have a corresponding Ansi or Unicode name ({s} or {s})\n", .{name_tmp, name_ansi_pool, name_unicode_pool});
-        return error.AlreadyReported;
+fn generateUnicodeAliases(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, unicode_aliases: []json.Value) !void {
+    try out_writer.writeAll("pub usingnamespace switch (@import(\"../zig.zig\").unicode_mode) {\n");
+    try out_writer.writeAll("    .ansi => struct {\n");
+    for (unicode_aliases) |alias_node| {
+        try out_writer.print("        pub const {s} = {0s}A;\n", .{alias_node.String});
     }
-    if (ansi_kind != .none and unicode_kind != .none and ansi_kind != unicode_kind) {
-        std.debug.warn("Error: ansi name '{s}' is a {} but the unicode name '{s}' is a {}\n", .{name_ansi_pool, ansi_kind, name_unicode_pool, unicode_kind});
-        return error.AlreadyReported;
+    try out_writer.writeAll("    },\n");
+    try out_writer.writeAll("    .wide => struct {\n");
+    for (unicode_aliases) |alias_node| {
+        try out_writer.print("        pub const {s} = {0s}W;\n", .{alias_node.String});
     }
-
-    const name_pool = try global_symbol_pool.add(name_tmp);
-    const common_kind = if (ansi_kind != .none) ansi_kind else unicode_kind;
-    switch (common_kind) {
-        .none => unreachable,
-        .type => try sdk_file.type_exports.put(name_pool, try getTypeWithPoolString(name_pool)),
-        .func => try sdk_file.func_exports.put(name_pool, .{}),
+    try out_writer.writeAll("    },\n");
+    try out_writer.writeAll("    .unspecified => if (@import(\"builtin\").is_test) struct {\n");
+    for (unicode_aliases) |alias_node| {
+        try out_writer.print("        pub const {s} = *opaque{{}};\n", .{alias_node.String});
     }
-
-    // TODO: would it be better to generate code that checks the unicode mode once for all symbols?
-    try out_writer.print("pub const {s} = switch (@import(\"../zig.zig\").unicode_mode) {{\n", .{name_pool});
-    if (ansi_kind == .none) {
-        try out_writer.print("    .ansi    => @compileError(\"'{s}' does not exist\"),\n", .{name_ansi_pool});
-    } else {
-        try out_writer.print("    .ansi    => {s},\n", .{name_ansi_pool});
+    try out_writer.writeAll("    } else struct {\n");
+    for (unicode_aliases) |alias_node| {
+        try out_writer.print("        pub const {s} = @compileError(\"'{0s}' requires that UNICODE be set to true or false in the root module\");\n", .{alias_node.String});
     }
-    if (unicode_kind == .none) {
-        try out_writer.print("    .unicode => @compileError(\"'{s}' does not exist\"),\n", .{name_unicode_pool});
-    } else {
-        try out_writer.print("    .unicode => {s},\n", .{name_unicode_pool});
-    }
-    try out_writer.print("    .unspecified => if (@import(\"builtin\").is_test) opaque{{}} else @compileError(\"Cannot call '{s}' because the root module has not set UNICODE to true or false.\"),\n", .{name_pool});
-    try out_writer.print("}};\n", .{});
+    try out_writer.writeAll("    },\n");
+    try out_writer.writeAll("};");
 }
 
 //const FixIntegerLiteralFormatter = struct {
