@@ -414,6 +414,7 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
     var enum_value_export_count : u32 = 0;
     for (types_array.items) |type_node| {
         try generateType(sdk_file, out_writer, type_node.Object, &enum_value_export_count);
+        try out_writer.print("\n", .{});
     }
     std.debug.assert(types_array.items.len + enum_value_export_count == sdk_file.type_exports.count());
     try out_writer.print("\n", .{});
