@@ -400,41 +400,41 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
     const types_array = (try jsonObjGetRequired(root_obj, "Types", sdk_file)).Array;
     const functions_array = (try jsonObjGetRequired(root_obj, "Functions", sdk_file)).Array;
     const unicode_aliases = (try jsonObjGetRequired(root_obj, "UnicodeAliases", sdk_file)).Array;
-    try out_writer.print("//\n", .{});
-    try out_writer.print("// {} Constants\n", .{constants_array.items.len});
-    try out_writer.print("//\n", .{});
+    try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
+    try out_writer.print("// Section: Constants ({})\n", .{constants_array.items.len});
+    try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
     for (constants_array.items) |constant_node| {
         try generateConstant(sdk_file, out_writer, constant_node.Object);
     }
     std.debug.assert(constants_array.items.len == sdk_file.const_exports.items.len);
     try out_writer.print("\n", .{});
-    try out_writer.print("//\n", .{});
-    try out_writer.print("// {} Types\n", .{types_array.items.len});
-    try out_writer.print("//\n", .{});
+    try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
+    try out_writer.print("// Section: Types ({})\n", .{types_array.items.len});
+    try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
     var enum_value_export_count : u32 = 0;
     for (types_array.items) |type_node| {
         try generateType(sdk_file, out_writer, type_node.Object, &enum_value_export_count);
     }
     std.debug.assert(types_array.items.len + enum_value_export_count == sdk_file.type_exports.count());
     try out_writer.print("\n", .{});
-    try out_writer.print("//\n", .{});
-    try out_writer.print("// {} Functions\n", .{functions_array.items.len});
-    try out_writer.print("//\n", .{});
+    try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
+    try out_writer.print("// Section: Functions ({})\n", .{functions_array.items.len});
+    try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
     for (functions_array.items) |function_node| {
         try generateFunction(sdk_file, out_writer, function_node.Object);
         try out_writer.print("\n", .{});
     }
     std.debug.assert(functions_array.items.len == sdk_file.func_exports.count());
     try out_writer.print("\n", .{});
-    try out_writer.print("//\n", .{});
-    try out_writer.print("// {} Unicode Aliases\n", .{unicode_aliases.items.len});
-    try out_writer.print("//\n", .{});
+    try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
+    try out_writer.print("// Section: Unicode Aliases ({})\n", .{unicode_aliases.items.len});
+    try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
     try generateUnicodeAliases(sdk_file, out_writer, unicode_aliases.items);
     const import_total = @boolToInt(sdk_file.uses_guid) + sdk_file.top_level_api_imports.count();
     try out_writer.print("\n", .{});
-    try out_writer.print("//\n", .{});
-    try out_writer.print("// {} Imports\n", .{import_total});
-    try out_writer.print("//\n", .{});
+    try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
+    try out_writer.print("// Section: Imports ({})\n", .{import_total});
+    try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
     if (sdk_file.uses_guid) {
         try out_writer.writeAll("const Guid = @import(\"../zig.zig\").Guid;\n");
     }
