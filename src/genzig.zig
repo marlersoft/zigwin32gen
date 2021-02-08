@@ -956,6 +956,13 @@ const enums_with_value_conflicts = std.ComptimeStringMap(Nothing, .{
 
 });
 
+const funcs_with_issues = std.ComptimeStringMap(Nothing, .{
+    // These functions don't work yet because Zig doesn't support the 16-byte Guid struct in the C ABI yet
+    // See: https://github.com/ziglang/zig/issues/1481
+    .{ "CorePrinterDriverInstalledA", .{} },
+    .{ "CorePrinterDriverInstalledW", .{} },
+});
+
 const FuncPtrKind = enum { ptr, fixed };
 
 fn generateFunction(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function_obj: json.ObjectMap, func_kind: FuncPtrKind) !void {
@@ -972,6 +979,15 @@ fn generateFunction(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function
 
     if (func_kind == .fixed) {
         try sdk_file.func_exports.put(try global_symbol_pool.add(func_name_tmp), .{});
+    }
+
+    if (funcs_with_issues.get(func_name_tmp)) |_| {
+        try out_writer.print("// This function from dll '{s}' is being skipped because it has some sort of issue\n", .{dll_import});
+        try out_writer.print("pub fn {s}() void {{ @panic(\"this function is not working\"); }}\n", .{func_name_tmp});
+        return;
+    }
+
+    if (func_kind == .fixed) {
         try out_writer.print("pub extern \"{s}\" fn {s}(\n", .{dll_import, func_name_tmp});
     } else {
         try out_writer.print("pub const {s} = fn(\n", .{func_name_tmp});
