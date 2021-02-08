@@ -81,6 +81,8 @@ const SdkFile = struct {
     top_level_api_imports: StringPool.HashMap(StringPool.Val),
     type_exports: StringPool.HashMap(Nothing),
     func_exports: StringPool.HashMap(Nothing),
+    // this field is only needed to workaround: https://github.com/ziglang/zig/issues/4476
+    tmp_func_ptr_workaround_list: ArrayList(StringPool.Val),
 
     pub fn create(json_basename: []const u8) !*SdkFile {
         const sdk_file = try allocator.create(SdkFile);
@@ -101,6 +103,7 @@ const SdkFile = struct {
             .top_level_api_imports = StringPool.HashMap(StringPool.Val).init(allocator),
             .type_exports = StringPool.HashMap(Nothing).init(allocator),
             .func_exports = StringPool.HashMap(Nothing).init(allocator),
+            .tmp_func_ptr_workaround_list = ArrayList(StringPool.Val).init(allocator),
         };
         return sdk_file;
     }
@@ -453,9 +456,19 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
         }
     }
 
-    try out_writer.print(
+    try out_writer.writeAll(
         \\
-        \\test "" {{
+        \\test "" {
+        \\
+    );
+    if (sdk_file.tmp_func_ptr_workaround_list.items.len > 0) {
+        try out_writer.writeAll("    // The following '_ = <FuncPtrType>' lines are a workaround for https://github.com/ziglang/zig/issues/4476\n");
+        for (sdk_file.tmp_func_ptr_workaround_list.items) |func_ptr_type| {
+            try out_writer.print("    _ = {s};\n", .{func_ptr_type});
+        }
+        try out_writer.writeAll("\n");
+    }
+    try out_writer.print(
         \\    const constant_export_count = {};
         \\    const type_export_count = {};
         \\    const enum_value_export_count = {};
@@ -795,10 +808,7 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
     std.debug.assert(sdk_file.type_exports.get(pool_name) == null);
     try sdk_file.type_exports.put(pool_name, .{});
 
-    if (types_to_skip.get(tmp_name)) |_| {
-        try out_writer.print("// TODO: not generating this type because it is causing some sort of error\n", .{});
-        try out_writer.print("pub const {s} = usize;\n", .{tmp_name});
-    } else if (std.mem.eql(u8, kind, "NativeTypedef")) {
+    if (std.mem.eql(u8, kind, "NativeTypedef")) {
         try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Kind", "Def"}, sdk_file);
         const def_type = (try jsonObjGetRequired(type_obj, "Def", sdk_file)).Object;
         // TODO: set is_const, in and out properly
@@ -890,6 +900,7 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
             return;
         }
         try generateFunction(sdk_file, out_writer, type_obj, .ptr);
+        try sdk_file.tmp_func_ptr_workaround_list.append(pool_name);
     } else if (std.mem.eql(u8, kind, "Com")) {
         try out_writer.print("pub const {s} = u32; // TODO: implement 'Com' types\n", .{tmp_name});
     } else if (std.mem.eql(u8, kind, "StructOrUnion")) {
@@ -903,31 +914,10 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
     }
 }
 
-const types_to_skip = std.ComptimeStringMap(Nothing, .{
-    // This type causes dependency loop issues with function pointer types, need
-    // to mimize this and file and issue
-    .{ "CRYPT_PROVIDER_FUNCTIONS", .{} },
-    .{ "UCharIterator", .{} },
-    .{ "UTextFuncs", .{} },
-    .{ "WINBIO_SENSOR_INTERFACE", .{} },
-    .{ "WINBIO_ENGINE_INTERFACE", .{} },
-    .{ "WINBIO_FRAMEWORK_INTERFACE", .{} },
-});
-
-// These function pointers caused dependency loop errors.
-// TODO: mimize these dependency loop error cases and file an issue for them
+// Skip these function pointers to workaround: https://github.com/ziglang/zig/issues/4476
 const func_ptr_dependency_loop_problems = std.ComptimeStringMap(Nothing, .{
     .{ "FREEOBJPROC", .{} },
-    .{ "WSD_STUB_FUNCTION", .{} },
-    .{ "PWSD_SOAP_MESSAGE_HANDLER", .{} },
-    .{ "PFN_IO_COMPLETION", .{} },
-    .{ "PEVENT_TRACE_BUFFER_CALLBACKW", .{} },
-    .{ "PEVENT_TRACE_BUFFER_CALLBACKA", .{} },
-    .{ "PIO_IRP_EXT_PROCESS_TRACKED_OFFSET_CALLBACK", .{} },
-    .{ "PCMSCALLBACKW", .{} },
-    .{ "PCMSCALLBACKA", .{} },
-    .{ "WS_ASYNC_FUNCTION", .{} },
-    .{ "PFNFILLTEXTBUFFER", .{} },
+    .{ "LPDDHAL_WAITFORVERTICALBLANK", .{} },
 });
 
 // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
