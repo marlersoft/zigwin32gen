@@ -860,11 +860,20 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
             try out_writer.print("pub const {s} = extern struct {{\n", .{struct_name});
             for (struct_fields.items) |field_node| {
                 const field_obj = field_node.Object;
-                try jsonObjEnforceKnownFieldsOnly(field_obj, &[_][]const u8 {"Name", "Type"}, sdk_file);
+                try jsonObjEnforceKnownFieldsOnly(field_obj, &[_][]const u8 {"Name", "Type", "Attrs"}, sdk_file);
                 const field_name = (try jsonObjGetRequired(field_obj, "Name", sdk_file)).String;
                 const field_type = (try jsonObjGetRequired(field_obj, "Type", sdk_file)).Object;
-                // TODO: set is_const, in and out properly
-                const field_type_formatter = try addTypeRefs(sdk_file, field_type, .{ .is_const = false, .in = false, .out = false });
+                const field_attrs = (try jsonObjGetRequired(field_obj, "Attrs", sdk_file)).Array;
+                var field_options = TypeRefFormatter.Options { };
+                for (field_attrs.items) |attr_node| {
+                    const attr_str = attr_node.String;
+                    if (std.mem.eql(u8, attr_str, "Const")) {
+                        field_options.is_const = true;
+                    } else {
+                        jsonPanicMsg("unhandled custom field attribute {}\n", .{fmtJson(attr_node)});
+                    }
+                }
+                const field_type_formatter = try addTypeRefs(sdk_file, field_type, field_options);
                 try out_writer.print("    {}: {},\n", .{std.zig.fmtId(field_name), field_type_formatter});
             }
             for (struct_nested_types.items) |nested_type_node| {
