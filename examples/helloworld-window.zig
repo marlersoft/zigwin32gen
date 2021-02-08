@@ -20,16 +20,15 @@ pub export fn wWinMain(hInstance: HINSTANCE, _: HINSTANCE, pCmdLine: PWSTR, nCmd
 
     const wc = WNDCLASS {
         .style = 0,
-        // TODO: uncomment when function pointers are implemented!!!!!!!!!!!
-        //.lpfnWndProc = WindowProc,
-        .lpfnWndProc = 0,
+        .lpfnWndProc = WindowProc,
         .cbClsExtra = 0,
         .cbWndExtra = 0,
         .hInstance = hInstance,
         .hIcon = null,
         .hCursor = null,
         .hbrBackground = null,
-        .lpszMenuName = null,
+        // TODO: autogen bindings don't allow for null, should win32metadata allow Option for fields? Or should all strings allow NULL?
+        .lpszMenuName = L("Some Menu Name"),
         .lpszClassName = CLASS_NAME,
     };
 
