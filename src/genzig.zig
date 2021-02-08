@@ -72,7 +72,7 @@ fn nativeTypeToZigType(t: NativeType) []const u8 {
 const Nothing = struct {};
 
 const SdkFile = struct {
-    json_basename2: []const u8,
+    json_basename: []const u8,
     name_original_case: []const u8,
     name_snake_case: []const u8,
     zig_filename: []const u8,
@@ -92,7 +92,7 @@ const SdkFile = struct {
         errdefer allocator.free(zig_filename);
 
         sdk_file.* = .{
-            .json_basename2 = json_basename,
+            .json_basename = json_basename,
             .name_original_case = name_original_case,
             .name_snake_case = name_snake_case,
             .zig_filename = zig_filename,
@@ -422,7 +422,7 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
     try out_writer.print("// Section: Functions ({})\n", .{functions_array.items.len});
     try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
     for (functions_array.items) |function_node| {
-        try generateFunction(sdk_file, out_writer, function_node.Object);
+        try generateFunction(sdk_file, out_writer, function_node.Object, .fixed);
         try out_writer.print("\n", .{});
     }
     std.debug.assert(functions_array.items.len == sdk_file.func_exports.count());
@@ -795,7 +795,10 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
     std.debug.assert(sdk_file.type_exports.get(pool_name) == null);
     try sdk_file.type_exports.put(pool_name, .{});
 
-    if (std.mem.eql(u8, kind, "NativeTypedef")) {
+    if (types_to_skip.get(tmp_name)) |_| {
+        try out_writer.print("// TODO: not generating this type because it is causing some sort of error\n", .{});
+        try out_writer.print("pub const {s} = usize;\n", .{tmp_name});
+    } else if (std.mem.eql(u8, kind, "NativeTypedef")) {
         try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Kind", "Def"}, sdk_file);
         const def_type = (try jsonObjGetRequired(type_obj, "Def", sdk_file)).Object;
         // TODO: set is_const, in and out properly
@@ -871,17 +874,52 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
             }
             try out_writer.print("}};\n", .{});
         }
-    } else {
+    } else if (std.mem.eql(u8, kind, "FunctionPointer")) {
+        if (func_ptr_dependency_loop_problems.get(tmp_name)) |_| {
+            try out_writer.writeAll("// TODO: this function pointer causes dependency loop problems, so it's stubbed out\n");
+            try out_writer.print("pub const {s} = fn() callconv(@import(\"std\").os.windows.WINAPI) void;\n", .{tmp_name});
+            return;
+        }
+        try generateFunction(sdk_file, out_writer, type_obj, .ptr);
+    } else if (std.mem.eql(u8, kind, "Com")) {
+        try out_writer.print("pub const {s} = u32; // TODO: implement 'Com' types\n", .{tmp_name});
+    } else if (std.mem.eql(u8, kind, "StructOrUnion")) {
         if (dhcp_type_conflicts.get(tmp_name)) |_| {
             try out_writer.print("// TODO: this dhcp type has been removed because it conflicts with a nested type '{s}'\n", .{tmp_name});
             return;
         }
-
-        try out_writer.print("pub const {s} = u32; // unhandled Kind '{s}'\n", .{tmp_name, kind});
-        //std.debug.warn("{s}: Error: unknown type kind '{s}'", .{sdk_file.name, kind});
-        //return error.AlreadyReported;
+        try out_writer.print("pub const {s} = u32; // TODO: implement StructOrUnion types?\n", .{tmp_name});
+    } else {
+        jsonPanicMsg("{s}: unknown type Kind '{s}'", .{sdk_file.json_basename, kind});
     }
 }
+
+const types_to_skip = std.ComptimeStringMap(Nothing, .{
+    // This type causes dependency loop issues with function pointer types, need
+    // to mimize this and file and issue
+    .{ "CRYPT_PROVIDER_FUNCTIONS", .{} },
+    .{ "UCharIterator", .{} },
+    .{ "UTextFuncs", .{} },
+    .{ "WINBIO_SENSOR_INTERFACE", .{} },
+    .{ "WINBIO_ENGINE_INTERFACE", .{} },
+    .{ "WINBIO_FRAMEWORK_INTERFACE", .{} },
+});
+
+// These function pointers caused dependency loop errors.
+// TODO: mimize these dependency loop error cases and file an issue for them
+const func_ptr_dependency_loop_problems = std.ComptimeStringMap(Nothing, .{
+    .{ "FREEOBJPROC", .{} },
+    .{ "WSD_STUB_FUNCTION", .{} },
+    .{ "PWSD_SOAP_MESSAGE_HANDLER", .{} },
+    .{ "PFN_IO_COMPLETION", .{} },
+    .{ "PEVENT_TRACE_BUFFER_CALLBACKW", .{} },
+    .{ "PEVENT_TRACE_BUFFER_CALLBACKA", .{} },
+    .{ "PIO_IRP_EXT_PROCESS_TRACKED_OFFSET_CALLBACK", .{} },
+    .{ "PCMSCALLBACKW", .{} },
+    .{ "PCMSCALLBACKA", .{} },
+    .{ "WS_ASYNC_FUNCTION", .{} },
+    .{ "PFNFILLTEXTBUFFER", .{} },
+});
 
 // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -909,18 +947,26 @@ const enums_with_value_conflicts = std.ComptimeStringMap(Nothing, .{
 
 });
 
-fn generateFunction(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function_obj: json.ObjectMap) !void {
-    try jsonObjEnforceKnownFieldsOnly(function_obj, &[_][]const u8 {"Name", "SetLastError", "DllImport", "ReturnType", "Params"}, sdk_file);
+const FuncPtrKind = enum { ptr, fixed };
+
+fn generateFunction(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function_obj: json.ObjectMap, func_kind: FuncPtrKind) !void {
+    switch (func_kind) {
+        .fixed => try jsonObjEnforceKnownFieldsOnly(function_obj, &[_][]const u8 {"Name", "SetLastError", "DllImport", "ReturnType", "Params"}, sdk_file),
+        .ptr => try jsonObjEnforceKnownFieldsOnly(function_obj, &[_][]const u8 {"Kind", "Name", "SetLastError", "ReturnType", "Params"}, sdk_file),
+    }
+
     const func_name_tmp = (try jsonObjGetRequired(function_obj, "Name", sdk_file)).String;
     const set_last_error = (try jsonObjGetRequired(function_obj, "SetLastError", sdk_file)).Bool;
-    const dll_import = (try jsonObjGetRequired(function_obj, "DllImport", sdk_file)).String;
+    const dll_import = if (func_kind == .fixed) (try jsonObjGetRequired(function_obj, "DllImport", sdk_file)).String else "";
     const return_type = (try jsonObjGetRequired(function_obj, "ReturnType", sdk_file)).Object;
     const params = (try jsonObjGetRequired(function_obj, "Params", sdk_file)).Array;
 
-    const func_name_pool = try global_symbol_pool.add(func_name_tmp);
-    try sdk_file.func_exports.put(func_name_pool, .{});
-
-    try out_writer.print("pub extern \"{s}\" fn {s}(\n", .{dll_import, func_name_pool});
+    if (func_kind == .fixed) {
+        try sdk_file.func_exports.put(try global_symbol_pool.add(func_name_tmp), .{});
+        try out_writer.print("pub extern \"{s}\" fn {s}(\n", .{dll_import, func_name_tmp});
+    } else {
+        try out_writer.print("pub const {s} = fn(\n", .{func_name_tmp});
+    }
     for (params.items) |param_node| {
         const param_obj = param_node.Object;
         try jsonObjEnforceKnownFieldsOnly(param_obj, &[_][]const u8 {"Name", "Type", "Attrs"}, sdk_file);
@@ -1096,7 +1142,7 @@ fn jsonEnforceMsg(cond: bool, comptime msg: []const u8, args: anytype) void {
 
 fn jsonObjEnforceKnownFieldsOnly(map: json.ObjectMap, known_fields: []const []const u8, file_thing: anytype) !void {
     if (@TypeOf(file_thing) == *SdkFile or @TypeOf(file_thing) == *const SdkFile)
-        return jsonObjEnforceKnownFieldsOnlyImpl(map, known_fields, file_thing.json_basename2);
+        return jsonObjEnforceKnownFieldsOnlyImpl(map, known_fields, file_thing.json_basename);
     if (@TypeOf(file_thing) == []const u8)
         return jsonObjEnforceKnownFieldsOnlyImpl(map, known_fields, file_thing);
     @compileError("unhandled file_thing type: " ++ @typeName(@TypeOf(file_thing)));
@@ -1116,7 +1162,7 @@ fn jsonObjEnforceKnownFieldsOnlyImpl(map: json.ObjectMap, known_fields: []const 
 
 fn jsonObjGetRequired(map: json.ObjectMap, field: []const u8, file_thing: anytype) !json.Value {
     if (@TypeOf(file_thing) == *SdkFile or @TypeOf(file_thing) == *const SdkFile)
-        return jsonObjGetRequiredImpl(map, field, file_thing.json_basename2);
+        return jsonObjGetRequiredImpl(map, field, file_thing.json_basename);
     if (@TypeOf(file_thing) == []const u8)
         return jsonObjGetRequiredImpl(map, field, file_thing);
     @compileError("unhandled file_thing type: " ++ @typeName(@TypeOf(file_thing)));
