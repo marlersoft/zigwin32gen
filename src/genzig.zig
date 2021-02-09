@@ -536,7 +536,7 @@ fn addTypeRefsNoFormatter(sdk_file: *SdkFile, type_ref: json.ObjectMap) anyerror
         try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"Kind", "Child"}, sdk_file);
         try addTypeRefsNoFormatter(sdk_file, (try jsonObjGetRequired(type_ref, "Child", sdk_file)).Object);
     } else if (std.mem.eql(u8, kind, "Array")) {
-        try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"Kind", "Child"}, sdk_file);
+        try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"Kind", "Shape", "Child"}, sdk_file);
         try addTypeRefsNoFormatter(sdk_file, (try jsonObjGetRequired(type_ref, "Child", sdk_file)).Object);
     } else if (std.mem.eql(u8, kind, "LPArray")) {
         try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"Kind", "NullNullTerm", "SizeParamIndex", "SizeConst", "ArraySubType", "Child"}, sdk_file);
@@ -675,10 +675,18 @@ const TypeRefFormatter = struct {
             }
             try fmtTypeRef(child, self.options, .child, self.sdk_file).format(fmt, fmt_options, writer);
         } else if (std.mem.eql(u8, kind, "Array")) {
-            try jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"Kind", "Child"}, self.sdk_file);
+            try jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"Kind", "Shape", "Child"}, self.sdk_file);
             const child = (try jsonObjGetRequired(self.type_ref, "Child", self.sdk_file)).Object;
-            // TODO: get the actual size!!
-            try writer.writeAll("[1]");
+            const shape_size = init: { switch (try jsonObjGetRequired(self.type_ref, "Shape", self.sdk_file)) {
+                // TODO: should we use size 1 here?
+                .Null => break :init 1,
+                .Object => |shape_obj| {
+                    try jsonObjEnforceKnownFieldsOnly(shape_obj, &[_][]const u8 {"Size"}, self.sdk_file);
+                    break :init (try jsonObjGetRequired(shape_obj, "Size", self.sdk_file)).Integer;
+                },
+                else => jsonPanic(),
+            }};
+            try writer.print("[{}]", .{shape_size});
             try fmtTypeRef(child, self.options, .child, self.sdk_file).format(fmt, fmt_options, writer);
         } else if (std.mem.eql(u8, kind, "LPArray")) {
             try jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"Kind", "NullNullTerm", "SizeParamIndex", "SizeConst", "ArraySubType", "Child"}, self.sdk_file);
