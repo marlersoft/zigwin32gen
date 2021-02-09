@@ -625,7 +625,7 @@ const TypeRefFormatter = struct {
     options: Options,
     // we need to know if the type is the top-level type or a child type of something like a pointer
     // so we can generate the correct `void` type.  Top level void types become void, but pointers
-    // to void types must become pointers to the `opaque{}` type.
+    // to void types must become pointers to the `c_void` type.
     // Need to know if it is an array specifically because array pointers cannot point to opaque types
     // with an unknown size.
     depth_context: DepthContext,
@@ -643,7 +643,7 @@ const TypeRefFormatter = struct {
             if (std.mem.eql(u8, name, "Void")) {
                 try writer.writeAll(switch (self.depth_context) {
                     .top_level => "void",
-                    .child => "opaque{}",
+                    .child => "c_void",
                     // if we are rendering the element of an array, then we have to know the size, we default to u8
                     // because most void pointers in C are measured in terms of u8 bytes
                     .array => "u8",
