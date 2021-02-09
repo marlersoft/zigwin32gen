@@ -16,7 +16,9 @@ fn writeAll(hFile: HANDLE, buffer: []const u8) !void {
     while (written < buffer.len) {
         const next_write = @intCast(u32, 0xFFFFFFFF & (buffer.len - written));
         var last_written : u32 = undefined;
-        if (1 != WriteFile(hFile, buffer.ptr + written, next_write, &last_written, null)) {
+        // TODO: removing const from ptr is a workaround for: https://github.com/microsoft/win32metadata/issues/211
+        //       that issue has been fixed but we're waiting for the next release of win32metadata
+        if (1 != WriteFile(hFile, @intToPtr([*]u8, @ptrToInt(buffer.ptr + written)), next_write, &last_written, null)) {
             // TODO: return from GetLastError
             return error.WriteFileFailed;
         }
