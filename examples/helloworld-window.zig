@@ -8,11 +8,7 @@ usingnamespace @import("win32").api.system_services;
 usingnamespace @import("win32").api.windows_and_messaging;
 usingnamespace @import("win32").api.gdi;
 
-// TODO: these types don't seem to be defined in win32metadata?
-const PWSTR = [*:0]u16;
-const UINT = u32;
-
-pub export fn wWinMain(hInstance: HINSTANCE, _: HINSTANCE, pCmdLine: PWSTR, nCmdShow: c_int) callconv(WINAPI) c_int
+pub export fn wWinMain(hInstance: HINSTANCE, _: HINSTANCE, pCmdLine: [*:0]u16, nCmdShow: c_int) callconv(WINAPI) c_int
 {
 
     // Register the window class.
@@ -68,7 +64,7 @@ pub export fn wWinMain(hInstance: HINSTANCE, _: HINSTANCE, pCmdLine: PWSTR, nCmd
     return 0;
 }
 
-fn WindowProc(hwnd: HWND , uMsg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(WINAPI) LRESULT
+fn WindowProc(hwnd: HWND , uMsg: u32, wParam: WPARAM, lParam: LPARAM) callconv(WINAPI) LRESULT
 {
     switch (uMsg)
     {
