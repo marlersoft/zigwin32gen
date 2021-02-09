@@ -12,24 +12,20 @@ usingnamespace @import("win32").api.gdi;
 usingnamespace @import("win32").api.direct2d;
 
 usingnamespace @import("basewin.zig");
-//
-//template <class T> void SafeRelease(T **ppT)
-//{
-//    if (*ppT)
-//    {
-//        (*ppT)->Release();
-//        *ppT = NULL;
-//    }
-//}
-//
-//class MainWindow : public BaseWindow<MainWindow>
-//{
+
+fn SafeRelease(ppT: anytype) void {
+    if (ppT.*) |t| {
+        t.Release();
+        ppT.* = null;
+    }
+}
+
 const MainWindow = struct {
-    base: BaseWindow(@This()),
-    pFactory: ?*ID2D1Factory,
-    pRenderTarget: ?*ID2D1HwndRenderTarget,
-    pBrush: ?*ID2D1SolidColorBrush,
-    ellipse: D2D1_ELLIPSE,
+    base: BaseWindow(@This()) = .{},
+    pFactory: ?*ID2D1Factory = null,
+    pRenderTarget: ?*ID2D1HwndRenderTarget = null,
+    pBrush: ?*ID2D1SolidColorBrush = null,
+    ellipse: D2D1_ELLIPSE = undefined,
 
 //    void    CalculateLayout();
 //    HRESULT CreateGraphicsResources();
@@ -39,18 +35,12 @@ const MainWindow = struct {
 //
 //public:
 //
-    pub fn init() MainWindow {
-        return .{
-            .base = BaseWindow(@This()).init(),
-            .pFactory = null,
-            .pRenderTarget = null,
-            .pBrush = null,
-            .ellipse = undefined,
-        };
-    }
 
     pub fn ClassName() [:0]const u16 { return L("Circle Window Class"); }
-//    LRESULT HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam);
+
+    pub fn HandleMessage(self: *MainWindow, uMsg: u32, wParam: WPARAM, lParam: LPARAM) LRESULT {
+        return MainWindowHandleMessage(self, uMsg, wParam, lParam);
+    }
 };
 
 // Recalculate drawing layout when the size of the window changes.
@@ -95,11 +85,13 @@ fn CalculateLayout(self: MainWindow) void {
 //    return hr;
 //}
 //
-//void MainWindow::DiscardGraphicsResources()
-//{
-//    SafeRelease(&pRenderTarget);
-//    SafeRelease(&pBrush);
-//}
+fn DiscardGraphicsResources(self: *MainWindow) void
+{
+    // TODO: need to support COM types before I can call this
+    //SafeRelease(&self.pRenderTarget);
+    // TODO: need to support COM types before I can call this
+    //SafeRelease(&self.pBrush);
+}
 //
 //void MainWindow::OnPaint()
 //{
@@ -140,54 +132,58 @@ fn CalculateLayout(self: MainWindow) void {
 //
 pub export fn wWinMain(hInstance: HINSTANCE, _: HINSTANCE, __: [*:0]u16, nCmdShow: c_int) callconv(WINAPI) c_int
 {
-    var win = MainWindow.init();
+    var win = MainWindow { };
 
     if (TRUE != win.base.Create(L("Circle"), WS_OVERLAPPEDWINDOW, .{}))
     {
         return 0;
     }
-//
-//    ShowWindow(win.Window(), nCmdShow);
-//
-//    // Run the message loop.
-//
-//    MSG msg = { };
-//    while (GetMessage(&msg, NULL, 0, 0))
-//    {
-//        TranslateMessage(&msg);
-//        DispatchMessage(&msg);
-//    }
-//
+
+    _ = ShowWindow(win.base.Window(), nCmdShow);
+
+    // Run the message loop.
+
+    var msg : MSG = undefined;
+    while (0 != GetMessage(&msg, null, 0, 0))
+    {
+        _ = TranslateMessage(&msg);
+        _ = DispatchMessage(&msg);
+    }
+
     return 0;
 }
-//
-//LRESULT MainWindow::HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam)
-//{
-//    switch (uMsg)
-//    {
-//    case WM_CREATE:
-//        if (FAILED(D2D1CreateFactory(
-//                D2D1_FACTORY_TYPE_SINGLE_THREADED, &pFactory)))
-//        {
-//            return -1;  // Fail CreateWindowEx.
-//        }
-//        return 0;
-//
-//    case WM_DESTROY:
-//        DiscardGraphicsResources();
-//        SafeRelease(&pFactory);
-//        PostQuitMessage(0);
-//        return 0;
-//
-//    case WM_PAINT:
-//        OnPaint();
-//        return 0;
-//
-//     // Other messages not shown...
-//
-//    case WM_SIZE:
-//        Resize();
-//        return 0;
-//    }
-//    return DefWindowProc(m_hwnd, uMsg, wParam, lParam);
-//}
+
+fn MainWindowHandleMessage(self: *MainWindow, uMsg: u32, wParam: WPARAM, lParam: LPARAM) LRESULT
+{
+    switch (uMsg)
+    {
+    WM_CREATE => {
+        //if (FAILED(D2D1CreateFactory(
+        //        D2D1_FACTORY_TYPE_SINGLE_THREADED, &self.pFactory)))
+        //{
+        //    return -1;  // Fail CreateWindowEx.
+        //}
+        return 0;
+    },
+    WM_DESTROY => {
+        DiscardGraphicsResources(self);
+        // TODO: need to support COM types before I can call this
+        //SafeRelease(&self.pFactory);
+        PostQuitMessage(0);
+        return 0;
+    },
+
+    //case WM_PAINT:
+    //    OnPaint();
+    //    return 0;
+
+    // // Other messages not shown...
+
+    //case WM_SIZE:
+    //    Resize();
+    //    return 0;
+
+    else => {},
+    }
+    return DefWindowProc(self.base.m_hwnd, uMsg, wParam, lParam);
+}

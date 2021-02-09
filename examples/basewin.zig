@@ -11,42 +11,35 @@ usingnamespace @import("win32").api.windows_and_messaging;
 const mnr = @import("win32").api.menus_and_resources;
 const HMENU = mnr.HMENU;
 
+const SetWindowLongPtr = win32.missing.SetWindowLongPtr;
 
-//template <class DERIVED_TYPE> 
-//class BaseWindow
-//{
 pub fn BaseWindow(comptime DERIVED_TYPE: type) type { return struct {
 
-//    static LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
     fn WindowProc(hwnd: HWND , uMsg: u32, wParam: WPARAM, lParam: LPARAM) callconv(WINAPI) LRESULT
     {
-        return 0;
-//        DERIVED_TYPE *pThis = NULL;
-//
-//        if (uMsg == WM_NCCREATE)
-//        {
-//            CREATESTRUCT* pCreate = (CREATESTRUCT*)lParam;
-//            pThis = (DERIVED_TYPE*)pCreate->lpCreateParams;
-//            SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)pThis);
-//
-//            pThis->m_hwnd = hwnd;
-//        }
-//        else
-//        {
-//            pThis = (DERIVED_TYPE*)GetWindowLongPtr(hwnd, GWLP_USERDATA);
-//        }
-//        if (pThis)
-//        {
-//            return pThis->HandleMessage(uMsg, wParam, lParam);
-//        }
-//        else
-//        {
-//            return DefWindowProc(hwnd, uMsg, wParam, lParam);
-//        }
-    }
+        var pThis : ?*DERIVED_TYPE = null;
+        if (uMsg == WM_NCCREATE)
+        {
+            const pCreate = @ptrCast(*CREATESTRUCT, @alignCast(@alignOf(CREATESTRUCT), lParam));
+            pThis = @ptrCast(*DERIVED_TYPE, @alignCast(@alignOf(DERIVED_TYPE), pCreate.lpCreateParams));
+            // TODO: SetWindowLongPtr seems to be missing from win32metadata, might need to file an issue
+            _ = @import("win32").missing.SetWindowLongPtr(hwnd, GWLP_USERDATA, @bitCast(isize, @ptrToInt(pThis)));
 
-    pub fn init() @This() {
-        return .{ .m_hwnd = null };
+            pThis.?.base.m_hwnd = hwnd;
+        }
+        else
+        {
+            // TODO: GetWindowLongPtr seems to be missing from win32metadata, might need to file an issue
+            pThis = @intToPtr(?*DERIVED_TYPE, @bitCast(usize, @import("win32").missing.GetWindowLongPtr(hwnd, GWLP_USERDATA)));
+        }
+        if (pThis) |this|
+        {
+            return this.HandleMessage(uMsg, wParam, lParam);
+        }
+        else
+        {
+            return DefWindowProc(hwnd, uMsg, wParam, lParam);
+        }
     }
 
     pub fn Create(self: *@This(),
@@ -79,20 +72,15 @@ pub fn BaseWindow(comptime DERIVED_TYPE: type) type { return struct {
 
         _ = RegisterClass(&wc);
 
-//        self.m_hwnd = CreateWindowEx(
-//            options.dwExStyle, DERIVED_TYPE.ClassName(), lpWindowName, dwStyle, options.x, options.y,
-//            options.nWidth, options.nHeight, options.hWndParent, options.hMenu, @ptrCast(HINSTANCE, GetModuleHandle(null)), @ptrCast(*c_void, self)
-//            );
+        self.m_hwnd = CreateWindowEx(
+            options.dwExStyle, DERIVED_TYPE.ClassName(), lpWindowName, dwStyle, options.x, options.y,
+            options.nWidth, options.nHeight, options.hWndParent, options.hMenu, @ptrCast(HINSTANCE, GetModuleHandle(null)), @ptrCast(*c_void, self)
+            );
 
         return if (self.m_hwnd != null) TRUE else FALSE;
     }
-//
-//    HWND Window() const { return m_hwnd; }
-//
-//protected:
-//
-//    virtual PCWSTR  ClassName() const = 0;
-//    virtual LRESULT HandleMessage(UINT uMsg, WPARAM wParam, LPARAM lParam) = 0;
-//
-    m_hwnd: HWND,
+
+    pub fn Window(self: @This()) HWND { return self.m_hwnd; }
+
+    m_hwnd: HWND = null,
 };}
