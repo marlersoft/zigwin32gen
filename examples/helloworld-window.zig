@@ -79,17 +79,12 @@ fn WindowProc(hwnd: HWND , uMsg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(
         },
         WM_PAINT =>
         {
-            // Cannot simply use PAINTSTRUCT because of: https://github.com/microsoft/win32metadata/issues/215
-            //var ps: PAINTSTRUCT = undefined;
-            var workaround_issue_215_ps : extern struct {
-                ps: PAINTSTRUCT,
-                reserved: [31]u8, // add the missing padding
-            } = undefined;
-            const hdc = BeginPaint(hwnd, &workaround_issue_215_ps.ps);
+            var ps: PAINTSTRUCT = undefined;
+            const hdc = BeginPaint(hwnd, &ps);
 
             // All painting occurs here, between BeginPaint and EndPaint.
-            _ = FillRect(hdc, &workaround_issue_215_ps.ps.rcPaint, @intToPtr(HBRUSH, @as(usize, COLOR_WINDOW+1)));
-            _ = EndPaint(hwnd, &workaround_issue_215_ps.ps);
+            _ = FillRect(hdc, &ps.rcPaint, @intToPtr(HBRUSH, @as(usize, COLOR_WINDOW+1)));
+            _ = EndPaint(hwnd, &ps);
             return 0;
         },
         else => {},
