@@ -45,6 +45,17 @@ pub const StringPool = struct {
         return val;
     }
 
+    pub fn addFormatted(self: *@This(), comptime fmt: []const u8, args: anytype) !Val {
+        const s = try std.fmt.allocPrint(self.allocator, fmt, args);
+        errdefer self.allocator.free(s);
+
+        const val = try self.add(s);
+        if (val.slice.ptr != s.ptr) {
+            self.allocator.free(s);
+        }
+        return val;
+    }
+
     fn eqlVal(a: Val, b: Val) bool {
         return std.hash_map.eqlString(a.slice, b.slice);
     }
@@ -55,6 +66,7 @@ pub const StringPool = struct {
     pub fn HashMap(comptime V: type) type {
         return std.HashMap(Val, V, hashVal, eqlVal, std.hash_map.DefaultMaxLoadPercentage);
     }
+
 };
 
 test "stringpool"

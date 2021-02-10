@@ -381,7 +381,8 @@ fn readAndGenerateApiFile(out_dir: std.fs.Dir, sdk_files: *ArrayList(*SdkFile), 
 
 const ExtraTypeCounts = struct {
     enum_values: u32,
-    com_ids: u32,
+    com_iface_ids: u32,
+    com_class_ids: u32,
 };
 
 fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !void {
@@ -410,14 +411,20 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
     try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
     var extra_type_counts = ExtraTypeCounts {
         .enum_values = 0,
-        .com_ids = 0,
+        .com_iface_ids = 0,
+        .com_class_ids = 0,
     };
     for (types_array.items) |type_node| {
         try generateType(sdk_file, out_writer, type_node.Object, &extra_type_counts);
         try out_writer.print("\n", .{});
     }
-    std.debug.assert(constants_array.items.len + extra_type_counts.enum_values + extra_type_counts.com_ids == sdk_file.const_exports.items.len);
-    std.debug.assert(types_array.items.len == sdk_file.type_exports.count());
+    std.debug.assert(sdk_file.const_exports.items.len ==
+        constants_array.items.len +
+        extra_type_counts.enum_values +
+        extra_type_counts.com_iface_ids +
+        extra_type_counts.com_class_ids);
+    const expected_type_export_count = types_array.items.len - extra_type_counts.com_class_ids;
+    std.debug.assert(expected_type_export_count == sdk_file.type_exports.count());
     try out_writer.print("\n", .{});
     try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
     try out_writer.print("// Section: Functions ({})\n", .{functions_array.items.len});
@@ -470,7 +477,8 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
         \\    const constant_export_count = {};
         \\    const type_export_count = {};
         \\    const enum_value_export_count = {};
-        \\    const com_id_export_count = {};
+        \\    const com_iface_id_export_count = {};
+        \\    const com_class_id_export_count = {};
         \\    const func_export_count = {};
         \\    const unicode_alias_count = {};
         \\    const import_count = {};
@@ -478,7 +486,8 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
         \\        constant_export_count +
         \\        type_export_count +
         \\        enum_value_export_count +
-        \\        com_id_export_count +
+        \\        com_iface_id_export_count +
+        \\        com_class_id_export_count +
         \\        func_export_count +
         \\        unicode_alias_count +
         \\        import_count +
@@ -488,9 +497,10 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
         \\}}
         \\
     , .{constants_array.items.len,
-        types_array.items.len,
+        sdk_file.type_exports.count(),
         extra_type_counts.enum_values,
-        extra_type_counts.com_ids,
+        extra_type_counts.com_iface_ids,
+        extra_type_counts.com_class_ids,
         sdk_file.func_exports.count(),
         unicode_aliases.items.len,
         import_total,
@@ -753,8 +763,18 @@ fn generateConstant(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, constant
 fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, extra_type_counts: *ExtraTypeCounts) !void {
     const kind = (try jsonObjGetRequired(type_obj, "Kind", sdk_file)).String;
     const tmp_name = (try jsonObjGetRequired(type_obj, "Name", sdk_file)).String;
-    const pool_name = try global_symbol_pool.add(tmp_name);
 
+    if (std.mem.eql(u8, kind, "ComClassID")) {
+        try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Kind", "Guid"}, sdk_file);
+        const guid = (try jsonObjGetRequired(type_obj, "Guid", sdk_file)).String;
+        const clsid_pool = try global_symbol_pool.addFormatted("CLSID_{s}", .{tmp_name});
+        try out_writer.print("pub const {s} = @import(\"../zig.zig\").Guid.initString(\"{s}\");\n", .{clsid_pool, guid});
+        try sdk_file.const_exports.append(clsid_pool);
+        extra_type_counts.com_class_ids += 1;
+        return;
+    }
+
+    const pool_name = try global_symbol_pool.add(tmp_name);
     std.debug.assert(sdk_file.type_exports.get(pool_name) == null);
     try sdk_file.type_exports.put(pool_name, .{});
 
@@ -788,7 +808,7 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
         try generateFunction(sdk_file, out_writer, type_obj, .ptr, null, null);
         try sdk_file.tmp_func_ptr_workaround_list.append(pool_name);
     } else if (std.mem.eql(u8, kind, "Com")) {
-        try generateCom(sdk_file, out_writer, type_obj, pool_name, &extra_type_counts.com_ids);
+        try generateCom(sdk_file, out_writer, type_obj, pool_name, &extra_type_counts.com_iface_ids);
     } else if (std.mem.eql(u8, kind, "StructOrUnion")) {
         if (dhcp_type_conflicts.get(tmp_name)) |_| {
             try out_writer.print("// TODO: this dhcp type has been removed because it conflicts with a nested type '{s}'\n", .{tmp_name});
@@ -815,20 +835,11 @@ const com_types_to_skip = std.ComptimeStringMap(Nothing, .{
 });
 
 fn generateStruct(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, struct_pool_name: StringPool.Val) !void {
-    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Kind", "Name", "Guid", "Size", "PackingSize", "Fields", "Comment", "NestedTypes"}, sdk_file);
-    const struct_optional_guid : ?[]const u8 = switch (try jsonObjGetRequired(type_obj, "Guid", sdk_file)) {
-        .Null => null,
-        .String => |s| s,
-        else => jsonPanic(),
-    };
+    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Kind", "Name", "Size", "PackingSize", "Fields", "Comment", "NestedTypes"}, sdk_file);
     const struct_size = (try jsonObjGetRequired(type_obj, "Size", sdk_file)).Integer;
     const struct_packing_size = (try jsonObjGetRequired(type_obj, "PackingSize", sdk_file)).Integer;
     const struct_fields = (try jsonObjGetRequired(type_obj, "Fields", sdk_file)).Array;
     const struct_nested_types = (try jsonObjGetRequired(type_obj, "NestedTypes", sdk_file)).Array;
-
-    if (struct_optional_guid) |guid| {
-        try out_writer.print("// TODO: what to do with the type guid? '{s}'\n", .{guid});
-    }
 
     if (struct_fields.items.len == 0) {
         // TODO: handle nested types
@@ -924,11 +935,7 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
     }
 
     if (com_optional_guid) |_| {
-        const iid_pool = init: {
-            const iid = try std.fmt.allocPrint(allocator, "IID_{s}", .{com_pool_name.slice});
-            defer allocator.free(iid);
-            break :init try global_symbol_pool.add(iid);
-        };
+        const iid_pool = try global_symbol_pool.addFormatted("IID_{s}", .{com_pool_name.slice});
         try out_writer.print("pub const {s} = {s}.id;\n", .{iid_pool, com_pool_name});
         try sdk_file.const_exports.append(iid_pool);
         com_id_count.* += 1;
