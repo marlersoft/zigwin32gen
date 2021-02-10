@@ -551,50 +551,6 @@ fn addTypeRefsNoFormatter(sdk_file: *SdkFile, type_ref: json.ObjectMap) anyerror
     }
 }
 
-
-fn fmtConstAssign(native_type: NativeType, value: json.Value) ConstValueFormatter {
-    return .{ .native_type = native_type, .value = value };
-}
-const ConstValueFormatter = struct {
-    native_type: NativeType,
-    value: json.Value,
-    pub fn format(
-        self: @This(),
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) std.os.WriteError!void {
-        if (self.native_type == .String) {
-            try writer.print("= {}", .{fmtJson(self.value)});
-            return;
-        }
-        const zig_type = nativeTypeToZigType(self.native_type);
-        if (self.native_type == .Single or self.native_type == .Double) {
-            switch (self.value) {
-                .String => |float_str| {
-                    if (std.mem.eql(u8, float_str, "inf")) {
-                        try writer.print("= @import(\"std\").math.inf({s})", .{zig_type});
-                        return;
-                    } else if (std.mem.eql(u8, float_str, "-inf")) {
-                        try writer.print("= -@import(\"std\").math.inf({s})", .{zig_type});
-                        return;
-                    } else if (std.mem.eql(u8, float_str, "nan")) {
-                        try writer.print("= @import(\"std\").math.nan({s})", .{zig_type});
-                        return;
-                    } else {
-                        std.debug.panic("unexpected float string value '{s}'", .{float_str});
-                    }
-                    return;
-                },
-                else => {},
-            }
-        }
-        try writer.print(": {s} = {}", .{zig_type, fmtJson(self.value)});
-    }
-};
-
-
-
 const DepthContext = enum {top_level, child, array};
 const TypeRefFormatter = struct {
     pub const Options = struct {
@@ -729,6 +685,47 @@ const TypeRefFormatter = struct {
 pub fn fmtTypeRef(type_ref: json.ObjectMap, options: TypeRefFormatter.Options, depth_context: DepthContext, sdk_file: *SdkFile) TypeRefFormatter {
     return .{ .type_ref = type_ref, .options = options, .depth_context = depth_context, .sdk_file = sdk_file };
 }
+
+fn fmtConstAssign(native_type: NativeType, value: json.Value) ConstValueFormatter {
+    return .{ .native_type = native_type, .value = value };
+}
+const ConstValueFormatter = struct {
+    native_type: NativeType,
+    value: json.Value,
+    pub fn format(
+        self: @This(),
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) std.os.WriteError!void {
+        if (self.native_type == .String) {
+            try writer.print("= {}", .{fmtJson(self.value)});
+            return;
+        }
+        const zig_type = nativeTypeToZigType(self.native_type);
+        if (self.native_type == .Single or self.native_type == .Double) {
+            switch (self.value) {
+                .String => |float_str| {
+                    if (std.mem.eql(u8, float_str, "inf")) {
+                        try writer.print("= @import(\"std\").math.inf({s})", .{zig_type});
+                        return;
+                    } else if (std.mem.eql(u8, float_str, "-inf")) {
+                        try writer.print("= -@import(\"std\").math.inf({s})", .{zig_type});
+                        return;
+                    } else if (std.mem.eql(u8, float_str, "nan")) {
+                        try writer.print("= @import(\"std\").math.nan({s})", .{zig_type});
+                        return;
+                    } else {
+                        std.debug.panic("unexpected float string value '{s}'", .{float_str});
+                    }
+                    return;
+                },
+                else => {},
+            }
+        }
+        try writer.print(": {s} = {}", .{zig_type, fmtJson(self.value)});
+    }
+};
 
 fn generateConstant(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, constant_obj: json.ObjectMap) !void {
     try jsonObjEnforceKnownFieldsOnly(constant_obj, &[_][]const u8 {"Name", "NativeType", "Value","Attrs"}, sdk_file);
