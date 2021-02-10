@@ -817,8 +817,16 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
     try sdk_file.type_exports.put(pool_name, .{});
 
     if (std.mem.eql(u8, kind, "NativeTypedef")) {
-        try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Kind", "Def"}, sdk_file);
+        try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Kind", "Def", "FreeFunc"}, sdk_file);
         const def_type = (try jsonObjGetRequired(type_obj, "Def", sdk_file)).Object;
+        const optional_free_func : ?[]const u8 = switch (try jsonObjGetRequired(type_obj, "FreeFunc", sdk_file)) {
+            .Null => null,
+            .String => |s| s,
+            else => jsonPanic(),
+        };
+        if (optional_free_func) |free_func| {
+            try out_writer.print("// TODO: this type has a FreeFunc '{s}', what can Zig do with this information?\n", .{free_func});
+        }
         // TODO: set is_const, in and out properly
         const zig_type_formatter = try addTypeRefs(sdk_file, def_type, .{.is_const = false, .in = false, .out = false });
         try out_writer.print("pub const {s} = {};\n", .{tmp_name, zig_type_formatter});
@@ -865,8 +873,9 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
         enum_value_export_count.* += @intCast(u32, values.items.len);
 
     } else if (std.mem.eql(u8, kind, "Struct")) {
-        try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Kind", "Name", "Size", "PackingSize", "Fields", "Comment", "NestedTypes"}, sdk_file);
+        try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Kind", "Name", "Guid", "Size", "PackingSize", "Fields", "Comment", "NestedTypes"}, sdk_file);
         const struct_name = (try jsonObjGetRequired(type_obj, "Name", sdk_file)).String;
+        const struct_guid_node = try jsonObjGetRequired(type_obj, "Guid", sdk_file);
         const struct_size = (try jsonObjGetRequired(type_obj, "Size", sdk_file)).Integer;
         const struct_packing_size = (try jsonObjGetRequired(type_obj, "PackingSize", sdk_file)).Integer;
         const struct_fields = (try jsonObjGetRequired(type_obj, "Fields", sdk_file)).Array;
