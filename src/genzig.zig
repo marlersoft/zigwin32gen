@@ -923,6 +923,7 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
         try out_writer.print("// WARNING: this COM type has been skipped because it causes some sort of error\n", .{});
     }
 
+    try out_writer.print("pub const IID_{s} = {0s}.id;\n", .{com_pool_name});
     try out_writer.print("pub const {s} = extern struct {{\n", .{com_pool_name});
     if (com_optional_guid) |guid| {
         try out_writer.print("    pub const id = @import(\"../zig.zig\").Guid.initString(\"{s}\");\n", .{guid});

@@ -48,6 +48,9 @@ test "Guid" {
 pub fn FAILED(hr: @import("api/com.zig").HRESULT) bool {
     return hr < 0;
 }
+pub fn SUCCEEDED(hr: @import("api/com.zig").HRESULT) bool {
+    return hr >= 0;
+}
 
 //
 // I used this typedConstant function with the old metadata (https://github.com/marler8997/windows-api)

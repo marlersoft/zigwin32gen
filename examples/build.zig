@@ -9,6 +9,7 @@ pub fn build(b: *Builder) !void {
     try makeExe(b, target, mode, "helloworld");
     try makeExe(b, target, mode, "helloworld-window");
     try makeExe(b, target, mode, "d2dcircle");
+    try makeExe(b, target, mode, "opendialog");
 }
 
 fn makeExe(b: *Builder, target: CrossTarget, mode: Mode, root: []const u8) !void {
