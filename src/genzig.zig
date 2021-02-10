@@ -831,47 +831,7 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
         const zig_type_formatter = try addTypeRefs(sdk_file, def_type, .{.is_const = false, .in = false, .out = false });
         try out_writer.print("pub const {s} = {};\n", .{tmp_name, zig_type_formatter});
     } else if (std.mem.eql(u8, kind, "Enum")) {
-        try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Kind", "Values", "IntegerBase"}, sdk_file);
-        const values = (try jsonObjGetRequired(type_obj, "Values", sdk_file)).Array;
-        const integer_base = switch (try jsonObjGetRequired(type_obj, "IntegerBase", sdk_file)) {
-            .Null => "i32",
-            .String => |s| nativeTypeToZigType(global_native_type_map.get(s) orelse {
-                std.log.err("enum '{s}' has an unknown IntegerBase '{s}'\n", .{tmp_name, s});
-                return error.AlreadyReported;
-            }),
-            else => jsonPanic(),
-        };
-        try out_writer.print("pub const {s} = extern enum({s}) {{\n", .{tmp_name, integer_base});
-        if (values.items.len == 0) {
-            // zig doesn't allow empty enums
-            try out_writer.print("    _\n", .{});
-        } else for (values.items) |value_node| {
-            const value_obj = value_node.Object;
-            try jsonObjEnforceKnownFieldsOnly(value_obj, &[_][]const u8 {"Name", "Value"}, sdk_file);
-            const value_tmp_name = (try jsonObjGetRequired(value_obj, "Name", sdk_file)).String;
-            const value_literal = try jsonObjGetRequired(value_obj, "Value", sdk_file);
-            try out_writer.print("    {s} = {},\n", .{value_tmp_name, fmtJson(value_literal)});
-            // TODO: should we generate a "_" field?  How do we know whether these enums are exhaustive?
-        }
-        try out_writer.print("}};\n", .{});
-
-        if (enums_with_value_conflicts.get(tmp_name)) |_| {
-            try out_writer.print("// TODO: enum '{s}' has known value symbol conflicts, skipping the value aliases\n", .{tmp_name});
-            return;
-        }
-
-        // create aliases
-        for (values.items) |value_node| {
-            const value_obj = value_node.Object;
-            try jsonObjEnforceKnownFieldsOnly(value_obj, &[_][]const u8 {"Name", "Value"}, sdk_file);
-            const value_tmp_name = (try jsonObjGetRequired(value_obj, "Name", sdk_file)).String;
-            const value_literal = try jsonObjGetRequired(value_obj, "Value", sdk_file);
-            const pool_value_name = try global_symbol_pool.add(value_tmp_name);
-            try sdk_file.type_exports.put(pool_value_name, .{});
-            try out_writer.print("pub const {s} = {s}.{0s};\n", .{value_tmp_name, tmp_name});
-        }
-        enum_value_export_count.* += @intCast(u32, values.items.len);
-
+        try generateEnum(sdk_file, out_writer, type_obj, enum_value_export_count, pool_name);
     } else if (std.mem.eql(u8, kind, "Struct")) {
         try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Kind", "Name", "Guid", "Size", "PackingSize", "Fields", "Comment", "NestedTypes"}, sdk_file);
         const struct_name = (try jsonObjGetRequired(type_obj, "Name", sdk_file)).String;
@@ -929,6 +889,49 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
     } else {
         jsonPanicMsg("{s}: unknown type Kind '{s}'", .{sdk_file.json_basename, kind});
     }
+}
+
+fn generateEnum(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, enum_value_export_count: *u32, pool_name: StringPool.Val) !void {
+    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Kind", "Values", "IntegerBase"}, sdk_file);
+    const values = (try jsonObjGetRequired(type_obj, "Values", sdk_file)).Array;
+    const integer_base = switch (try jsonObjGetRequired(type_obj, "IntegerBase", sdk_file)) {
+        .Null => "i32",
+        .String => |s| nativeTypeToZigType(global_native_type_map.get(s) orelse {
+            std.log.err("enum '{}' has an unknown IntegerBase '{s}'\n", .{pool_name, s});
+            return error.AlreadyReported;
+        }),
+        else => jsonPanic(),
+    };
+    try out_writer.print("pub const {} = extern enum({s}) {{\n", .{pool_name, integer_base});
+    if (values.items.len == 0) {
+        // zig doesn't allow empty enums
+        try out_writer.print("    _\n", .{});
+    } else for (values.items) |value_node| {
+        const value_obj = value_node.Object;
+        try jsonObjEnforceKnownFieldsOnly(value_obj, &[_][]const u8 {"Name", "Value"}, sdk_file);
+        const value_tmp_name = (try jsonObjGetRequired(value_obj, "Name", sdk_file)).String;
+        const value_literal = try jsonObjGetRequired(value_obj, "Value", sdk_file);
+        try out_writer.print("    {s} = {},\n", .{value_tmp_name, fmtJson(value_literal)});
+        // TODO: should we generate a "_" field?  How do we know whether these enums are exhaustive?
+    }
+    try out_writer.print("}};\n", .{});
+
+    if (enums_with_value_conflicts.get(pool_name.slice)) |_| {
+        try out_writer.print("// TODO: enum '{}' has known value symbol conflicts, skipping the value aliases\n", .{pool_name});
+        return;
+    }
+
+    // create aliases
+    for (values.items) |value_node| {
+        const value_obj = value_node.Object;
+        try jsonObjEnforceKnownFieldsOnly(value_obj, &[_][]const u8 {"Name", "Value"}, sdk_file);
+        const value_tmp_name = (try jsonObjGetRequired(value_obj, "Name", sdk_file)).String;
+        const value_literal = try jsonObjGetRequired(value_obj, "Value", sdk_file);
+        const pool_value_name = try global_symbol_pool.add(value_tmp_name);
+        try sdk_file.type_exports.put(pool_value_name, .{});
+        try out_writer.print("pub const {s} = {}.{0s};\n", .{value_tmp_name, pool_name});
+    }
+    enum_value_export_count.* += @intCast(u32, values.items.len);
 }
 
 // Skip these function pointers to workaround: https://github.com/ziglang/zig/issues/4476
