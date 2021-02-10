@@ -768,7 +768,8 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
         try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Kind", "Guid"}, sdk_file);
         const guid = (try jsonObjGetRequired(type_obj, "Guid", sdk_file)).String;
         const clsid_pool = try global_symbol_pool.addFormatted("CLSID_{s}", .{tmp_name});
-        try out_writer.print("pub const {s} = @import(\"../zig.zig\").Guid.initString(\"{s}\");\n", .{clsid_pool, guid});
+        try out_writer.print("const {s}_Value = @import(\"../zig.zig\").Guid.initString(\"{s}\");\n", .{clsid_pool, guid});
+        try out_writer.print("pub const {s} = &{0s}_Value;\n", .{clsid_pool});
         try sdk_file.const_exports.append(clsid_pool);
         extra_type_counts.com_class_ids += 1;
         return;
@@ -936,11 +937,12 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
 
     if (com_optional_guid) |_| {
         const iid_pool = try global_symbol_pool.addFormatted("IID_{s}", .{com_pool_name.slice});
-        try out_writer.print("pub const {s} = {s}.id;\n", .{iid_pool, com_pool_name});
+        try out_writer.print("pub const {s} = &{s}.id;\n", .{iid_pool, com_pool_name});
         try sdk_file.const_exports.append(iid_pool);
         com_id_count.* += 1;
     }
-    try out_writer.print("pub const {s} = extern struct {{\n", .{com_pool_name});
+    // TODO: do I want to introduce this new NAME_Value symbol?
+    try out_writer.print("pub const {s} = *extern struct {{\n", .{com_pool_name});
     if (com_optional_guid) |guid| {
         try out_writer.print("    pub const id = @import(\"../zig.zig\").Guid.initString(\"{s}\");\n", .{guid});
     } else {
@@ -954,7 +956,7 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
     } else {
         if (com_optional_iface) |iface| {
             iface_formatter = try addTypeRefs(sdk_file, iface, .{});
-            try out_writer.print("        base: {}.VTable,\n", .{iface_formatter});
+            try out_writer.print("        base: @typeInfo({}).Pointer.child..VTable,\n", .{iface_formatter});
         }
 
         // some COM objects have methods with the same name and only differ in parameter types
@@ -981,7 +983,7 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
     if (!skip) {
         if (com_optional_iface) |iface| {
             // For now we're putting this inside a sub-struct to avoid name conflicts
-            try out_writer.print("        pub usingnamespace {}.MethodMixin(T);\n", .{iface_formatter});
+            try out_writer.print("        pub usingnamespace @typeInfo({}).Pointer.child.MethodMixin(T);\n", .{iface_formatter});
         }
         for (com_methods.items) |method_node| {
             const method_obj = method_node.Object;
