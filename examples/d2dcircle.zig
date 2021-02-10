@@ -15,7 +15,7 @@ usingnamespace @import("basewin.zig");
 
 fn SafeRelease(ppT: anytype) void {
     if (ppT.*) |t| {
-        t.Release();
+        _ = t.IUnknown_Release();
         ppT.* = null;
     }
 }
@@ -87,10 +87,8 @@ fn CalculateLayout(self: MainWindow) void {
 //
 fn DiscardGraphicsResources(self: *MainWindow) void
 {
-    // TODO: cannot call this until I implement COM base interface methods
-    //SafeRelease(&self.pRenderTarget);
-    // TODO: cannot call this until I implement COM base interface methods
-    //SafeRelease(&self.pBrush);
+    SafeRelease(&self.pRenderTarget);
+    SafeRelease(&self.pBrush);
 }
 //
 //void MainWindow::OnPaint()

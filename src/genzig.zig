@@ -426,7 +426,7 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
     try out_writer.print("// Section: Functions ({})\n", .{functions_array.items.len});
     try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
     for (functions_array.items) |function_node| {
-        try generateFunction(sdk_file, out_writer, function_node.Object, .fixed, null);
+        try generateFunction(sdk_file, out_writer, function_node.Object, .fixed, null, null);
         try out_writer.print("\n", .{});
     }
     std.debug.assert(functions_array.items.len == sdk_file.func_exports.count());
@@ -785,7 +785,7 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
             try out_writer.print("pub const {s} = fn() callconv(@import(\"std\").os.windows.WINAPI) void;\n", .{tmp_name});
             return;
         }
-        try generateFunction(sdk_file, out_writer, type_obj, .ptr, null);
+        try generateFunction(sdk_file, out_writer, type_obj, .ptr, null, null);
         try sdk_file.tmp_func_ptr_workaround_list.append(pool_name);
     } else if (std.mem.eql(u8, kind, "Com")) {
         try generateCom(sdk_file, out_writer, type_obj, pool_name);
@@ -918,6 +918,10 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
         else => jsonPanic(),
     };
     const com_methods = (try jsonObjGetRequired(type_obj, "Methods", sdk_file)).Array;
+    const skip = com_types_to_skip.has(com_pool_name.slice);
+    if (skip) {
+        try out_writer.print("// WARNING: this COM type has been skipped because it causes some sort of error\n", .{});
+    }
 
     try out_writer.print("pub const {s} = extern struct {{\n", .{com_pool_name});
     if (com_optional_guid) |guid| {
@@ -925,21 +929,17 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
     } else {
         try out_writer.print("    pub const id = @compileError(\"this COM type has no guid\");", .{});
     }
-    try out_writer.print("    const Self = @This();\n", .{});
     try out_writer.print("    pub const VTable = extern struct {{\n", .{});
-    if (com_types_to_skip.get(com_pool_name.slice)) |_| {
-        try out_writer.print("        // this COM type has been skipped because it causes some sort of error\n", .{});
-        try out_writer.print("        _: u32, // placeholder\n", .{});
-        try out_writer.print("    }};\n", .{});
-        try out_writer.print("}};\n", .{});
-        return;
-    }
-    if (com_optional_iface) |iface| {
-        const iface_formatter = try addTypeRefs(sdk_file, iface, .{});
-        try out_writer.print("        base: {}.VTable,\n", .{iface_formatter});
-    }
+    var iface_formatter : TypeRefFormatter = undefined;
 
-    {
+    if (skip) {
+        try out_writer.print("        _: *opaque{{}}, // just a placeholder because this COM type is skipped\n", .{});
+    } else {
+        if (com_optional_iface) |iface| {
+            iface_formatter = try addTypeRefs(sdk_file, iface, .{});
+            try out_writer.print("        base: {}.VTable,\n", .{iface_formatter});
+        }
+
         // some COM objects have methods with the same name and only differ in parameter types
         var method_conflicts = StringHashMap(u8).init(allocator);
         defer method_conflicts.deinit();
@@ -948,7 +948,7 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
             const method_name = (try jsonObjGetRequired(method_node.Object, "Name", sdk_file)).String;
             const count = method_conflicts.get(method_name) orelse 0;
             try method_conflicts.put(method_name, count + 1);
-            try generateFunction(sdk_file, out_writer, method_node.Object, .com, if (count == 0) null else count);
+            try generateFunction(sdk_file, out_writer, method_node.Object, .com, if (count == 0) null else count, com_pool_name.slice);
         }
     }
 
@@ -960,44 +960,53 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
     defer method_conflicts.deinit();
 
     // Generate wrapper methods for every entry in the vtable
-    try out_writer.print("    // TODO: generate convenient wrapper methods for the vtable.base functions\n", .{});
-    for (com_methods.items) |method_node| {
-        const method_obj = method_node.Object;
-        const method_name = (try jsonObjGetRequired(method_obj, "Name", sdk_file)).String;
-        const return_type = (try jsonObjGetRequired(method_obj, "ReturnType", sdk_file)).Object;
-        const params = (try jsonObjGetRequired(method_obj, "Params", sdk_file)).Array;
-
-        const count = method_conflicts.get(method_name) orelse 0;
-        try method_conflicts.put(method_name, count + 1);
-
-        try out_writer.print("    pub inline fn {s}", .{std.zig.fmtId(method_name)});
-        if (count > 0) {
-            try out_writer.print("{}", .{count});
+    try out_writer.print("    pub fn MethodMixin(comptime T: type) type {{ return struct {{\n", .{});
+    if (!skip) {
+        if (com_optional_iface) |iface| {
+            // For now we're putting this inside a sub-struct to avoid name conflicts
+            try out_writer.print("        pub usingnamespace {}.MethodMixin(T);\n", .{iface_formatter});
         }
-        try out_writer.print("(self: *Self", .{});
-        for (params.items) |param_node| {
-            const param_obj = param_node.Object;
-            try jsonObjEnforceKnownFieldsOnly(param_obj, &[_][]const u8 {"Name", "Type", "Attrs"}, sdk_file);
-            const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).String;
-            const param_type = (try jsonObjGetRequired(param_obj, "Type", sdk_file)).Object;
-            const param_options = processParamAttrs((try jsonObjGetRequired(param_obj, "Attrs", sdk_file)).Array);
+        for (com_methods.items) |method_node| {
+            const method_obj = method_node.Object;
+            const method_name = (try jsonObjGetRequired(method_obj, "Name", sdk_file)).String;
+            const return_type = (try jsonObjGetRequired(method_obj, "ReturnType", sdk_file)).Object;
+            const params = (try jsonObjGetRequired(method_obj, "Params", sdk_file)).Array;
+
+            const count = method_conflicts.get(method_name) orelse 0;
+            try method_conflicts.put(method_name, count + 1);
+
+            try out_writer.print("        // NOTE: method is namespaced with interface name to avoid conflicts for now\n", .{});
+            try out_writer.print("        pub inline fn {s}_{s}", .{com_pool_name, method_name});
+            if (count > 0) {
+                try out_writer.print("{}", .{count});
+            }
+            try out_writer.print("(self: *const T", .{});
+            for (params.items) |param_node| {
+                const param_obj = param_node.Object;
+                try jsonObjEnforceKnownFieldsOnly(param_obj, &[_][]const u8 {"Name", "Type", "Attrs"}, sdk_file);
+                const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).String;
+                const param_type = (try jsonObjGetRequired(param_obj, "Type", sdk_file)).Object;
+                const param_options = processParamAttrs((try jsonObjGetRequired(param_obj, "Attrs", sdk_file)).Array);
+                // NOTE: don't need to call addTypeRefs because it was already called in generateFunction above
+                const param_type_formatter = fmtTypeRef(param_type, param_options, .top_level, sdk_file);
+                try out_writer.print(", {s}: {}", .{std.zig.fmtId(param_name), param_type_formatter});
+            }
             // NOTE: don't need to call addTypeRefs because it was already called in generateFunction above
-            const param_type_formatter = fmtTypeRef(param_type, param_options, .top_level, sdk_file);
-            try out_writer.print(", {s}: {}", .{std.zig.fmtId(param_name), param_type_formatter});
+            // TODO: set is_const, in and out properly
+            const return_type_formatter = fmtTypeRef(return_type, .{ .is_const = false, .in = false, .out = false }, .top_level, sdk_file);
+            try out_writer.print(") {} {{\n", .{return_type_formatter});
+            try out_writer.print("            return @ptrCast(*const {s}.VTable, self.vtable).{s}(@ptrCast(*const {0s}, self)", .{com_pool_name, std.zig.fmtId(method_name)});
+            for (params.items) |param_node| {
+                const param_obj = param_node.Object;
+                const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).String;
+                try out_writer.print(", {s}", .{std.zig.fmtId(param_name)});
+            }
+            try out_writer.print(");\n", .{});
+            try out_writer.print("        }}\n", .{});
         }
-        // NOTE: don't need to call addTypeRefs because it was already called in generateFunction above
-        // TODO: set is_const, in and out properly
-        const return_type_formatter = fmtTypeRef(return_type, .{ .is_const = false, .in = false, .out = false }, .top_level, sdk_file);
-        try out_writer.print(") {} {{\n", .{return_type_formatter});
-        try out_writer.print("        return self.vtable.{s}(self", .{std.zig.fmtId(method_name)});
-        for (params.items) |param_node| {
-            const param_obj = param_node.Object;
-            const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).String;
-            try out_writer.print(", {s}", .{std.zig.fmtId(param_name)});
-        }
-        try out_writer.print(");\n", .{});
-        try out_writer.print("    }}\n", .{});
     }
+    try out_writer.print("    }};}}\n", .{});
+    try out_writer.print("    pub usingnamespace MethodMixin(@This());\n", .{});
     try out_writer.print("}};\n", .{});
 }
 
@@ -1063,7 +1072,7 @@ const funcs_with_issues = std.ComptimeStringMap(Nothing, .{
 
 const FuncPtrKind = enum { ptr, fixed, com };
 
-fn generateFunction(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function_obj: json.ObjectMap, func_kind: FuncPtrKind, suffix: ?u8) !void {
+fn generateFunction(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function_obj: json.ObjectMap, func_kind: FuncPtrKind, suffix: ?u8, optional_self_type: ?[]const u8) !void {
     const prefix = if (func_kind == .com) "        " else "";
     switch (func_kind) {
         .fixed => try jsonObjEnforceKnownFieldsOnly(function_obj, &[_][]const u8 {"Name", "SetLastError", "DllImport", "ReturnType", "Params"}, sdk_file),
@@ -1102,8 +1111,10 @@ fn generateFunction(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function
                 try out_writer.print("{s}{s}", .{prefix, std.zig.fmtId(func_name_tmp)});
             }
             try out_writer.print(": fn(\n", .{});
-            try out_writer.print("{s}    self: *Self,\n", .{prefix});
         },
+    }
+    if (optional_self_type) |self_type| {
+        try out_writer.print("{s}    self: *const {s},\n", .{prefix, self_type});
     }
     for (params.items) |param_node| {
         const param_obj = param_node.Object;
