@@ -1,5 +1,6 @@
 const std = @import("std");
 const ArrayList = std.ArrayList;
+const StringHashMap = std.StringHashMap;
 const json = std.json;
 const StringPool = @import("stringpool.zig").StringPool;
 const path_sep = std.fs.path.sep_str;
@@ -425,7 +426,7 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
     try out_writer.print("// Section: Functions ({})\n", .{functions_array.items.len});
     try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
     for (functions_array.items) |function_node| {
-        try generateFunction(sdk_file, out_writer, function_node.Object, .fixed);
+        try generateFunction(sdk_file, out_writer, function_node.Object, .fixed, null);
         try out_writer.print("\n", .{});
     }
     std.debug.assert(functions_array.items.len == sdk_file.func_exports.count());
@@ -755,7 +756,10 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
     std.debug.assert(sdk_file.type_exports.get(pool_name) == null);
     try sdk_file.type_exports.put(pool_name, .{});
 
-    if (std.mem.eql(u8, kind, "NativeTypedef")) {
+    if (types_to_skip.get(tmp_name)) |_| {
+        try out_writer.print("// TODO: not generating this type because it is causing some sort of error\n", .{});
+        try out_writer.print("pub const {s} = usize;\n", .{tmp_name});
+    } else if (std.mem.eql(u8, kind, "NativeTypedef")) {
         try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Kind", "Def", "FreeFunc"}, sdk_file);
         const def_type = (try jsonObjGetRequired(type_obj, "Def", sdk_file)).Object;
         const optional_free_func : ?[]const u8 = switch (try jsonObjGetRequired(type_obj, "FreeFunc", sdk_file)) {
@@ -772,17 +776,17 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
     } else if (std.mem.eql(u8, kind, "Enum")) {
         try generateEnum(sdk_file, out_writer, type_obj, enum_value_export_count, pool_name);
     } else if (std.mem.eql(u8, kind, "Struct")) {
-        try generateStruct(sdk_file, out_writer, type_obj);
+        try generateStruct(sdk_file, out_writer, type_obj, pool_name);
     } else if (std.mem.eql(u8, kind, "FunctionPointer")) {
         if (func_ptr_dependency_loop_problems.get(tmp_name)) |_| {
             try out_writer.writeAll("// TODO: this function pointer causes dependency loop problems, so it's stubbed out\n");
             try out_writer.print("pub const {s} = fn() callconv(@import(\"std\").os.windows.WINAPI) void;\n", .{tmp_name});
             return;
         }
-        try generateFunction(sdk_file, out_writer, type_obj, .ptr);
+        try generateFunction(sdk_file, out_writer, type_obj, .ptr, null);
         try sdk_file.tmp_func_ptr_workaround_list.append(pool_name);
     } else if (std.mem.eql(u8, kind, "Com")) {
-        try out_writer.print("pub const {s} = u32; // TODO: implement 'Com' types\n", .{tmp_name});
+        try generateCom(sdk_file, out_writer, type_obj, pool_name);
     } else if (std.mem.eql(u8, kind, "StructOrUnion")) {
         if (dhcp_type_conflicts.get(tmp_name)) |_| {
             try out_writer.print("// TODO: this dhcp type has been removed because it conflicts with a nested type '{s}'\n", .{tmp_name});
@@ -794,19 +798,32 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
     }
 }
 
-fn generateStruct(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap) !void {
+const types_to_skip = std.ComptimeStringMap(Nothing, .{
+    // keep this around for a convenient way to disable types
+    .{ "PlaceholderForNow", .{} },
+});
+
+fn generateStruct(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, struct_pool_name: StringPool.Val) !void {
     try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Kind", "Name", "Guid", "Size", "PackingSize", "Fields", "Comment", "NestedTypes"}, sdk_file);
-    const struct_name = (try jsonObjGetRequired(type_obj, "Name", sdk_file)).String;
-    const struct_guid_node = try jsonObjGetRequired(type_obj, "Guid", sdk_file);
+    const struct_optional_guid : ?[]const u8 = switch (try jsonObjGetRequired(type_obj, "Guid", sdk_file)) {
+        .Null => null,
+        .String => |s| s,
+        else => jsonPanic(),
+    };
     const struct_size = (try jsonObjGetRequired(type_obj, "Size", sdk_file)).Integer;
     const struct_packing_size = (try jsonObjGetRequired(type_obj, "PackingSize", sdk_file)).Integer;
     const struct_fields = (try jsonObjGetRequired(type_obj, "Fields", sdk_file)).Array;
     const struct_nested_types = (try jsonObjGetRequired(type_obj, "NestedTypes", sdk_file)).Array;
+
+    if (struct_optional_guid) |guid| {
+        try out_writer.print("// TODO: what to do with the type guid? '{s}'\n", .{guid});
+    }
+
     if (struct_fields.items.len == 0) {
         // TODO: handle nested types
-        try out_writer.print("pub const {s} = extern struct {{ comment: [*]const u8 = \"TODO: why is this struct empty?\" }};\n", .{struct_name});
+        try out_writer.print("pub const {} = extern struct {{ comment: [*]const u8 = \"TODO: why is this struct empty?\" }};\n", .{struct_pool_name});
     } else {
-        try out_writer.print("pub const {s} = extern struct {{\n", .{struct_name});
+        try out_writer.print("pub const {} = extern struct {{\n", .{struct_pool_name});
         for (struct_fields.items) |field_node| {
             const field_obj = field_node.Object;
             try jsonObjEnforceKnownFieldsOnly(field_obj, &[_][]const u8 {"Name", "Type", "Attrs"}, sdk_file);
@@ -877,6 +894,47 @@ fn generateEnum(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
     enum_value_export_count.* += @intCast(u32, values.items.len);
 }
 
+fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, com_pool_name: StringPool.Val) !void {
+    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Kind", "Name", "Guid", "Interface", "Methods"}, sdk_file);
+    const com_optional_guid : ?[]const u8 = switch (try jsonObjGetRequired(type_obj, "Guid", sdk_file)) {
+        .Null => null,
+        .String => |s| s,
+        else => jsonPanic(),
+    };
+    const com_optional_iface : ?json.ObjectMap = switch (try jsonObjGetRequired(type_obj, "Interface", sdk_file)) {
+        .Null => null,
+        .Object => |o| o,
+        else => jsonPanic(),
+    };
+    const com_methods = (try jsonObjGetRequired(type_obj, "Methods", sdk_file)).Array;
+
+    try out_writer.print("pub const {s} = extern struct {{\n", .{com_pool_name});
+    if (com_optional_guid) |guid| {
+        try out_writer.print("    pub const id = @import(\"../zig.zig\").Guid.initString(\"{s}\");\n", .{guid});
+    } else {
+        try out_writer.print("    pub const id = @compileError(\"this COM type has no guid\");", .{});
+    }
+    try out_writer.print("    const Self = @This();\n", .{});
+    try out_writer.print("    vtable: *extern struct {{\n", .{});
+    if (com_methods.items.len == 0) {
+        try out_writer.print("        _: *opaque{{}}, // placeholder because this COM type has no methods and Zig doesn't like empty structs\n", .{});
+    } else{
+        // some COM objects have methods with the same name and only differ in parameter types
+        var method_conflicts = StringHashMap(u8).init(allocator);
+        defer method_conflicts.deinit();
+
+        for (com_methods.items) |method_node| {
+            const method_name = (try jsonObjGetRequired(method_node.Object, "Name", sdk_file)).String;
+            const count = method_conflicts.get(method_name) orelse 0;
+            try method_conflicts.put(method_name, count + 1);
+            try generateFunction(sdk_file, out_writer, method_node.Object, .com, if (count == 0) null else count);
+        }
+    }
+    try out_writer.print("    }},\n", .{});
+    try out_writer.print("    // TODO: generate convenient methods to call each vtable function with this object\n", .{});
+    try out_writer.print("}};\n", .{});
+}
+
 // Skip these function pointers to workaround: https://github.com/ziglang/zig/issues/4476
 const func_ptr_dependency_loop_problems = std.ComptimeStringMap(Nothing, .{
     .{ "FREEOBJPROC", .{} },
@@ -916,12 +974,13 @@ const funcs_with_issues = std.ComptimeStringMap(Nothing, .{
     .{ "CorePrinterDriverInstalledW", .{} },
 });
 
-const FuncPtrKind = enum { ptr, fixed };
+const FuncPtrKind = enum { ptr, fixed, com };
 
-fn generateFunction(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function_obj: json.ObjectMap, func_kind: FuncPtrKind) !void {
+fn generateFunction(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function_obj: json.ObjectMap, func_kind: FuncPtrKind, suffix: ?u8) !void {
+    const prefix = if (func_kind == .com) "        " else "";
     switch (func_kind) {
         .fixed => try jsonObjEnforceKnownFieldsOnly(function_obj, &[_][]const u8 {"Name", "SetLastError", "DllImport", "ReturnType", "Params"}, sdk_file),
-        .ptr => try jsonObjEnforceKnownFieldsOnly(function_obj, &[_][]const u8 {"Kind", "Name", "SetLastError", "ReturnType", "Params"}, sdk_file),
+        .ptr, .com => try jsonObjEnforceKnownFieldsOnly(function_obj, &[_][]const u8 {"Kind", "Name", "SetLastError", "ReturnType", "Params"}, sdk_file),
     }
 
     const func_name_tmp = (try jsonObjGetRequired(function_obj, "Name", sdk_file)).String;
@@ -935,15 +994,29 @@ fn generateFunction(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function
     }
 
     if (funcs_with_issues.get(func_name_tmp)) |_| {
-        try out_writer.print("// This function from dll '{s}' is being skipped because it has some sort of issue\n", .{dll_import});
-        try out_writer.print("pub fn {s}() void {{ @panic(\"this function is not working\"); }}\n", .{func_name_tmp});
+        try out_writer.print("{s}// This function from dll '{s}' is being skipped because it has some sort of issue\n", .{prefix, dll_import});
+        try out_writer.print("{s}pub fn {s}() void {{ @panic(\"this function is not working\"); }}\n", .{prefix, func_name_tmp});
         return;
     }
 
-    if (func_kind == .fixed) {
-        try out_writer.print("pub extern \"{s}\" fn {s}(\n", .{dll_import, func_name_tmp});
-    } else {
-        try out_writer.print("pub const {s} = fn(\n", .{func_name_tmp});
+    switch (func_kind) {
+        .fixed => {
+            jsonEnforce(suffix == null);
+            try out_writer.print("{s}pub extern \"{s}\" fn {s}(\n", .{prefix, dll_import, std.zig.fmtId(func_name_tmp)});
+        },
+        .ptr => {
+            jsonEnforce(suffix == null);
+            try out_writer.print("{s}pub const {s} = fn(\n", .{prefix, std.zig.fmtId(func_name_tmp)});
+        },
+        .com => {
+            if (suffix) |s| {
+                try out_writer.print("{s}{s}{}", .{prefix, func_name_tmp, s});
+            } else {
+                try out_writer.print("{s}{s}", .{prefix, std.zig.fmtId(func_name_tmp)});
+            }
+            try out_writer.print(": fn(\n", .{});
+            try out_writer.print("{s}    self: *Self,\n", .{prefix});
+        },
     }
     for (params.items) |param_node| {
         const param_obj = param_node.Object;
@@ -963,15 +1036,16 @@ fn generateFunction(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function
             } else if (std.mem.eql(u8, attr_str, "Optional")) {
                 param_options.optional = true;
             } else {
-                try out_writer.print("    // TODO: handle custom attribute '{}'\n", .{fmtJson(attr_node)});
+                try out_writer.print("{s}    // TODO: handle custom attribute '{}'\n", .{prefix, fmtJson(attr_node)});
             }
         }
         const param_type_formatter = try addTypeRefs(sdk_file, param_type, param_options);
-        try out_writer.print("    {s}: {},\n", .{std.zig.fmtId(param_name), param_type_formatter});
+        try out_writer.print("{s}    {s}: {},\n", .{prefix, std.zig.fmtId(param_name), param_type_formatter});
     }
     // TODO: set is_const, in and out properly
     const return_type_formatter = try addTypeRefs(sdk_file, return_type, .{ .is_const = false, .in = false, .out = false });
-    try out_writer.print(") callconv(@import(\"std\").os.windows.WINAPI) {};\n", .{return_type_formatter});
+    const term = if (func_kind == .com) "," else ";";
+    try out_writer.print("{s}) callconv(@import(\"std\").os.windows.WINAPI) {}{s}\n", .{prefix, return_type_formatter, term});
 }
 
 fn getPoolStringWithParts(a: *std.mem.Allocator, slices: []const []const u8) ![]const u8 {

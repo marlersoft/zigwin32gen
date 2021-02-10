@@ -11,9 +11,39 @@ pub const unicode_mode = UnicodeMode.wide;
 
 pub const L = std.unicode.utf8ToUtf16LeStringLiteral;
 
+// TODO: this should probably be in the standard lib somewhere?
 pub const Guid = extern struct {
     bytes: [16]u8,
+
+    const hex_offsets = [16] u6 {0, 2, 4, 6, 9, 11, 14, 16, 19, 21, 24, 26, 28, 30, 32, 34};
+
+    pub fn initString(s: []const u8) Guid {
+        var guid : Guid = undefined;
+        for (hex_offsets) |hex_offset, i| {
+            //guid.bytes[i] = decodeHexByte(s[offset..offset+2]);
+            guid.bytes[i] = decodeHexByte([2]u8 { s[hex_offset], s[hex_offset+1] });
+        }
+        return guid;
+    }
 };
+
+// TODO: is this in the standard lib somewhere?
+fn hexVal(c: u8) u4 {
+    if (c <= '9') return @intCast(u4, c - '0');
+    if (c >= 'a') return @intCast(u4, c + 10 - 'a');
+    return @intCast(u4, c + 10 - 'A');
+}
+
+// TODO: is this in the standard lib somewhere?
+fn decodeHexByte(hex: [2]u8) u8 {
+    return @intCast(u8, hexVal(hex[0])) << 4 | hexVal(hex[1]);
+}
+
+test "Guid" {
+    testing.expect(std.mem.eql(u8,
+        "\x01\x23\x45\x67\x89\xAB\xEF\x10\x32\x54\x76\x98\xba\xdc\xfe\x91",
+        &Guid.initString("01234567-89AB-EF10-3254-7698badcfe91").bytes));
+}
 
 pub fn FAILED(hr: @import("api/com.zig").HRESULT) bool {
     return hr < 0;
