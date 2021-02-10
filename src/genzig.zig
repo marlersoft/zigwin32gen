@@ -124,11 +124,6 @@ const SdkFile = struct {
     }
 };
 
-const SharedTypeExportEntry = struct {
-    first_sdk_file_ptr: *SdkFile,
-    duplicates: u32,
-};
-
 const Times = struct {
     parse_time_millis : i64 = 0,
     read_time_millis : i64 = 0,
@@ -206,9 +201,6 @@ fn main2() !u8 {
         try src_dir.copyFile("missing.zig", out_win32_dir, "missing.zig", .{});
     }
 
-    var shared_type_export_map = StringPool.HashMap(SharedTypeExportEntry).init(allocator);
-    defer shared_type_export_map.deinit();
-
     var sdk_files = ArrayList(*SdkFile).init(allocator);
     defer sdk_files.deinit();
     {
@@ -235,24 +227,6 @@ fn main2() !u8 {
             var file = try api_dir.openFile(entry.name, .{});
             defer file.close();
             try readAndGenerateApiFile(out_api_dir, &sdk_files, entry.name, file);
-        }
-
-        // populate the shared_type_export_map
-        for (sdk_files.items) |sdk_file| {
-            var type_export_it = sdk_file.type_exports.iterator();
-            while (type_export_it.next()) |kv| {
-                const type_name = kv.key;
-                if (shared_type_export_map.get(type_name)) |entry| {
-                    // handle duplicates symbols (https://github.com/ohjeongwook/windows_sdk_data/issues/2)
-                    // TODO: uncomment this warning after all types start being generated
-                    // For now, a warning about this will be included in the generated everything.zig file below
-                    //std.debug.warn("WARNING: type '{s}' in '{s}' conflicts with type in '{s}'\n", .{
-                    //    type_name, sdk_file.name, entry.first_sdk_file_ptr.name});
-                    try shared_type_export_map.put(type_name, .{ .first_sdk_file_ptr = entry.first_sdk_file_ptr, .duplicates = entry.duplicates + 1 });
-                } else {
-                    try shared_type_export_map.put(type_name, .{ .first_sdk_file_ptr = sdk_file, .duplicates = 0 });
-                }
-            }
         }
 
         {
@@ -293,10 +267,24 @@ fn main2() !u8 {
             // TODO: workaround issue where constants/functions are defined more than once, not sure what the right solution
             //       is for all these, maybe some modules are not compatible with each other.  This could just be the permanent
             //       solution as well, if there are conflicts, we could just say the user has to import the specific module they want.
-            var shared_const_map = StringPool.HashMap(*SdkFile).init(allocator);
-            defer shared_const_map.deinit();
-            var shared_func_map = StringPool.HashMap(*SdkFile).init(allocator);
-            defer shared_func_map.deinit();
+            var shared_export_map = StringPool.HashMap(*SdkFile).init(allocator);
+            defer shared_export_map.deinit();
+
+            // populate the shared_export_map, start with types first
+            // because types can be referenced within the modules (unlike consts/functions)
+            for (sdk_files.items) |sdk_file| {
+                var type_export_it = sdk_file.type_exports.iterator();
+                while (type_export_it.next()) |kv| {
+                    const type_name = kv.key;
+                    if (shared_export_map.get(type_name)) |_| {
+                        //try shared_export_map.put(type_name, .{ .first_sdk_file_ptr = entry.first_sdk_file_ptr, .duplicates = entry.duplicates + 1 });
+                    } else {
+                        //try shared_export_map.put(type_name, .{ .first_sdk_file_ptr = sdk_file, .duplicates = 0 });
+                        try shared_export_map.put(type_name, sdk_file);
+                    }
+                }
+            }
+
 
             // we wrap all the api symbols in a sub-struct because some of the api
             // names conflict some of the symbols.  This prevents those conflicts.
@@ -308,22 +296,22 @@ fn main2() !u8 {
             for (sdk_files.items) |sdk_file| {
                 try writer.print("// {s} exports {} constants:\n", .{sdk_file.name_snake_case, sdk_file.const_exports.items.len});
                 for (sdk_file.const_exports.items) |constant| {
-                    if (shared_const_map.get(constant)) |other_sdk_file| {
-                        try writer.print("// WARNING: redifinition of constant '{s}' in module '{s}' (going with module '{s}')\n", .{
+                    if (shared_export_map.get(constant)) |other_sdk_file| {
+                        try writer.print("// WARNING: redifinition of constant symbol '{s}' in module '{s}' (going with module '{s}')\n", .{
                             constant, sdk_file.name_snake_case, other_sdk_file.name_snake_case});
                     } else {
                         try writer.print("pub const {s} = api.{s}.{0s};\n", .{constant, sdk_file.name_snake_case});
-                        try shared_const_map.put(constant, sdk_file);
+                        try shared_export_map.put(constant, sdk_file);
                     }
                 }
                 try writer.print("// {s} exports {} types:\n", .{sdk_file.name_snake_case, sdk_file.type_exports.count()});
                 var export_it = sdk_file.type_exports.iterator();
                 while (export_it.next()) |kv| {
                     const type_name = kv.key;
-                    const type_entry = shared_type_export_map.get(type_name) orelse unreachable;
-                    if (type_entry.first_sdk_file_ptr != sdk_file) {
-                        try writer.print("// WARNING: type '{s}.{s}' has {} definitions, going with '{s}'\n", .{
-                            sdk_file.name_snake_case, type_name, type_entry.duplicates + 1, type_entry.first_sdk_file_ptr.name_snake_case});
+                    const first_type_sdk = shared_export_map.get(type_name) orelse unreachable;
+                    if (first_type_sdk != sdk_file) {
+                        try writer.print("// WARNING: redefinition of type symbol '{s}' from '{s}', going with '{s}'\n", .{
+                            type_name, sdk_file.name_snake_case, first_type_sdk.name_snake_case});
                     } else {
                         try writer.print("pub const {s} = api.{s}.{0s};\n", .{type_name, sdk_file.name_snake_case});
                     }
@@ -332,12 +320,12 @@ fn main2() !u8 {
                 var func_it = sdk_file.func_exports.iterator();
                 while (func_it.next()) |kv| {
                     const func = kv.key;
-                    if (shared_func_map.get(func)) |other_sdk_file| {
+                    if (shared_export_map.get(func)) |other_sdk_file| {
                         try writer.print("// WARNING: redifinition of function '{s}' in module '{s}' (going with module '{s}')\n", .{
                             func, sdk_file.name_snake_case, other_sdk_file.name_snake_case});
                     } else {
                         try writer.print("pub const {s} = api.{s}.{0s};\n", .{func, sdk_file.name_snake_case});
-                        try shared_func_map.put(func, sdk_file);
+                        try shared_export_map.put(func, sdk_file);
                     }
                 }
             }
@@ -391,6 +379,11 @@ fn readAndGenerateApiFile(out_dir: std.fs.Dir, sdk_files: *ArrayList(*SdkFile), 
     global_times.generate_time_millis += std.time.milliTimestamp() - generate_start_millis;
 }
 
+const ExtraTypeCounts = struct {
+    enum_values: u32,
+    com_ids: u32,
+};
+
 fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !void {
     var out_file = try out_dir.createFile(sdk_file.zig_filename, .{});
     defer out_file.close();
@@ -415,12 +408,16 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
     try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
     try out_writer.print("// Section: Types ({})\n", .{types_array.items.len});
     try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
-    var enum_value_export_count : u32 = 0;
+    var extra_type_counts = ExtraTypeCounts {
+        .enum_values = 0,
+        .com_ids = 0,
+    };
     for (types_array.items) |type_node| {
-        try generateType(sdk_file, out_writer, type_node.Object, &enum_value_export_count);
+        try generateType(sdk_file, out_writer, type_node.Object, &extra_type_counts);
         try out_writer.print("\n", .{});
     }
-    std.debug.assert(types_array.items.len + enum_value_export_count == sdk_file.type_exports.count());
+    std.debug.assert(constants_array.items.len + extra_type_counts.enum_values + extra_type_counts.com_ids == sdk_file.const_exports.items.len);
+    std.debug.assert(types_array.items.len == sdk_file.type_exports.count());
     try out_writer.print("\n", .{});
     try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
     try out_writer.print("// Section: Functions ({})\n", .{functions_array.items.len});
@@ -473,6 +470,7 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
         \\    const constant_export_count = {};
         \\    const type_export_count = {};
         \\    const enum_value_export_count = {};
+        \\    const com_id_export_count = {};
         \\    const func_export_count = {};
         \\    const unicode_alias_count = {};
         \\    const import_count = {};
@@ -480,6 +478,7 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
         \\        constant_export_count +
         \\        type_export_count +
         \\        enum_value_export_count +
+        \\        com_id_export_count +
         \\        func_export_count +
         \\        unicode_alias_count +
         \\        import_count +
@@ -488,9 +487,10 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
         \\    @import("std").testing.refAllDecls(@This());
         \\}}
         \\
-    , .{sdk_file.const_exports.items.len,
+    , .{constants_array.items.len,
         types_array.items.len,
-        enum_value_export_count,
+        extra_type_counts.enum_values,
+        extra_type_counts.com_ids,
         sdk_file.func_exports.count(),
         unicode_aliases.items.len,
         import_total,
@@ -750,7 +750,7 @@ fn generateConstant(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, constant
     try out_writer.print("pub const {s} {};\n", .{name_pool, fmtConstAssign(native_type, value_node)});
 }
 
-fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, enum_value_export_count: *u32) !void {
+fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, extra_type_counts: *ExtraTypeCounts) !void {
     const kind = (try jsonObjGetRequired(type_obj, "Kind", sdk_file)).String;
     const tmp_name = (try jsonObjGetRequired(type_obj, "Name", sdk_file)).String;
     const pool_name = try global_symbol_pool.add(tmp_name);
@@ -776,7 +776,7 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
         const zig_type_formatter = try addTypeRefs(sdk_file, def_type, .{.is_const = false, .in = false, .out = false });
         try out_writer.print("pub const {s} = {};\n", .{tmp_name, zig_type_formatter});
     } else if (std.mem.eql(u8, kind, "Enum")) {
-        try generateEnum(sdk_file, out_writer, type_obj, enum_value_export_count, pool_name);
+        try generateEnum(sdk_file, out_writer, type_obj, &extra_type_counts.enum_values, pool_name);
     } else if (std.mem.eql(u8, kind, "Struct")) {
         try generateStruct(sdk_file, out_writer, type_obj, pool_name);
     } else if (std.mem.eql(u8, kind, "FunctionPointer")) {
@@ -788,7 +788,7 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
         try generateFunction(sdk_file, out_writer, type_obj, .ptr, null, null);
         try sdk_file.tmp_func_ptr_workaround_list.append(pool_name);
     } else if (std.mem.eql(u8, kind, "Com")) {
-        try generateCom(sdk_file, out_writer, type_obj, pool_name);
+        try generateCom(sdk_file, out_writer, type_obj, pool_name, &extra_type_counts.com_ids);
     } else if (std.mem.eql(u8, kind, "StructOrUnion")) {
         if (dhcp_type_conflicts.get(tmp_name)) |_| {
             try out_writer.print("// TODO: this dhcp type has been removed because it conflicts with a nested type '{s}'\n", .{tmp_name});
@@ -899,13 +899,13 @@ fn generateEnum(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
         const value_tmp_name = (try jsonObjGetRequired(value_obj, "Name", sdk_file)).String;
         const value_literal = try jsonObjGetRequired(value_obj, "Value", sdk_file);
         const pool_value_name = try global_symbol_pool.add(value_tmp_name);
-        try sdk_file.type_exports.put(pool_value_name, .{});
+        try sdk_file.const_exports.append(pool_value_name);
         try out_writer.print("pub const {s} = {}.{0s};\n", .{value_tmp_name, pool_name});
     }
     enum_value_export_count.* += @intCast(u32, values.items.len);
 }
 
-fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, com_pool_name: StringPool.Val) !void {
+fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, com_pool_name: StringPool.Val, com_id_count: *u32) !void {
     try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Kind", "Name", "Guid", "Interface", "Methods"}, sdk_file);
     const com_optional_guid : ?[]const u8 = switch (try jsonObjGetRequired(type_obj, "Guid", sdk_file)) {
         .Null => null,
@@ -923,7 +923,16 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
         try out_writer.print("// WARNING: this COM type has been skipped because it causes some sort of error\n", .{});
     }
 
-    try out_writer.print("pub const IID_{s} = {0s}.id;\n", .{com_pool_name});
+    if (com_optional_guid) |_| {
+        const iid_pool = init: {
+            const iid = try std.fmt.allocPrint(allocator, "IID_{s}", .{com_pool_name.slice});
+            defer allocator.free(iid);
+            break :init try global_symbol_pool.add(iid);
+        };
+        try out_writer.print("pub const {s} = {s}.id;\n", .{iid_pool, com_pool_name});
+        try sdk_file.const_exports.append(iid_pool);
+        com_id_count.* += 1;
+    }
     try out_writer.print("pub const {s} = extern struct {{\n", .{com_pool_name});
     if (com_optional_guid) |guid| {
         try out_writer.print("    pub const id = @import(\"../zig.zig\").Guid.initString(\"{s}\");\n", .{guid});
