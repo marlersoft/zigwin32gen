@@ -883,6 +883,15 @@ fn generateStruct(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: 
     }
 }
 
+// Not sure whether enums should be exhaustive or not, for now
+// I'll default to all of them being exhaustive except the ones
+// in this list that I know are currently not exhaustive.
+const non_exhaustive_enums = std.ComptimeStringMap(Nothing, .{
+    // This enum is not exhaustive because it is missing a value, see
+    //     https://github.com/microsoft/win32metadata/issues/203
+    .{ "CLSCTX", .{} },
+});
+
 fn generateEnum(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, enum_value_export_count: *u32, pool_name: StringPool.Val) !void {
     try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Kind", "Values", "IntegerBase"}, sdk_file);
     const values = (try jsonObjGetRequired(type_obj, "Values", sdk_file)).Array;
@@ -904,7 +913,9 @@ fn generateEnum(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
         const value_tmp_name = (try jsonObjGetRequired(value_obj, "Name", sdk_file)).String;
         const value_literal = try jsonObjGetRequired(value_obj, "Value", sdk_file);
         try out_writer.print("    {s} = {},\n", .{value_tmp_name, fmtJson(value_literal)});
-        // TODO: should we generate a "_" field?  How do we know whether these enums are exhaustive?
+    }
+    if (non_exhaustive_enums.get(pool_name.slice)) |_| {
+        try out_writer.print("    _,\n", .{});
     }
     try out_writer.print("}};\n", .{});
 

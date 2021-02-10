@@ -6,6 +6,14 @@ const win32 = @import("../win32.zig");
 //       not sure how it will define this as a const because it's not a primitive type
 pub const INVALID_HANDLE_VALUE = @intToPtr(win32.api.system_services.HANDLE, @bitCast(usize, @as(isize, -1)));
 
+
+// The CLSCTX_ALL value is missing, see https://github.com/microsoft/win32metadata/issues/203
+pub const CLSCTX_ALL = @intToEnum(win32.api.com.CLSCTX,
+    @enumToInt(win32.api.com.CLSCTX_INPROC_SERVER) |
+    @enumToInt(win32.api.com.CLSCTX_INPROC_HANDLER) |
+    @enumToInt(win32.api.com.CLSCTX_LOCAL_SERVER) |
+    @enumToInt(win32.api.com.CLSCTX_REMOTE_SERVER));
+
 // The SetWindowLongPtr and GetWindowLongPtr variants are missing because they are 64-bit only
 // See: https://github.com/microsoft/win32metadata/issues/142 (SetWindowLongPtr/GetWindowLongPtr are missing)
 pub extern "USER32" fn SetWindowLongPtrA(

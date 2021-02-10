@@ -4,25 +4,28 @@ pub const UNICODE = true;
 
 const WINAPI = @import("std").os.windows.WINAPI;
 
+const win32 = @import("win32");
 //#include <windows.h>
 //#include <shobjidl.h> 
-usingnamespace @import("win32").zig;
-usingnamespace @import("win32").api.system_services;
-usingnamespace @import("win32").api.windows_and_messaging;
-usingnamespace @import("win32").api.com;
-usingnamespace @import("win32").api.gdi;
-usingnamespace @import("win32").api.shell;
+usingnamespace win32.zig;
+usingnamespace win32.api.system_services;
+usingnamespace win32.api.windows_and_messaging;
+usingnamespace win32.api.com;
+usingnamespace win32.api.gdi;
+usingnamespace win32.api.shell;
 
 pub export fn wWinMain(hInstance: HINSTANCE, _: HINSTANCE, pCmdLine: [*:0]u16, nCmdShow: c_int) callconv(WINAPI) c_int
 {
-    const hr = CoInitializeEx(null, @enumToInt(COINIT_APARTMENTTHREADED) | 
+    var hr = CoInitializeEx(null, @enumToInt(COINIT_APARTMENTTHREADED) |
         @enumToInt(COINIT_DISABLE_OLE1DDE));
     if (SUCCEEDED(hr))
     {
         var pFileOpen : *IFileOpenDialog = undefined;
 
         // Create the FileOpenDialog object.
-        hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL, 
+        // NOTE: CLSCTX_ALL is missing, see https://github.com/microsoft/win32metadata/issues/203
+        // NOTE: CoCreateInstance does not properly type it's flags parameter, see https://github.com/microsoft/win32metadata/issues/185
+        hr = CoCreateInstance(CLSID_FileOpenDialog, null, @enumToInt(win32.missing.CLSCTX_ALL),
                 IID_IFileOpenDialog, @ptrCast(**c_void, &pFileOpen));
 
 //        if (SUCCEEDED(hr))
