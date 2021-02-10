@@ -87,9 +87,9 @@ fn CalculateLayout(self: MainWindow) void {
 //
 fn DiscardGraphicsResources(self: *MainWindow) void
 {
-    // TODO: need to support COM types before I can call this
+    // TODO: cannot call this until I implement COM base interface methods
     //SafeRelease(&self.pRenderTarget);
-    // TODO: need to support COM types before I can call this
+    // TODO: cannot call this until I implement COM base interface methods
     //SafeRelease(&self.pBrush);
 }
 //
@@ -158,8 +158,11 @@ fn MainWindowHandleMessage(self: *MainWindow, uMsg: u32, wParam: WPARAM, lParam:
     switch (uMsg)
     {
     WM_CREATE => {
+        // TODO: I shouldn't need to case &self.pFactory to **c_void, D2D2CreateFactory probably doesn't
+        //       have the correct type yet.
+        // NOTE: not working on my Windows 10 box, Zig's lld-link can't find d2d1.lib
         //if (FAILED(D2D1CreateFactory(
-        //        D2D1_FACTORY_TYPE_SINGLE_THREADED, &self.pFactory)))
+        //        D2D1_FACTORY_TYPE_SINGLE_THREADED, &ID2D1Factory.id, null, @ptrCast(**c_void, &self.pFactory))))
         //{
         //    return -1;  // Fail CreateWindowEx.
         //}
