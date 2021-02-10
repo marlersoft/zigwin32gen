@@ -953,7 +953,7 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
     }
 
     try out_writer.print("    }};\n", .{});
-    try out_writer.print("    vtable: *VTable,\n", .{});
+    try out_writer.print("    vtable: *const VTable,\n", .{});
 
     // some COM objects have methods with the same name and only differ in parameter types
     var method_conflicts = StringHashMap(u8).init(allocator);
@@ -989,7 +989,7 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
         // TODO: set is_const, in and out properly
         const return_type_formatter = fmtTypeRef(return_type, .{ .is_const = false, .in = false, .out = false }, .top_level, sdk_file);
         try out_writer.print(") {} {{\n", .{return_type_formatter});
-        try out_writer.print("        return self.vtable(self", .{});
+        try out_writer.print("        return self.vtable.{s}(self", .{std.zig.fmtId(method_name)});
         for (params.items) |param_node| {
             const param_obj = param_node.Object;
             const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).String;
