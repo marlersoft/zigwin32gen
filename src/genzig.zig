@@ -772,43 +772,7 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
     } else if (std.mem.eql(u8, kind, "Enum")) {
         try generateEnum(sdk_file, out_writer, type_obj, enum_value_export_count, pool_name);
     } else if (std.mem.eql(u8, kind, "Struct")) {
-        try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Kind", "Name", "Guid", "Size", "PackingSize", "Fields", "Comment", "NestedTypes"}, sdk_file);
-        const struct_name = (try jsonObjGetRequired(type_obj, "Name", sdk_file)).String;
-        const struct_guid_node = try jsonObjGetRequired(type_obj, "Guid", sdk_file);
-        const struct_size = (try jsonObjGetRequired(type_obj, "Size", sdk_file)).Integer;
-        const struct_packing_size = (try jsonObjGetRequired(type_obj, "PackingSize", sdk_file)).Integer;
-        const struct_fields = (try jsonObjGetRequired(type_obj, "Fields", sdk_file)).Array;
-        const struct_nested_types = (try jsonObjGetRequired(type_obj, "NestedTypes", sdk_file)).Array;
-        if (struct_fields.items.len == 0) {
-            // TODO: handle nested types
-            try out_writer.print("pub const {s} = extern struct {{ comment: [*]const u8 = \"TODO: why is this struct empty?\" }};\n", .{struct_name});
-        } else {
-            try out_writer.print("pub const {s} = extern struct {{\n", .{struct_name});
-            for (struct_fields.items) |field_node| {
-                const field_obj = field_node.Object;
-                try jsonObjEnforceKnownFieldsOnly(field_obj, &[_][]const u8 {"Name", "Type", "Attrs"}, sdk_file);
-                const field_name = (try jsonObjGetRequired(field_obj, "Name", sdk_file)).String;
-                const field_type = (try jsonObjGetRequired(field_obj, "Type", sdk_file)).Object;
-                const field_attrs = (try jsonObjGetRequired(field_obj, "Attrs", sdk_file)).Array;
-                var field_options = TypeRefFormatter.Options { };
-                for (field_attrs.items) |attr_node| {
-                    const attr_str = attr_node.String;
-                    if (std.mem.eql(u8, attr_str, "Const")) {
-                        field_options.is_const = true;
-                    } else {
-                        jsonPanicMsg("unhandled custom field attribute {}\n", .{fmtJson(attr_node)});
-                    }
-                }
-                const field_type_formatter = try addTypeRefs(sdk_file, field_type, field_options);
-                try out_writer.print("    {}: {},\n", .{std.zig.fmtId(field_name), field_type_formatter});
-            }
-            for (struct_nested_types.items) |nested_type_node| {
-                const nested_type_obj = nested_type_node.Object;
-                const nested_type_name = (try jsonObjGetRequired(nested_type_obj, "Name", sdk_file)).String;
-                try out_writer.print("    const {s} = u32; // TODO: generate this nested type!\n", .{nested_type_name});
-            }
-            try out_writer.print("}};\n", .{});
-        }
+        try generateStruct(sdk_file, out_writer, type_obj);
     } else if (std.mem.eql(u8, kind, "FunctionPointer")) {
         if (func_ptr_dependency_loop_problems.get(tmp_name)) |_| {
             try out_writer.writeAll("// TODO: this function pointer causes dependency loop problems, so it's stubbed out\n");
@@ -827,6 +791,46 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
         try out_writer.print("pub const {s} = u32; // TODO: implement StructOrUnion types?\n", .{tmp_name});
     } else {
         jsonPanicMsg("{s}: unknown type Kind '{s}'", .{sdk_file.json_basename, kind});
+    }
+}
+
+fn generateStruct(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap) !void {
+    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Kind", "Name", "Guid", "Size", "PackingSize", "Fields", "Comment", "NestedTypes"}, sdk_file);
+    const struct_name = (try jsonObjGetRequired(type_obj, "Name", sdk_file)).String;
+    const struct_guid_node = try jsonObjGetRequired(type_obj, "Guid", sdk_file);
+    const struct_size = (try jsonObjGetRequired(type_obj, "Size", sdk_file)).Integer;
+    const struct_packing_size = (try jsonObjGetRequired(type_obj, "PackingSize", sdk_file)).Integer;
+    const struct_fields = (try jsonObjGetRequired(type_obj, "Fields", sdk_file)).Array;
+    const struct_nested_types = (try jsonObjGetRequired(type_obj, "NestedTypes", sdk_file)).Array;
+    if (struct_fields.items.len == 0) {
+        // TODO: handle nested types
+        try out_writer.print("pub const {s} = extern struct {{ comment: [*]const u8 = \"TODO: why is this struct empty?\" }};\n", .{struct_name});
+    } else {
+        try out_writer.print("pub const {s} = extern struct {{\n", .{struct_name});
+        for (struct_fields.items) |field_node| {
+            const field_obj = field_node.Object;
+            try jsonObjEnforceKnownFieldsOnly(field_obj, &[_][]const u8 {"Name", "Type", "Attrs"}, sdk_file);
+            const field_name = (try jsonObjGetRequired(field_obj, "Name", sdk_file)).String;
+            const field_type = (try jsonObjGetRequired(field_obj, "Type", sdk_file)).Object;
+            const field_attrs = (try jsonObjGetRequired(field_obj, "Attrs", sdk_file)).Array;
+            var field_options = TypeRefFormatter.Options { };
+            for (field_attrs.items) |attr_node| {
+                const attr_str = attr_node.String;
+                if (std.mem.eql(u8, attr_str, "Const")) {
+                    field_options.is_const = true;
+                } else {
+                    jsonPanicMsg("unhandled custom field attribute {}\n", .{fmtJson(attr_node)});
+                }
+            }
+            const field_type_formatter = try addTypeRefs(sdk_file, field_type, field_options);
+            try out_writer.print("    {}: {},\n", .{std.zig.fmtId(field_name), field_type_formatter});
+        }
+        for (struct_nested_types.items) |nested_type_node| {
+            const nested_type_obj = nested_type_node.Object;
+            const nested_type_name = (try jsonObjGetRequired(nested_type_obj, "Name", sdk_file)).String;
+            try out_writer.print("    const {s} = u32; // TODO: generate this nested type!\n", .{nested_type_name});
+        }
+        try out_writer.print("}};\n", .{});
     }
 }
 
