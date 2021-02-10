@@ -805,6 +805,15 @@ const types_to_skip = std.ComptimeStringMap(Nothing, .{
     .{ "PlaceholderForNow", .{} },
 });
 
+const com_types_to_skip = std.ComptimeStringMap(Nothing, .{
+    // These types reference IComponent which causes a conflict because it is
+    // defined both in mmc.zig and direct_show.zig
+    .{ "IComponentData", .{} },
+    .{ "IComponent2", .{} },
+    .{ "IComponentData2", .{} },
+    .{ "IPropertySheetProvider", .{} },
+});
+
 fn generateStruct(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, struct_pool_name: StringPool.Val) !void {
     try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Kind", "Name", "Guid", "Size", "PackingSize", "Fields", "Comment", "NestedTypes"}, sdk_file);
     const struct_optional_guid : ?[]const u8 = switch (try jsonObjGetRequired(type_obj, "Guid", sdk_file)) {
@@ -917,10 +926,20 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
         try out_writer.print("    pub const id = @compileError(\"this COM type has no guid\");", .{});
     }
     try out_writer.print("    const Self = @This();\n", .{});
-    try out_writer.print("    vtable: *extern struct {{\n", .{});
-    if (com_methods.items.len == 0) {
-        try out_writer.print("        _: *opaque{{}}, // placeholder because this COM type has no methods and Zig doesn't like empty structs\n", .{});
-    } else{
+    try out_writer.print("    pub const VTable = extern struct {{\n", .{});
+    if (com_types_to_skip.get(com_pool_name.slice)) |_| {
+        try out_writer.print("        // this COM type has been skipped because it causes some sort of error\n", .{});
+        try out_writer.print("        _: u32, // placeholder\n", .{});
+        try out_writer.print("    }};\n", .{});
+        try out_writer.print("}};\n", .{});
+        return;
+    }
+    if (com_optional_iface) |iface| {
+        const iface_formatter = try addTypeRefs(sdk_file, iface, .{});
+        try out_writer.print("        base: {}.VTable,\n", .{iface_formatter});
+    }
+
+    {
         // some COM objects have methods with the same name and only differ in parameter types
         var method_conflicts = StringHashMap(u8).init(allocator);
         defer method_conflicts.deinit();
@@ -932,13 +951,16 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
             try generateFunction(sdk_file, out_writer, method_node.Object, .com, if (count == 0) null else count);
         }
     }
-    try out_writer.print("    }},\n", .{});
+
+    try out_writer.print("    }};\n", .{});
+    try out_writer.print("    vtable: *VTable,\n", .{});
 
     // some COM objects have methods with the same name and only differ in parameter types
     var method_conflicts = StringHashMap(u8).init(allocator);
     defer method_conflicts.deinit();
 
     // Generate wrapper methods for every entry in the vtable
+    try out_writer.print("    // TODO: generate convenient wrapper methods for the vtable.base functions\n", .{});
     for (com_methods.items) |method_node| {
         const method_obj = method_node.Object;
         const method_name = (try jsonObjGetRequired(method_obj, "Name", sdk_file)).String;
