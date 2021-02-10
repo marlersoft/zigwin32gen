@@ -267,6 +267,8 @@ fn main2() !u8 {
             // TODO: workaround issue where constants/functions are defined more than once, not sure what the right solution
             //       is for all these, maybe some modules are not compatible with each other.  This could just be the permanent
             //       solution as well, if there are conflicts, we could just say the user has to import the specific module they want.
+            // TODO: I think the right way to reslve conflicts in everything.zig is to have a priority order for the apis.
+            //       If I just sort the API's in the right order, more common apis go first, then my current logic will work.
             var shared_export_map = StringPool.HashMap(*SdkFile).init(allocator);
             defer shared_export_map.deinit();
 
