@@ -538,7 +538,7 @@ fn addTypeRefsNoFormatter(sdk_file: *SdkFile, type_ref: json.ObjectMap) anyerror
             std.debug.panic("unknown Native type '{s}'", .{name});
         }
     } else if (std.mem.eql(u8, kind, "ApiRef")) {
-        try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"Kind", "Name", "Api", "Parents"}, sdk_file);
+        try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"Kind", "Name", "Com", "Api", "Parents"}, sdk_file);
         const tmp_name = (try jsonObjGetRequired(type_ref, "Name", sdk_file)).String;
         const api = (try jsonObjGetRequired(type_ref, "Api", sdk_file)).String;
         const parents = (try jsonObjGetRequired(type_ref, "Parents", sdk_file)).Array;
@@ -564,7 +564,9 @@ fn addTypeRefsNoFormatter(sdk_file: *SdkFile, type_ref: json.ObjectMap) anyerror
 
 const DepthContext = enum {top_level, child, array};
 const TypeRefFormatter = struct {
+    pub const Reason = enum { var_decl, direct_type_access };
     pub const Options = struct {
+        reason: Reason,
         is_const: bool = false,
         in: bool = false,
         out: bool = false,
@@ -607,9 +609,16 @@ const TypeRefFormatter = struct {
                 try writer.writeAll(nativeTypeToZigType(native_type));
             }
         } else if (std.mem.eql(u8, kind, "ApiRef")) {
-            try jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"Kind", "Name", "Api", "Parents"}, self.sdk_file);
+            try jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"Kind", "Name", "Com", "Api", "Parents"}, self.sdk_file);
             const name = (try jsonObjGetRequired(self.type_ref, "Name", self.sdk_file)).String;
+            const is_com = (try jsonObjGetRequired(self.type_ref, "Com", self.sdk_file)).Bool;
             const parents = (try jsonObjGetRequired(self.type_ref, "Parents", self.sdk_file)).Array;
+            if (is_com and self.options.reason == .var_decl) {
+                if (self.options.optional) {
+                    try writer.writeAll("?");
+                }
+                try writer.writeAll("*");
+            }
             for (parents.items) |parent| {
                 try writer.writeAll(parent.String);
                 try writer.writeAll(".");
@@ -794,7 +803,7 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
             try out_writer.print("// TODO: this type has a FreeFunc '{s}', what can Zig do with this information?\n", .{free_func});
         }
         // TODO: set is_const, in and out properly
-        const zig_type_formatter = try addTypeRefs(sdk_file, def_type, .{.is_const = false, .in = false, .out = false });
+        const zig_type_formatter = try addTypeRefs(sdk_file, def_type, .{.reason = .direct_type_access, .is_const = false, .in = false, .out = false });
         try out_writer.print("pub const {s} = {};\n", .{tmp_name, zig_type_formatter});
     } else if (std.mem.eql(u8, kind, "Enum")) {
         try generateEnum(sdk_file, out_writer, type_obj, &extra_type_counts.enum_values, pool_name);
@@ -853,7 +862,7 @@ fn generateStruct(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: 
             const field_name = (try jsonObjGetRequired(field_obj, "Name", sdk_file)).String;
             const field_type = (try jsonObjGetRequired(field_obj, "Type", sdk_file)).Object;
             const field_attrs = (try jsonObjGetRequired(field_obj, "Attrs", sdk_file)).Array;
-            var field_options = TypeRefFormatter.Options { };
+            var field_options = TypeRefFormatter.Options { .reason = .var_decl };
             for (field_attrs.items) |attr_node| {
                 const attr_str = attr_node.String;
                 if (std.mem.eql(u8, attr_str, "Const")) {
@@ -943,8 +952,7 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
         extra_type_counts.com_iface_ids += 1;
     }
 
-    // TODO: do I want to introduce this new NAME_Value symbol?
-    try out_writer.print("pub const {s} = *extern struct {{\n", .{com_pool_name});
+    try out_writer.print("pub const {s} = extern struct {{\n", .{com_pool_name});
     try out_writer.print("    pub const VTable = extern struct {{\n", .{});
     var iface_formatter : TypeRefFormatter = undefined;
 
@@ -952,8 +960,8 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
         try out_writer.print("        _: *opaque{{}}, // just a placeholder because this COM type is skipped\n", .{});
     } else {
         if (com_optional_iface) |iface| {
-            iface_formatter = try addTypeRefs(sdk_file, iface, .{});
-            try out_writer.print("        base: @typeInfo({}).Pointer.child.VTable,\n", .{iface_formatter});
+            iface_formatter = try addTypeRefs(sdk_file, iface, .{ .reason = .direct_type_access });
+            try out_writer.print("        base: {}.VTable,\n", .{iface_formatter});
         }
 
         // some COM objects have methods with the same name and only differ in parameter types
@@ -980,7 +988,7 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
     if (!skip) {
         if (com_optional_iface) |iface| {
             // For now we're putting this inside a sub-struct to avoid name conflicts
-            try out_writer.print("        pub usingnamespace @typeInfo({}).Pointer.child.MethodMixin(T);\n", .{iface_formatter});
+            try out_writer.print("        pub usingnamespace {}.MethodMixin(T);\n", .{iface_formatter});
         }
         for (com_methods.items) |method_node| {
             const method_obj = method_node.Object;
@@ -1002,14 +1010,14 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
                 try jsonObjEnforceKnownFieldsOnly(param_obj, &[_][]const u8 {"Name", "Type", "Attrs"}, sdk_file);
                 const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).String;
                 const param_type = (try jsonObjGetRequired(param_obj, "Type", sdk_file)).Object;
-                const param_options = processParamAttrs((try jsonObjGetRequired(param_obj, "Attrs", sdk_file)).Array);
+                const param_options = processParamAttrs((try jsonObjGetRequired(param_obj, "Attrs", sdk_file)).Array, .var_decl);
                 // NOTE: don't need to call addTypeRefs because it was already called in generateFunction above
                 const param_type_formatter = fmtTypeRef(param_type, param_options, .top_level, sdk_file);
                 try out_writer.print(", {s}: {}", .{std.zig.fmtId(param_name), param_type_formatter});
             }
             // NOTE: don't need to call addTypeRefs because it was already called in generateFunction above
             // TODO: set is_const, in and out properly
-            const return_type_formatter = fmtTypeRef(return_type, .{ .is_const = false, .in = false, .out = false }, .top_level, sdk_file);
+            const return_type_formatter = fmtTypeRef(return_type, .{ .reason = .var_decl, .is_const = false, .in = false, .out = false }, .top_level, sdk_file);
             try out_writer.print(") {} {{\n", .{return_type_formatter});
             try out_writer.print("            return @ptrCast(*const {s}.VTable, self.vtable).{s}(@ptrCast(*const {0s}, self)", .{com_pool_name, std.zig.fmtId(method_name)});
             for (params.items) |param_node| {
@@ -1026,8 +1034,8 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
     try out_writer.print("}};\n", .{});
 }
 
-fn processParamAttrs(attrs: json.Array) TypeRefFormatter.Options {
-    var opts = TypeRefFormatter.Options { };
+fn processParamAttrs(attrs: json.Array, reason: TypeRefFormatter.Reason) TypeRefFormatter.Options {
+    var opts = TypeRefFormatter.Options { .reason = reason };
     for (attrs.items) |attr_node| {
         const attr_str = attr_node.String;
         if (std.mem.eql(u8, attr_str, "Const")) {
@@ -1137,12 +1145,12 @@ fn generateFunction(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function
         try jsonObjEnforceKnownFieldsOnly(param_obj, &[_][]const u8 {"Name", "Type", "Attrs"}, sdk_file);
         const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).String;
         const param_type = (try jsonObjGetRequired(param_obj, "Type", sdk_file)).Object;
-        const param_options = processParamAttrs((try jsonObjGetRequired(param_obj, "Attrs", sdk_file)).Array);
+        const param_options = processParamAttrs((try jsonObjGetRequired(param_obj, "Attrs", sdk_file)).Array, .var_decl);
         const param_type_formatter = try addTypeRefs(sdk_file, param_type, param_options);
         try out_writer.print("{s}    {s}: {},\n", .{prefix, std.zig.fmtId(param_name), param_type_formatter});
     }
     // TODO: set is_const, in and out properly
-    const return_type_formatter = try addTypeRefs(sdk_file, return_type, .{ .is_const = false, .in = false, .out = false });
+    const return_type_formatter = try addTypeRefs(sdk_file, return_type, .{ .reason = .var_decl, .is_const = false, .in = false, .out = false });
     const term = if (func_kind == .com) "," else ";";
     try out_writer.print("{s}) callconv(@import(\"std\").os.windows.WINAPI) {}{s}\n", .{prefix, return_type_formatter, term});
 }
