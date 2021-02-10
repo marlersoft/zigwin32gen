@@ -892,6 +892,22 @@ const non_exhaustive_enums = std.ComptimeStringMap(Nothing, .{
     .{ "CLSCTX", .{} },
 });
 
+fn shortEnumValueName(enum_type_name: []const u8, full_value_name: []const u8) []const u8 {
+    const offset = init: {
+        if ((full_value_name.len <= enum_type_name.len + 1) or
+            (full_value_name[enum_type_name.len] != '_') or
+            !std.mem.startsWith(u8, full_value_name, enum_type_name)) {
+            break :init 0;
+        }
+        const first_c = full_value_name[enum_type_name.len+1];
+        if (first_c <= '9' and first_c >= '0') {
+            break :init enum_type_name.len;
+        }
+        break :init enum_type_name.len + 1;
+    };
+    return full_value_name[offset..];
+}
+
 fn generateEnum(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, enum_value_export_count: *u32, pool_name: StringPool.Val) !void {
     try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Kind", "Values", "IntegerBase"}, sdk_file);
     const values = (try jsonObjGetRequired(type_obj, "Values", sdk_file)).Array;
@@ -911,8 +927,9 @@ fn generateEnum(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
         const value_obj = value_node.Object;
         try jsonObjEnforceKnownFieldsOnly(value_obj, &[_][]const u8 {"Name", "Value"}, sdk_file);
         const value_tmp_name = (try jsonObjGetRequired(value_obj, "Name", sdk_file)).String;
+        const value_short_name = shortEnumValueName(pool_name.slice, value_tmp_name);
         const value_literal = try jsonObjGetRequired(value_obj, "Value", sdk_file);
-        try out_writer.print("    {s} = {},\n", .{value_tmp_name, fmtJson(value_literal)});
+        try out_writer.print("    {s} = {},\n", .{std.zig.fmtId(value_short_name), fmtJson(value_literal)});
     }
     if (non_exhaustive_enums.get(pool_name.slice)) |_| {
         try out_writer.print("    _,\n", .{});
@@ -929,10 +946,11 @@ fn generateEnum(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
         const value_obj = value_node.Object;
         try jsonObjEnforceKnownFieldsOnly(value_obj, &[_][]const u8 {"Name", "Value"}, sdk_file);
         const value_tmp_name = (try jsonObjGetRequired(value_obj, "Name", sdk_file)).String;
+        const value_short_name = shortEnumValueName(pool_name.slice, value_tmp_name);
         const value_literal = try jsonObjGetRequired(value_obj, "Value", sdk_file);
         const pool_value_name = try global_symbol_pool.add(value_tmp_name);
         try sdk_file.const_exports.append(pool_value_name);
-        try out_writer.print("pub const {s} = {}.{0s};\n", .{value_tmp_name, pool_name});
+        try out_writer.print("pub const {s} = {}.{s};\n", .{value_tmp_name, pool_name, value_short_name});
     }
     enum_value_export_count.* += @intCast(u32, values.items.len);
 }
