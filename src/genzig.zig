@@ -486,8 +486,8 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
         \\        constant_export_count +
         \\        type_export_count +
         \\        enum_value_export_count +
-        \\        com_iface_id_export_count +
-        \\        com_class_id_export_count +
+        \\        com_iface_id_export_count * 2 + // * 2 for value and ptr
+        \\        com_class_id_export_count * 2 + // * 2 for value and ptr
         \\        func_export_count +
         \\        unicode_alias_count +
         \\        import_count +
@@ -809,7 +809,7 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
         try generateFunction(sdk_file, out_writer, type_obj, .ptr, null, null);
         try sdk_file.tmp_func_ptr_workaround_list.append(pool_name);
     } else if (std.mem.eql(u8, kind, "Com")) {
-        try generateCom(sdk_file, out_writer, type_obj, pool_name, &extra_type_counts.com_iface_ids);
+        try generateCom(sdk_file, out_writer, type_obj, pool_name, extra_type_counts);
     } else if (std.mem.eql(u8, kind, "StructOrUnion")) {
         if (dhcp_type_conflicts.get(tmp_name)) |_| {
             try out_writer.print("// TODO: this dhcp type has been removed because it conflicts with a nested type '{s}'\n", .{tmp_name});
@@ -917,7 +917,7 @@ fn generateEnum(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
     enum_value_export_count.* += @intCast(u32, values.items.len);
 }
 
-fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, com_pool_name: StringPool.Val, com_id_count: *u32) !void {
+fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, com_pool_name: StringPool.Val, extra_type_counts: *ExtraTypeCounts) !void {
     try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Kind", "Name", "Guid", "Interface", "Methods"}, sdk_file);
     const com_optional_guid : ?[]const u8 = switch (try jsonObjGetRequired(type_obj, "Guid", sdk_file)) {
         .Null => null,
@@ -935,19 +935,16 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
         try out_writer.print("// WARNING: this COM type has been skipped because it causes some sort of error\n", .{});
     }
 
-    if (com_optional_guid) |_| {
-        const iid_pool = try global_symbol_pool.addFormatted("IID_{s}", .{com_pool_name.slice});
-        try out_writer.print("pub const {s} = &{s}.id;\n", .{iid_pool, com_pool_name});
+    const iid_pool = try global_symbol_pool.addFormatted("IID_{s}", .{com_pool_name.slice});
+    if (com_optional_guid) |guid| {
+        try out_writer.print("const {s}_Value = @import(\"../zig.zig\").Guid.initString(\"{s}\");\n", .{iid_pool, guid});
+        try out_writer.print("pub const {s} = &{0s}_Value;\n", .{iid_pool});
         try sdk_file.const_exports.append(iid_pool);
-        com_id_count.* += 1;
+        extra_type_counts.com_iface_ids += 1;
     }
+
     // TODO: do I want to introduce this new NAME_Value symbol?
     try out_writer.print("pub const {s} = *extern struct {{\n", .{com_pool_name});
-    if (com_optional_guid) |guid| {
-        try out_writer.print("    pub const id = @import(\"../zig.zig\").Guid.initString(\"{s}\");\n", .{guid});
-    } else {
-        try out_writer.print("    pub const id = @compileError(\"this COM type has no guid\");", .{});
-    }
     try out_writer.print("    pub const VTable = extern struct {{\n", .{});
     var iface_formatter : TypeRefFormatter = undefined;
 
@@ -956,7 +953,7 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
     } else {
         if (com_optional_iface) |iface| {
             iface_formatter = try addTypeRefs(sdk_file, iface, .{});
-            try out_writer.print("        base: @typeInfo({}).Pointer.child..VTable,\n", .{iface_formatter});
+            try out_writer.print("        base: @typeInfo({}).Pointer.child.VTable,\n", .{iface_formatter});
         }
 
         // some COM objects have methods with the same name and only differ in parameter types
