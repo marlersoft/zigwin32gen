@@ -547,24 +547,7 @@ fn addTypeRefsNoFormatter(sdk_file: *SdkFile, type_ref: json.ObjectMap) anyerror
     } else if (std.mem.eql(u8, kind, "MissingClrType")) {
         try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"Kind", "Name", "Namespace"}, sdk_file);
     } else {
-        std.debug.panic("kind '{s}' is not implemented", .{kind});
-//        const is_arrayptr = std.mem.eql(u8, kind, "arrayptr");
-//        if (is_arrayptr or std.mem.eql(u8, kind, "singleptr")) {
-//            try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"kind", "const", "subtype"}, sdk_file);
-//            try addTypeRefsNoFormatter(sdk_file, (try jsonObjGetRequired(type_ref, "subtype", sdk_file)).Object);
-//        } else if (std.mem.eql(u8, kind, "funcptr")) {
-//            try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"kind", "return_type", "args"}, sdk_file);
-//            try addTypeRefsNoFormatter(sdk_file, (try jsonObjGetRequired(type_ref, "return_type", sdk_file)).Object);
-//            for ((try jsonObjGetRequired(type_ref, "args", sdk_file)).Array.items) |arg_node| {
-//                const arg_obj = arg_node.Object;
-//                try jsonObjEnforceKnownFieldsOnly(arg_obj, &[_][]const u8 {"type", "name"}, sdk_file);
-//                try addTypeRefsNoFormatter(sdk_file, (try jsonObjGetRequired(arg_obj, "type", sdk_file)).Object);
-//            }
-//        } else {
-//            std.debug.assert(std.mem.eql(u8, kind, "fixedlenarray"));
-//            try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"kind", "len", "subtype"}, sdk_file);
-//            try addTypeRefsNoFormatter(sdk_file, (try jsonObjGetRequired(type_ref, "subtype", sdk_file)).Object);
-//        }
+        jsonPanicMsg("kind '{s}' is not implemented", .{kind});
     }
 }
 
@@ -739,48 +722,7 @@ const TypeRefFormatter = struct {
             const namespace = (try jsonObjGetRequired(self.type_ref, "Namespace", self.sdk_file)).String;
             try writer.print("*struct{{comment: []const u8 = \"MissingClrType {s}.{s}\"}}", .{name, namespace});
         } else {
-            @panic("not implemented");
-//            const is_arrayptr = std.mem.eql(u8, kind, "arrayptr");
-//            if (is_arrayptr or std.mem.eql(u8, kind, "singleptr")) {
-//                // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-//                // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-//                // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-//                // TODO: need to know if this is a sentinal terminated pointer
-//                // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-//                // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-//                // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-//                jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"kind", "const", "subtype"}, self.sdk_file) catch unreachable;
-//                const is_const = (jsonObjGetRequired(self.type_ref, "const", self.sdk_file) catch unreachable).Bool;
-//                const subtype = (jsonObjGetRequired(self.type_ref, "subtype", self.sdk_file) catch unreachable).Object;
-//                try writer.writeAll(if (is_arrayptr) "?[*]" else "?*");
-//                if (is_const) {
-//                    try writer.writeAll("const ");
-//                }
-//                try fmtTypeRef(subtype, self.options, .child, self.sdk_file).format(fmt, fmt_options, writer);
-//            } else if (std.mem.eql(u8, kind, "funcptr")) {
-//                jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"kind", "return_type", "args"}, self.sdk_file) catch unreachable;
-//                try writer.writeAll("fn(");
-//                var arg_prefix : []const u8 = "";
-//                for ((jsonObjGetRequired(self.type_ref, "args", self.sdk_file) catch unreachable).Array.items) |arg_node| {
-//                    const arg_obj = arg_node.Object;
-//                    jsonObjEnforceKnownFieldsOnly(arg_obj, &[_][]const u8 {"name", "type"}, self.sdk_file) catch unreachable;
-//                    const arg_name = (jsonObjGetRequired(arg_obj, "name", self.sdk_file) catch unreachable).String;
-//                    const arg_type = (jsonObjGetRequired(arg_obj, "type", self.sdk_file) catch unreachable).Object;
-//                    try writer.print("{s}{s}: ", .{arg_prefix, arg_name});
-//                    try fmtTypeRef(arg_type, .top_level, self.sdk_file).format(fmt, fmt_options, writer);
-//                    arg_prefix = ", ";
-//                }
-//                try writer.writeAll(") callconv(.Stdcall) ");
-//                const return_type = (jsonObjGetRequired(self.type_ref, "return_type", self.sdk_file) catch unreachable).Object;
-//                try fmtTypeRef(return_type, .top_level, self.sdk_file).format(fmt, fmt_options, writer);
-//            } else {
-//                std.debug.assert(std.mem.eql(u8, kind, "fixedlenarray"));
-//                jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"kind", "len", "subtype"}, self.sdk_file) catch unreachable;
-//                const len = (jsonObjGetRequired(self.type_ref, "len", self.sdk_file) catch unreachable).Integer;
-//                const subtype = (jsonObjGetRequired(self.type_ref, "subtype", self.sdk_file) catch unreachable).Object;
-//                try writer.print("[{}]", .{len});
-//                try fmtTypeRef(subtype, .child, self.sdk_file).format(fmt, fmt_options, writer);
-//            }
+            jsonPanicMsg("fmtTypeRef kind '{s}' is not implemented", .{kind});
         }
     }
 };
