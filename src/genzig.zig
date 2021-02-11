@@ -64,8 +64,8 @@ fn nativeTypeToZigType(t: NativeType) []const u8 {
         .Single => return "f32",
         .Double => return "f64",
         .String => return "[]const u8",
-        .IntPtr => return "?*opaque{}",
-        .UIntPtr => return "?*opaque{}",
+        .IntPtr => return "?*c_void",
+        .UIntPtr => return "?*c_void",
         .Guid => @panic("cannot call nativeTypeToZigType for NativeType.Guid"),
     };
 }
