@@ -5,6 +5,13 @@ const Mode = std.builtin.Mode;
 
 pub fn build(b: *Builder) !void {
     const target = b.standardTargetOptions(.{});
+    if (std.builtin.os.tag != .windows) {
+        if (target.os_tag == null or target.os_tag.? != .windows) {
+            std.log.err("build with -Dtarget=i386-windows or -Dtarget=x86_64-windows\n", .{});
+            std.os.exit(1);
+        }
+    }
+
     const mode = b.standardReleaseOptions();
     try makeExe(b, target, mode, "helloworld");
     try makeExe(b, target, mode, "helloworld-window");
@@ -23,12 +30,6 @@ fn makeExe(b: *Builder, target: CrossTarget, mode: Mode, root: []const u8) !void
         .name = "win32",
         .path = "../zigwin32/src/win32.zig",
     });
-    if (std.builtin.os.tag != .windows) {
-        exe.force_pic = true; // required when referencing shared libraries
-        exe.setTarget(.{
-            .os_tag = .windows,
-        });
-    }
 
     //const run_cmd = exe.run();
     //run_cmd.step.dependOn(b.getInstallStep());
