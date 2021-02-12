@@ -1,15 +1,15 @@
 //! This example is ported from : https://github.com/microsoft/Windows-classic-samples/blob/master/Samples/Win7Samples/begin/LearnWin32/Direct2DCircle/cpp/main.cpp
 pub const UNICODE = true;
 
-//#include <windows.h>
-//#include <d2d1.h>
-//#pragma comment(lib, "d2d1")
 const WINAPI = @import("std").os.windows.WINAPI;
 usingnamespace @import("win32").zig;
 usingnamespace @import("win32").api.system_services;
 usingnamespace @import("win32").api.windows_and_messaging;
 usingnamespace @import("win32").api.gdi;
 usingnamespace @import("win32").api.direct2d;
+usingnamespace @import("win32").api.dxgi;
+usingnamespace @import("win32").api.com;
+usingnamespace @import("win32").api.display_devices;
 
 usingnamespace @import("basewin.zig");
 
@@ -27,14 +27,11 @@ const MainWindow = struct {
     pBrush: ?*ID2D1SolidColorBrush = null,
     ellipse: D2D1_ELLIPSE = undefined,
 
-//    void    CalculateLayout();
-//    HRESULT CreateGraphicsResources();
-//    void    DiscardGraphicsResources();
-//    void    OnPaint();
-//    void    Resize();
-//
-//public:
-//
+    pub inline fn CalculateLayout(self: *MainWindow) void { MainWindowCalculateLayout(self); }
+    pub inline fn CreateGraphicsResources(self: *MainWindow) HRESULT { return MainWindowCreateGraphicsResources(self); }
+    pub inline fn DiscardGraphicsResources(self: *MainWindow) void { MainWindowDiscardGraphicsResources(self); }
+    pub inline fn OnPaint(self: *MainWindow) void { MainWindowOnPaint(self); }
+    pub inline fn Resize(self: *MainWindow) void { MainWindowResize(self); }
 
     pub fn ClassName() [:0]const u16 { return L("Circle Window Class"); }
 
@@ -45,89 +42,97 @@ const MainWindow = struct {
 
 // Recalculate drawing layout when the size of the window changes.
 
-//void MainWindow::CalculateLayout()
-fn CalculateLayout(self: MainWindow) void {
+fn MainWindowCalculateLayout(self: *MainWindow) void {
     if (self.pRenderTarget) |pRenderTarget| {
-        //D2D1_SIZE_F size = pRenderTarget->GetSize();
-        //const float x = size.width / 2;
-        //const float y = size.height / 2;
-        //const float radius = min(x, y);
-        //ellipse = D2D1::Ellipse(D2D1::Point2F(x, y), radius, radius);
+        // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        // TODO: this call is causing a segfault when we return from this function!!!
+        //       I believe it is caused by this issue: https://github.com/ziglang/zig/issues/1481
+        //       Zig unable to handle a return type of extern struct { x: f32, y: f32 } for WINAPI
+        //const size: D2D_SIZE_F = pRenderTarget.ID2D1RenderTarget_GetSize();
+        const size = D2D_SIZE_F { .width = 300, .height = 300 };
+        const x: f32 = size.width / 2;
+        const y: f32 = size.height / 2;
+        const radius = @import("std").math.min(x, y);
+        self.ellipse = D2D1.Ellipse(D2D1.Point2F(x, y), radius, radius);
     }
 }
 
-//HRESULT MainWindow::CreateGraphicsResources()
-//{
-//    HRESULT hr = S_OK;
-//    if (pRenderTarget == NULL)
-//    {
-//        RECT rc;
-//        GetClientRect(m_hwnd, &rc);
-//
-//        D2D1_SIZE_U size = D2D1::SizeU(rc.right, rc.bottom);
-//
-//        hr = pFactory->CreateHwndRenderTarget(
-//            D2D1::RenderTargetProperties(),
-//            D2D1::HwndRenderTargetProperties(m_hwnd, size),
-//            &pRenderTarget);
-//
-//        if (SUCCEEDED(hr))
-//        {
-//            const D2D1_COLOR_F color = D2D1::ColorF(1.0f, 1.0f, 0);
-//            hr = pRenderTarget->CreateSolidColorBrush(color, &pBrush);
-//
-//            if (SUCCEEDED(hr))
-//            {
-//                CalculateLayout();
-//            }
-//        }
-//    }
-//    return hr;
-//}
-//
-fn DiscardGraphicsResources(self: *MainWindow) void
+fn MainWindowCreateGraphicsResources(self: *MainWindow) HRESULT
+{
+    var hr = S_OK;
+    if (self.pRenderTarget == null)
+    {
+        var rc: RECT = undefined;
+        _ = GetClientRect(self.base.m_hwnd, &rc);
+
+        const size = D2D_SIZE_U{ .width = @intCast(u32, rc.right), .height = @intCast(u32, rc.bottom) };
+
+        hr = self.pFactory.?.ID2D1Factory_CreateHwndRenderTarget(
+            &D2D1.RenderTargetProperties(),
+            &D2D1.HwndRenderTargetProperties(self.base.m_hwnd, size),
+            // TODO: figure out how to cast a COM object to a base type
+            @ptrCast(**ID2D1HwndRenderTarget, &self.pRenderTarget));
+
+        if (SUCCEEDED(hr))
+        {
+            const color = D2D1.ColorF(.{ .r = 1, .g = 1, .b = 0});
+            // TODO: how do I do this ptrCast better by using COM base type?
+            hr = self.pRenderTarget.?.ID2D1RenderTarget_CreateSolidColorBrush(&color, null, @ptrCast(**ID2D1SolidColorBrush, &self.pBrush));
+
+            if (SUCCEEDED(hr))
+            {
+                self.CalculateLayout();
+            }
+        }
+    }
+    return hr;
+}
+
+fn MainWindowDiscardGraphicsResources(self: *MainWindow) void
 {
     SafeRelease(&self.pRenderTarget);
     SafeRelease(&self.pBrush);
 }
-//
-//void MainWindow::OnPaint()
-//{
-//    HRESULT hr = CreateGraphicsResources();
-//    if (SUCCEEDED(hr))
-//    {
-//        PAINTSTRUCT ps;
-//        BeginPaint(m_hwnd, &ps);
-//     
-//        pRenderTarget->BeginDraw();
-//
-//        pRenderTarget->Clear( D2D1::ColorF(D2D1::ColorF::SkyBlue) );
-//        pRenderTarget->FillEllipse(ellipse, pBrush);
-//
-//        hr = pRenderTarget->EndDraw();
-//        if (FAILED(hr) || hr == D2DERR_RECREATE_TARGET)
-//        {
-//            DiscardGraphicsResources();
-//        }
-//        EndPaint(m_hwnd, &ps);
-//    }
-//}
-//
-//void MainWindow::Resize()
-//{
-//    if (pRenderTarget != NULL)
-//    {
-//        RECT rc;
-//        GetClientRect(m_hwnd, &rc);
-//
-//        D2D1_SIZE_U size = D2D1::SizeU(rc.right, rc.bottom);
-//
-//        pRenderTarget->Resize(size);
-//        CalculateLayout();
-//        InvalidateRect(m_hwnd, NULL, FALSE);
-//    }
-//}
-//
+
+fn MainWindowOnPaint(self: *MainWindow) void
+{
+    var hr = self.CreateGraphicsResources();
+    if (SUCCEEDED(hr))
+    {
+        var ps : PAINTSTRUCT = undefined;
+        _ = BeginPaint(self.base.m_hwnd, &ps);
+
+        self.pRenderTarget.?.ID2D1RenderTarget_BeginDraw();
+
+        self.pRenderTarget.?.ID2D1RenderTarget_Clear(&D2D1.ColorFU32(.{ .rgb = D2D1.SkyBlue }));
+        // TODO: how do I get a COM interface type to convert to a base type without
+        //       an explicit cast like this?
+        self.pRenderTarget.?.ID2D1RenderTarget_FillEllipse(&self.ellipse, @ptrCast(*ID2D1Brush, self.pBrush));
+
+        hr = self.pRenderTarget.?.ID2D1RenderTarget_EndDraw(null, null);
+        if (FAILED(hr) or hr == D2DERR_RECREATE_TARGET)
+        {
+            self.DiscardGraphicsResources();
+        }
+        _ = EndPaint(self.base.m_hwnd, &ps);
+    }
+}
+
+fn MainWindowResize(self: *MainWindow) void
+{
+    if (self.pRenderTarget) |renderTarget|
+    {
+        var rc: RECT = undefined;
+        _ = GetClientRect(self.base.m_hwnd, &rc);
+
+        const size = D2D_SIZE_U{ .width = @intCast(u32, rc.right), .height = @intCast(u32, rc.bottom) };
+
+        _ = renderTarget.ID2D1HwndRenderTarget_Resize(&size);
+        self.CalculateLayout();
+        _ = InvalidateRect(self.base.m_hwnd, null, FALSE);
+    }
+}
+
 pub export fn wWinMain(hInstance: HINSTANCE, _: HINSTANCE, __: [*:0]u16, nCmdShow: c_int) callconv(WINAPI) c_int
 {
     var win = MainWindow { };
@@ -156,35 +161,93 @@ fn MainWindowHandleMessage(self: *MainWindow, uMsg: u32, wParam: WPARAM, lParam:
     switch (uMsg)
     {
     WM_CREATE => {
-        // TODO: I shouldn't need to case &self.pFactory to **c_void, D2D2CreateFactory probably doesn't
-        //       have the correct type yet.
-        // NOTE: not working on my Windows 10 box, Zig's lld-link can't find d2d1.lib
-        //if (FAILED(D2D1CreateFactory(
-        //        D2D1_FACTORY_TYPE_SINGLE_THREADED, &ID2D1Factory.id, null, @ptrCast(**c_void, &self.pFactory))))
-        //{
-        //    return -1;  // Fail CreateWindowEx.
-        //}
+        // TODO: Should I need to case &self.pFactory to **c_void? Maybe
+        //       D2D2CreateFactory probably doesn't have the correct type yet?
+        if (FAILED(D2D1CreateFactory(
+                D2D1_FACTORY_TYPE_SINGLE_THREADED, IID_ID2D1Factory, null, @ptrCast(**c_void, &self.pFactory))))
+        {
+            return -1;  // Fail CreateWindowEx.
+        }
         return 0;
     },
     WM_DESTROY => {
-        DiscardGraphicsResources(self);
-        // TODO: need to support COM types before I can call this
-        //SafeRelease(&self.pFactory);
+        self.DiscardGraphicsResources();
+        SafeRelease(&self.pFactory);
         PostQuitMessage(0);
         return 0;
     },
-
-    //case WM_PAINT:
-    //    OnPaint();
-    //    return 0;
-
-    // // Other messages not shown...
-
-    //case WM_SIZE:
-    //    Resize();
-    //    return 0;
-
+    WM_PAINT => {
+        self.OnPaint();
+        return 0;
+    },
+    // Other messages not shown...
+    WM_SIZE => {
+        self.Resize();
+        return 0;
+    },
     else => {},
     }
     return DefWindowProc(self.base.m_hwnd, uMsg, wParam, lParam);
 }
+
+// TODO: tthis D2D1 namespace is referenced in the C++ example but it doesn't exist in win32metadata
+const D2D1 = struct {
+    // TODO: SkyBlue is missing from win32metadata? file an issue?
+    pub const SkyBlue = 0x87CEEB;
+
+    // TODO: this is missing
+    pub fn ColorF(o: struct { r: f32, g: f32, b: f32, a: f32 = 1 }) DXGI_RGBA {
+        return .{ .r = o.r, .g = o.g, .b = o.b, .a = o.a };
+    }
+
+    // TODO: this is missing
+    pub fn ColorFU32(o: struct { rgb: u32, a: f32 = 1 }) DXGI_RGBA {
+        return .{
+            .r = @intToFloat(f32, (o.rgb >> 16) & 0xff) / 255,
+            .g = @intToFloat(f32, (o.rgb >>  8) & 0xff) / 255,
+            .b = @intToFloat(f32, (o.rgb >>  0) & 0xff) / 255,
+            .a = o.a,
+        };
+    }
+
+    pub fn Point2F(x: f32, y: f32) D2D_POINT_2F {
+        return .{ .x = x, .y = y };
+    }
+
+    pub fn Ellipse(center: D2D_POINT_2F, radiusX: f32, radiusY: f32) D2D1_ELLIPSE {
+        return .{
+            .point = center,
+            .radiusX = radiusX,
+            .radiusY = radiusY,
+        };
+    }
+
+    // TODO: this is missing
+    pub fn RenderTargetProperties() D2D1_RENDER_TARGET_PROPERTIES {
+        return .{
+            .type = D2D1_RENDER_TARGET_TYPE_DEFAULT,
+            .pixelFormat = PixelFormat(),
+            .dpiX = 0,
+            .dpiY = 0,
+            .usage = D2D1_RENDER_TARGET_USAGE_NONE,
+            .minLevel = D2D1_FEATURE_LEVEL_DEFAULT,
+        };
+    }
+
+    // TODO: this is missing
+    pub fn PixelFormat() D2D1_PIXEL_FORMAT  {
+        return .{
+            .format = DXGI_FORMAT_UNKNOWN,
+            .alphaMode = D2D1_ALPHA_MODE_UNKNOWN,
+        };
+    }
+
+    // TODO: this is missing
+    pub fn HwndRenderTargetProperties(hwnd: HWND, size: D2D_SIZE_U) D2D1_HWND_RENDER_TARGET_PROPERTIES {
+        return .{
+            .hwnd = hwnd,
+            .pixelSize = size,
+            .presentOptions = D2D1_PRESENT_OPTIONS_NONE,
+        };
+    }
+};
