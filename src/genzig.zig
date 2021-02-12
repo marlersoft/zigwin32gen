@@ -607,7 +607,7 @@ const TypeRefFormatter = struct {
             } else if (std.mem.eql(u8, name, "Guid")) {
                 try writer.writeAll("Guid");
             } else {
-                const native_type = global_native_type_map.get(name) orelse std.debug.panic("unknown Native type '{0}'", .{name});
+                const native_type = global_native_type_map.get(name) orelse std.debug.panic("unknown Native type '{s}'", .{name});
                 try writer.writeAll(nativeTypeToZigType(native_type));
             }
         } else if (std.mem.eql(u8, kind, "ApiRef")) {
