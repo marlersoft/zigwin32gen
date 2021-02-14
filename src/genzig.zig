@@ -1031,7 +1031,7 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
             try method_conflicts.put(method_name, count + 1);
 
             try out_writer.print("        // NOTE: method is namespaced with interface name to avoid conflicts for now\n", .{});
-            try out_writer.print("        pub inline fn {s}_{s}", .{com_pool_name, method_name});
+            try out_writer.print("        pub fn {s}_{s}", .{com_pool_name, method_name});
             if (count > 0) {
                 try out_writer.print("{}", .{count});
             }
@@ -1049,7 +1049,7 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
             // NOTE: don't need to call addTypeRefs because it was already called in generateFunction above
             // TODO: set is_const, in and out properly
             const return_type_formatter = fmtTypeRef(return_type, .{ .reason = .var_decl, .is_const = false, .in = false, .out = false }, .top_level, sdk_file);
-            try out_writer.print(") {} {{\n", .{return_type_formatter});
+            try out_writer.print(") callconv(.Inline) {} {{\n", .{return_type_formatter});
             try out_writer.print("            return @ptrCast(*const {s}.VTable, self.vtable).{s}(@ptrCast(*const {0s}, self)", .{com_pool_name, std.zig.fmtId(method_name)});
             for (params.items) |param_node| {
                 const param_obj = param_node.Object;

@@ -27,11 +27,11 @@ const MainWindow = struct {
     pBrush: ?*ID2D1SolidColorBrush = null,
     ellipse: D2D1_ELLIPSE = undefined,
 
-    pub inline fn CalculateLayout(self: *MainWindow) void { MainWindowCalculateLayout(self); }
-    pub inline fn CreateGraphicsResources(self: *MainWindow) HRESULT { return MainWindowCreateGraphicsResources(self); }
-    pub inline fn DiscardGraphicsResources(self: *MainWindow) void { MainWindowDiscardGraphicsResources(self); }
-    pub inline fn OnPaint(self: *MainWindow) void { MainWindowOnPaint(self); }
-    pub inline fn Resize(self: *MainWindow) void { MainWindowResize(self); }
+    pub fn CalculateLayout(self: *MainWindow) callconv(.Inline) void { MainWindowCalculateLayout(self); }
+    pub fn CreateGraphicsResources(self: *MainWindow) callconv(.Inline) HRESULT { return MainWindowCreateGraphicsResources(self); }
+    pub fn DiscardGraphicsResources(self: *MainWindow) callconv(.Inline) void { MainWindowDiscardGraphicsResources(self); }
+    pub fn OnPaint(self: *MainWindow) callconv(.Inline) void { MainWindowOnPaint(self); }
+    pub fn Resize(self: *MainWindow) callconv(.Inline) void { MainWindowResize(self); }
 
     pub fn ClassName() [:0]const u16 { return L("Circle Window Class"); }
 
