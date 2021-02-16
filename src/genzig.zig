@@ -70,6 +70,17 @@ fn nativeTypeToZigType(t: NativeType) []const u8 {
     };
 }
 
+const TargetKind = enum {
+    Default,
+    FunctionPointer,
+    Com,
+};
+const target_kind_map = std.ComptimeStringMap(TargetKind, .{
+    .{ "Default", TargetKind.Default },
+    .{ "FunctionPointer", TargetKind.FunctionPointer },
+    .{ "Com", TargetKind.Com },
+});
+
 const Nothing = struct {};
 
 const SdkFile = struct {
@@ -540,7 +551,7 @@ fn addTypeRefsNoFormatter(sdk_file: *SdkFile, type_ref: json.ObjectMap) anyerror
             std.debug.panic("unknown Native type '{s}'", .{name});
         }
     } else if (std.mem.eql(u8, kind, "ApiRef")) {
-        try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"Kind", "Name", "Com", "Api", "Parents"}, sdk_file);
+        try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"Kind", "Name", "TargetKind", "Api", "Parents"}, sdk_file);
         const tmp_name = (try jsonObjGetRequired(type_ref, "Name", sdk_file)).String;
         const api = (try jsonObjGetRequired(type_ref, "Api", sdk_file)).String;
         const parents = (try jsonObjGetRequired(type_ref, "Parents", sdk_file)).Array;
@@ -611,15 +622,28 @@ const TypeRefFormatter = struct {
                 try writer.writeAll(nativeTypeToZigType(native_type));
             }
         } else if (std.mem.eql(u8, kind, "ApiRef")) {
-            try jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"Kind", "Name", "Com", "Api", "Parents"}, self.sdk_file);
+            try jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"Kind", "Name", "TargetKind", "Api", "Parents"}, self.sdk_file);
             const name = (try jsonObjGetRequired(self.type_ref, "Name", self.sdk_file)).String;
-            const is_com = (try jsonObjGetRequired(self.type_ref, "Com", self.sdk_file)).Bool;
+            const target_kind_str = (try jsonObjGetRequired(self.type_ref, "TargetKind", self.sdk_file)).String;
+            const target_kind = target_kind_map.get(target_kind_str) orelse
+                jsonPanicMsg("unknown TargetKind '{s}'\n", .{target_kind_str});
             const parents = (try jsonObjGetRequired(self.type_ref, "Parents", self.sdk_file)).Array;
-            if (is_com and self.options.reason == .var_decl) {
+
+            if (self.options.reason == .var_decl) {
                 if (self.options.optional) {
-                    try writer.writeAll("?");
+                    switch (target_kind) {
+                        .Com, .FunctionPointer => {
+                            try writer.writeAll("?");
+                        },
+                        .Default => {},
+                    }
                 }
-                try writer.writeAll("*");
+                switch (target_kind) {
+                    .Com => {
+                        try writer.writeAll("*");
+                    },
+                    .FunctionPointer, .Default => {},
+                }
             }
             for (parents.items) |parent| {
                 try writer.writeAll(parent.String);
