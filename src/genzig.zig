@@ -414,8 +414,8 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
     try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
     try out_writer.print("// Section: Constants ({})\n", .{constants_array.items.len});
     try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
-    for (constants_array.items) |constant_node| {
-        try generateConstant(sdk_file, out_writer, constant_node.Object);
+    for (constants_array.items) |*constant_node_ptr| {
+        try generateConstant(sdk_file, out_writer, constant_node_ptr.Object);
     }
     std.debug.assert(constants_array.items.len == sdk_file.const_exports.items.len);
     try out_writer.print("\n", .{});
@@ -427,8 +427,8 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
         .com_iface_ids = 0,
         .com_class_ids = 0,
     };
-    for (types_array.items) |type_node| {
-        try generateType(sdk_file, out_writer, type_node.Object, &extra_type_counts);
+    for (types_array.items) |*type_node_ptr| {
+        try generateType(sdk_file, out_writer, type_node_ptr.Object, &extra_type_counts);
         try out_writer.print("\n", .{});
     }
     std.debug.assert(sdk_file.const_exports.items.len ==
@@ -442,8 +442,8 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
     try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
     try out_writer.print("// Section: Functions ({})\n", .{functions_array.items.len});
     try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
-    for (functions_array.items) |function_node| {
-        try generateFunction(sdk_file, out_writer, function_node.Object, .fixed, null, null);
+    for (functions_array.items) |*function_node_ptr| {
+        try generateFunction(sdk_file, out_writer, function_node_ptr.Object, .fixed, null, null);
         try out_writer.print("\n", .{});
     }
     std.debug.assert(functions_array.items.len == sdk_file.func_exports.count());
@@ -645,8 +645,8 @@ const TypeRefFormatter = struct {
                     .FunctionPointer, .Default => {},
                 }
             }
-            for (parents.items) |parent| {
-                try writer.writeAll(parent.String);
+            for (parents.items) |*parent_ptr| {
+                try writer.writeAll(parent_ptr.String);
                 try writer.writeAll(".");
             }
             try writer.writeAll(name);
@@ -882,26 +882,26 @@ fn generateStruct(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: 
         try out_writer.print("pub const {} = extern struct {{ comment: [*]const u8 = \"TODO: why is this struct empty?\" }};\n", .{struct_pool_name});
     } else {
         try out_writer.print("pub const {} = extern struct {{\n", .{struct_pool_name});
-        for (struct_fields.items) |field_node| {
-            const field_obj = field_node.Object;
+        for (struct_fields.items) |*field_node_ptr| {
+            const field_obj = field_node_ptr.Object;
             try jsonObjEnforceKnownFieldsOnly(field_obj, &[_][]const u8 {"Name", "Type", "Attrs"}, sdk_file);
             const field_name = (try jsonObjGetRequired(field_obj, "Name", sdk_file)).String;
             const field_type = (try jsonObjGetRequired(field_obj, "Type", sdk_file)).Object;
             const field_attrs = (try jsonObjGetRequired(field_obj, "Attrs", sdk_file)).Array;
             var field_options = TypeRefFormatter.Options { .reason = .var_decl };
-            for (field_attrs.items) |attr_node| {
-                const attr_str = attr_node.String;
+            for (field_attrs.items) |*attr_node_ptr| {
+                const attr_str = attr_node_ptr.String;
                 if (std.mem.eql(u8, attr_str, "Const")) {
                     field_options.is_const = true;
                 } else {
-                    jsonPanicMsg("unhandled custom field attribute {}\n", .{fmtJson(attr_node)});
+                    jsonPanicMsg("unhandled custom field attribute {s}\n", .{attr_str});
                 }
             }
             const field_type_formatter = try addTypeRefs(sdk_file, field_type, field_options);
             try out_writer.print("    {}: {},\n", .{std.zig.fmtId(field_name), field_type_formatter});
         }
-        for (struct_nested_types.items) |nested_type_node| {
-            const nested_type_obj = nested_type_node.Object;
+        for (struct_nested_types.items) |*nested_type_node_ptr| {
+            const nested_type_obj = nested_type_node_ptr.Object;
             const nested_type_name = (try jsonObjGetRequired(nested_type_obj, "Name", sdk_file)).String;
             try out_writer.print("    const {s} = u32; // TODO: generate this nested type!\n", .{nested_type_name});
         }
@@ -949,8 +949,8 @@ fn generateEnum(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
     if (values.items.len == 0) {
         // zig doesn't allow empty enums
         try out_writer.print("    _\n", .{});
-    } else for (values.items) |value_node| {
-        const value_obj = value_node.Object;
+    } else for (values.items) |*value_node_ptr| {
+        const value_obj = value_node_ptr.Object;
         try jsonObjEnforceKnownFieldsOnly(value_obj, &[_][]const u8 {"Name", "Value"}, sdk_file);
         const value_tmp_name = (try jsonObjGetRequired(value_obj, "Name", sdk_file)).String;
         const value_short_name = shortEnumValueName(pool_name.slice, value_tmp_name);
@@ -968,8 +968,8 @@ fn generateEnum(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
     }
 
     // create aliases
-    for (values.items) |value_node| {
-        const value_obj = value_node.Object;
+    for (values.items) |*value_node_ptr| {
+        const value_obj = value_node_ptr.Object;
         try jsonObjEnforceKnownFieldsOnly(value_obj, &[_][]const u8 {"Name", "Value"}, sdk_file);
         const value_tmp_name = (try jsonObjGetRequired(value_obj, "Name", sdk_file)).String;
         const value_short_name = shortEnumValueName(pool_name.slice, value_tmp_name);
@@ -1023,11 +1023,11 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
         var method_conflicts = StringHashMap(u8).init(allocator);
         defer method_conflicts.deinit();
 
-        for (com_methods.items) |method_node| {
-            const method_name = (try jsonObjGetRequired(method_node.Object, "Name", sdk_file)).String;
+        for (com_methods.items) |*method_node_ptr| {
+            const method_name = (try jsonObjGetRequired(method_node_ptr.Object, "Name", sdk_file)).String;
             const count = method_conflicts.get(method_name) orelse 0;
             try method_conflicts.put(method_name, count + 1);
-            try generateFunction(sdk_file, out_writer, method_node.Object, .com, if (count == 0) null else count, com_pool_name.slice);
+            try generateFunction(sdk_file, out_writer, method_node_ptr.Object, .com, if (count == 0) null else count, com_pool_name.slice);
         }
     }
 
@@ -1045,8 +1045,8 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
             // For now we're putting this inside a sub-struct to avoid name conflicts
             try out_writer.print("        pub usingnamespace {}.MethodMixin(T);\n", .{iface_formatter});
         }
-        for (com_methods.items) |method_node| {
-            const method_obj = method_node.Object;
+        for (com_methods.items) |*method_node_ptr| {
+            const method_obj = method_node_ptr.Object;
             const method_name = (try jsonObjGetRequired(method_obj, "Name", sdk_file)).String;
             const return_type = (try jsonObjGetRequired(method_obj, "ReturnType", sdk_file)).Object;
             const params = (try jsonObjGetRequired(method_obj, "Params", sdk_file)).Array;
@@ -1060,8 +1060,8 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
                 try out_writer.print("{}", .{count});
             }
             try out_writer.print("(self: *const T", .{});
-            for (params.items) |param_node| {
-                const param_obj = param_node.Object;
+            for (params.items) |*param_node_ptr| {
+                const param_obj = param_node_ptr.Object;
                 try jsonObjEnforceKnownFieldsOnly(param_obj, &[_][]const u8 {"Name", "Type", "Attrs"}, sdk_file);
                 const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).String;
                 const param_type = (try jsonObjGetRequired(param_obj, "Type", sdk_file)).Object;
@@ -1075,8 +1075,8 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
             const return_type_formatter = fmtTypeRef(return_type, .{ .reason = .var_decl, .is_const = false, .in = false, .out = false }, .top_level, sdk_file);
             try out_writer.print(") callconv(.Inline) {} {{\n", .{return_type_formatter});
             try out_writer.print("            return @ptrCast(*const {s}.VTable, self.vtable).{s}(@ptrCast(*const {0s}, self)", .{com_pool_name, std.zig.fmtId(method_name)});
-            for (params.items) |param_node| {
-                const param_obj = param_node.Object;
+            for (params.items) |*param_node_ptr| {
+                const param_obj = param_node_ptr.Object;
                 const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).String;
                 try out_writer.print(", {s}", .{std.zig.fmtId(param_name)});
             }
@@ -1091,8 +1091,8 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
 
 fn processParamAttrs(attrs: json.Array, reason: TypeRefFormatter.Reason) TypeRefFormatter.Options {
     var opts = TypeRefFormatter.Options { .reason = reason };
-    for (attrs.items) |attr_node| {
-        const attr_str = attr_node.String;
+    for (attrs.items) |*attr_node_ptr| {
+        const attr_str = attr_node_ptr.String;
         if (std.mem.eql(u8, attr_str, "Const")) {
             opts.is_const = true;
         } else if (std.mem.eql(u8, attr_str, "In")) {
@@ -1195,8 +1195,8 @@ fn generateFunction(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function
     if (optional_self_type) |self_type| {
         try out_writer.print("{s}    self: *const {s},\n", .{prefix, self_type});
     }
-    for (params.items) |param_node| {
-        const param_obj = param_node.Object;
+    for (params.items) |*param_node_ptr| {
+        const param_obj = param_node_ptr.Object;
         try jsonObjEnforceKnownFieldsOnly(param_obj, &[_][]const u8 {"Name", "Type", "Attrs"}, sdk_file);
         const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).String;
         const param_type = (try jsonObjGetRequired(param_obj, "Type", sdk_file)).Object;
@@ -1219,22 +1219,22 @@ fn getPoolStringWithParts(a: *std.mem.Allocator, slices: []const []const u8) ![]
 fn generateUnicodeAliases(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, unicode_aliases: []json.Value) !void {
     try out_writer.writeAll("pub usingnamespace switch (@import(\"../zig.zig\").unicode_mode) {\n");
     try out_writer.writeAll("    .ansi => struct {\n");
-    for (unicode_aliases) |alias_node| {
-        try out_writer.print("        pub const {s} = {0s}A;\n", .{alias_node.String});
+    for (unicode_aliases) |*alias_node_ptr| {
+        try out_writer.print("        pub const {s} = {0s}A;\n", .{alias_node_ptr.String});
     }
     try out_writer.writeAll("    },\n");
     try out_writer.writeAll("    .wide => struct {\n");
-    for (unicode_aliases) |alias_node| {
-        try out_writer.print("        pub const {s} = {0s}W;\n", .{alias_node.String});
+    for (unicode_aliases) |*alias_node_ptr| {
+        try out_writer.print("        pub const {s} = {0s}W;\n", .{alias_node_ptr.String});
     }
     try out_writer.writeAll("    },\n");
     try out_writer.writeAll("    .unspecified => if (@import(\"builtin\").is_test) struct {\n");
-    for (unicode_aliases) |alias_node| {
-        try out_writer.print("        pub const {s} = *opaque{{}};\n", .{alias_node.String});
+    for (unicode_aliases) |*alias_node_ptr| {
+        try out_writer.print("        pub const {s} = *opaque{{}};\n", .{alias_node_ptr.String});
     }
     try out_writer.writeAll("    } else struct {\n");
-    for (unicode_aliases) |alias_node| {
-        try out_writer.print("        pub const {s} = @compileError(\"'{0s}' requires that UNICODE be set to true or false in the root module\");\n", .{alias_node.String});
+    for (unicode_aliases) |*alias_node_ptr| {
+        try out_writer.print("        pub const {s} = @compileError(\"'{0s}' requires that UNICODE be set to true or false in the root module\");\n", .{alias_node_ptr.String});
     }
     try out_writer.writeAll("    },\n");
     try out_writer.writeAll("};");
