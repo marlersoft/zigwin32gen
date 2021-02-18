@@ -43,7 +43,7 @@ pub fn BaseWindow(comptime DERIVED_TYPE: type) type { return struct {
     }
 
     pub fn Create(self: *@This(),
-        lpWindowName: [:0]const u16,
+        lpWindowName: [*:0]const u16,
         dwStyle: u32,
         options: struct {
             dwExStyle: u32 = 0,
@@ -67,7 +67,7 @@ pub fn BaseWindow(comptime DERIVED_TYPE: type) type { return struct {
             // TODO: autogen bindings don't allow for null, should win32metadata allow Option for fields? Or should all strings allow NULL?
             .lpszMenuName = L("Placeholder"),
             // NOTE: we need ".ptr" as a workaround for https://github.com/ziglang/zig/issues/7986
-            .lpszClassName = DERIVED_TYPE.ClassName().ptr,
+            .lpszClassName = DERIVED_TYPE.ClassName(),
         };
 
         _ = RegisterClass(&wc);

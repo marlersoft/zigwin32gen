@@ -26,6 +26,7 @@ const NativeType = enum {
     UInt32,
     Int64,
     UInt64,
+    Char,
     Single,
     Double,
     String,
@@ -43,6 +44,7 @@ const global_native_type_map = std.ComptimeStringMap(NativeType, .{
     .{ "UInt32", NativeType.UInt32 },
     .{ "Int64", NativeType.Int64 },
     .{ "UInt64", NativeType.UInt64 },
+    .{ "Char", NativeType.Char },
     .{ "Single", NativeType.Single },
     .{ "Double", NativeType.Double },
     .{ "String", NativeType.String },
@@ -61,6 +63,7 @@ fn nativeTypeToZigType(t: NativeType) []const u8 {
         .UInt32 => return "u32",
         .Int64 => return "i64",
         .UInt64 => return "u64",
+        .Char => return "u16",
         .Single => return "f32",
         .Double => return "f64",
         .String => return "[]const u8",
@@ -563,10 +566,7 @@ fn addTypeRefsNoFormatter(sdk_file: *SdkFile, type_ref: json.ObjectMap) anyerror
         try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"Kind", "Shape", "Child"}, sdk_file);
         try addTypeRefsNoFormatter(sdk_file, (try jsonObjGetRequired(type_ref, "Child", sdk_file)).Object);
     } else if (std.mem.eql(u8, kind, "LPArray")) {
-        try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"Kind", "NullNullTerm", "SizeParamIndex", "SizeConst", "ArraySubType", "Child"}, sdk_file);
-        try addTypeRefsNoFormatter(sdk_file, (try jsonObjGetRequired(type_ref, "Child", sdk_file)).Object);
-    } else if (std.mem.eql(u8, kind, "LPStr")) {
-        try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"Kind", "Wide", "NullTerm", "NullNullTerm", "Child"}, sdk_file);
+        try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"Kind", "NullNullTerm", "SizeParamIndex", "BytesParamIndex", "SizeConst", "Child"}, sdk_file);
         try addTypeRefsNoFormatter(sdk_file, (try jsonObjGetRequired(type_ref, "Child", sdk_file)).Object);
     } else if (std.mem.eql(u8, kind, "MissingClrType")) {
         try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"Kind", "Name", "Namespace"}, sdk_file);
@@ -584,6 +584,12 @@ const TypeRefFormatter = struct {
         in: bool = false,
         out: bool = false,
         optional: bool = false,
+        // TODO: handle this option
+        not_null_term: bool = false,
+        // TODO: handle this option
+        null_null_term: bool = true,
+        // TODO: what to do with this?
+        ret_val: bool = false,
         // TODO: don't know what to do with this yet
         com_out_ptr: bool = false,
     };
@@ -645,6 +651,36 @@ const TypeRefFormatter = struct {
                     .FunctionPointer, .Default => {},
                 }
             }
+
+            // special handling for PSTR and PWSTR for now.  This is because those types
+            // have hardcoded non-const and null-terminated, so we can't reference them if our usage
+            // doesn't match.
+            // If there are more cases that behave like this, I will likely need to implement a 2-pass
+            // system where the first pass I gather all the type definitions so that on the second pass
+            // I'll know whether each type is a pointer like this and can fix things like this.
+            const special : enum { pstr, pwstr, other } = blk: {
+                if (std.mem.eql(u8, name, "PSTR")) break :blk .pstr;
+                if (std.mem.eql(u8, name, "PWSTR")) break :blk .pwstr;
+                break :blk .other;
+            };
+            if (special == .pstr or special == .pwstr) {
+                if (self.options.optional) {
+                    try writer.writeAll("?");
+                }
+
+                // if we deviated from the options we set for PSTR/PWSTR, then generate the native zig
+                // type directly instead of referencing the PSTR/PWSTR type
+                if (self.options.is_const or self.options.not_null_term) {
+                    const base = @as([]const u8, if (special == .pstr) "u8" else "u16");
+                    // can't put these expressions in the print argument tuple because of https://github.com/ziglang/zig/issues/8036
+                    const base_type = if (special == .pstr) "u8" else "u16";
+                    const sentinel_suffix = if (self.options.not_null_term) "" else ":0";
+                    const const_str = if (self.options.is_const) "const " else "";
+                    try writer.print("[*{s}]{s}{s}", .{sentinel_suffix, const_str, base_type});
+                    return;
+                }
+            }
+
             for (parents.items) |*parent_ptr| {
                 try writer.writeAll(parent_ptr.String);
                 try writer.writeAll(".");
@@ -676,49 +712,34 @@ const TypeRefFormatter = struct {
             try writer.print("[{}]", .{shape_size});
             try fmtTypeRef(child, self.options, .child, self.sdk_file).format(fmt, fmt_options, writer);
         } else if (std.mem.eql(u8, kind, "LPArray")) {
-            try jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"Kind", "NullNullTerm", "SizeParamIndex", "SizeConst", "ArraySubType", "Child"}, self.sdk_file);
+            try jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"Kind", "NullNullTerm", "SizeParamIndex", "BytesParamIndex", "SizeConst", "Child"}, self.sdk_file);
             const null_null_term = (try jsonObjGetRequired(self.type_ref, "NullNullTerm", self.sdk_file)).Bool;
             const size_param_index = (try jsonObjGetRequired(self.type_ref, "SizeParamIndex", self.sdk_file)).Integer;
+            const bytes_param_index = (try jsonObjGetRequired(self.type_ref, "BytesParamIndex", self.sdk_file)).Integer;
             const size_const = (try jsonObjGetRequired(self.type_ref, "SizeConst", self.sdk_file)).Integer;
-            const opt_array_sub_type_node : ?[]const u8 = switch(try jsonObjGetRequired(self.type_ref, "ArraySubType", self.sdk_file)) {
-                .String => |s| s,
-                .Null => null,
-                else => jsonPanic(),
-            };
             const type_ref_kind = (jsonObjGetRequired(self.type_ref, "Kind", self.sdk_file) catch unreachable).String;
             // TODO: can Zig use size_param_index?
             const child = (try jsonObjGetRequired(self.type_ref, "Child", self.sdk_file)).Object;
 
+            if (self.options.optional) {
+                try writer.writeAll("?");
+            }
             if (null_null_term) {
                 try writer.print("*extern struct{{comment:[*]const u8=\"TODO: LPArray with null_null_term\"}}", .{});
-            } else if (opt_array_sub_type_node) |sub_type| {
-                try writer.print("*extern struct{{comment:[*]const u8=\"TODO: LPArray with subtype {s}\"}}", .{sub_type});
             } else {
-                if (self.options.optional) {
-                    try writer.writeAll("?");
+                var sentinel_suffix: []const u8 = "";
+                if ((!self.options.not_null_term) and isByteOrCharOrUInt16Type(child, self.sdk_file)) {
+                    sentinel_suffix = ":0";
                 }
+
                 if (size_const == -1 or size_const == 0) {
-                    try writer.writeAll("[*]");
+                    try writer.print("[*{s}]", .{sentinel_suffix});
                 } else {
                     try writer.print("*[{}]", .{size_const});
                 }
                 if (size_const <= 0 and self.options.is_const)
                     try writer.writeAll("const ");
                 try fmtTypeRef(child, self.options, .array, self.sdk_file).format(fmt, fmt_options, writer);
-            }
-        } else if (std.mem.eql(u8, kind, "LPStr")) {
-            try jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"Kind", "Wide", "NullTerm", "NullNullTerm", "Child"}, self.sdk_file);
-            const wide = (try jsonObjGetRequired(self.type_ref, "Wide", self.sdk_file)).Bool;
-            const null_term = (try jsonObjGetRequired(self.type_ref, "NullTerm", self.sdk_file)).Bool;
-            const null_null_term = (try jsonObjGetRequired(self.type_ref, "NullNullTerm", self.sdk_file)).Bool;
-            if (null_null_term) {
-                try writer.print("*extern struct{{comment:[*]const u8=\"TODO: LPStr with null_null_term\"}}", .{});
-            } else {
-                const optional_prefix : []const u8 = if (self.options.optional) "?" else "";
-                const null_term_str : []const u8 = if (null_term) ":0" else "";
-                const elem : []const u8 = if (wide) "u16" else "u8";
-                const const_str : []const u8 = if (self.options.is_const) "const " else "";
-                try writer.print("{s}[*{s}]{s}{s}", .{optional_prefix, null_term_str, const_str, elem});
             }
         } else if (std.mem.eql(u8, kind, "MissingClrType")) {
             try jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"Kind", "Name", "Namespace"}, self.sdk_file);
@@ -732,6 +753,21 @@ const TypeRefFormatter = struct {
 };
 pub fn fmtTypeRef(type_ref: json.ObjectMap, options: TypeRefFormatter.Options, depth_context: DepthContext, sdk_file: *SdkFile) TypeRefFormatter {
     return .{ .type_ref = type_ref, .options = options, .depth_context = depth_context, .sdk_file = sdk_file };
+}
+
+fn isByteOrCharOrUInt16Type(type_obj: json.ObjectMap, sdk_file: *SdkFile) bool {
+    const kind = (try jsonObjGetRequired(type_obj, "Kind", sdk_file)).String;
+    if (!std.mem.eql(u8, kind, "Native"))
+        return false;
+
+    const name = (try jsonObjGetRequired(type_obj, "Name", sdk_file)).String;
+    if (std.mem.eql(u8, name, "Void"))
+        return false;
+    const native_type = global_native_type_map.get(name) orelse jsonPanicMsg("unknown Native type '{s}'", .{name});
+    return switch (native_type) {
+        .Byte, .Char, .UInt16 => true,
+        else => false,
+    };
 }
 
 fn fmtConstAssign(native_type: NativeType, value: json.Value) ConstValueFormatter {
@@ -748,6 +784,14 @@ const ConstValueFormatter = struct {
     ) std.os.WriteError!void {
         if (self.native_type == .String) {
             try writer.print("= {}", .{fmtJson(self.value)});
+            return;
+        }
+        if (self.native_type == .Guid) {
+            const s = switch (self.value) {
+                .String => |s| s,
+                else => jsonPanicMsg("expected Guid to be a string but got: {s}", .{fmtJson(self.value)}),
+            };
+            try writer.print("= @import(\"../zig.zig\").Guid.initString(\"{s}\")", .{s});
             return;
         }
         const zig_type = nativeTypeToZigType(self.native_type);
@@ -828,6 +872,43 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
         if (optional_free_func) |free_func| {
             try out_writer.print("// TODO: this type has a FreeFunc '{s}', what can Zig do with this information?\n", .{free_func});
         }
+
+        // HANDLE PSTR and PWSTR specially because win32metadata is not properly declaring them as arrays, only pointers
+        // not sure if this is a real issue with the metadata or intentional
+        const special : enum { pstr, pwstr, other } = blk: {
+            if (std.mem.eql(u8, tmp_name, "PSTR")) break :blk .pstr;
+            if (std.mem.eql(u8, tmp_name, "PWSTR")) break :blk .pwstr;
+            break :blk .other;
+        };
+        if (special == .pstr or special == .pwstr) {
+            //
+            // verify the definition is what we expect, if not, we might be able to remove out workaround
+            //
+            const def_kind = (try jsonObjGetRequired(def_type, "Kind", sdk_file)).String;
+            jsonEnforceMsg(std.mem.eql(u8, def_kind, "PointerTo"), "definition of {s} has changed! (Def.Kind != PointerTo, it is {s})", .{tmp_name, def_kind});
+            try jsonObjEnforceKnownFieldsOnly(def_type, &[_][]const u8 {"Kind", "Child"}, sdk_file);
+            const child_type = (try jsonObjGetRequired(def_type, "Child", sdk_file)).Object;
+            const child_kind = (try jsonObjGetRequired(child_type, "Kind", sdk_file)).String;
+            jsonEnforceMsg(std.mem.eql(u8, child_kind, "Native"), "definition of {s} has changed! (Def.Child.Kind != Native", .{tmp_name});
+            try jsonObjEnforceKnownFieldsOnly(child_type, &[_][]const u8 {"Kind", "Name"}, sdk_file);
+            const child_native_name = (try jsonObjGetRequired(child_type, "Name", sdk_file)).String;
+            // TODO: is something is referencing PSTR or PWSTR and is NotNullTerm, then
+            //       maybe I'll do something like @import("zig.zig").NotNullTerm(PSTR)
+            const native_type = global_native_type_map.get(child_native_name) orelse jsonPanic();
+            switch (native_type) {
+                .Byte => {
+                    jsonEnforce(special == .pstr);
+                    try out_writer.writeAll("pub const PSTR = [*:0]u8;\n");
+                },
+                .Char => {
+                    jsonEnforce(special == .pwstr);
+                    try out_writer.writeAll("pub const PWSTR = [*:0]u16;\n");
+                },
+                else => jsonPanic(),
+            }
+            return;
+        }
+
         // TODO: set is_const, in and out properly
         const zig_type_formatter = try addTypeRefs(sdk_file, def_type, .{.reason = .direct_type_access, .is_const = false, .in = false, .out = false });
         try out_writer.print("pub const {s} = {};\n", .{tmp_name, zig_type_formatter});
@@ -868,6 +949,10 @@ const com_types_to_skip = std.ComptimeStringMap(Nothing, .{
     .{ "IComponent2", .{} },
     .{ "IComponentData2", .{} },
     .{ "IPropertySheetProvider", .{} },
+    // These types reference IResourceManager which causes a conflict because it is
+    // defined in both component_services.zig and direct_show.zig
+    .{ "IResourceManager", .{} },
+    .{ "IResourceManager2", .{} },
 });
 
 fn generateStruct(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, struct_pool_name: StringPool.Val) !void {
@@ -893,6 +978,10 @@ fn generateStruct(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: 
                 const attr_str = attr_node_ptr.String;
                 if (std.mem.eql(u8, attr_str, "Const")) {
                     field_options.is_const = true;
+                } else if (std.mem.eql(u8, attr_str, "NotNullTerminated")) {
+                    field_options.not_null_term = true;
+                } else if (std.mem.eql(u8, attr_str, "NullNullTerminated")) {
+                    field_options.null_null_term = true;
                 } else {
                     jsonPanicMsg("unhandled custom field attribute {s}\n", .{attr_str});
                 }
@@ -935,7 +1024,8 @@ fn shortEnumValueName(enum_type_name: []const u8, full_value_name: []const u8) [
 }
 
 fn generateEnum(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, enum_value_export_count: *u32, pool_name: StringPool.Val) !void {
-    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Kind", "Values", "IntegerBase"}, sdk_file);
+    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Kind", "Flags", "Values", "IntegerBase"}, sdk_file);
+    const flags = (try jsonObjGetRequired(type_obj, "Flags", sdk_file)).Bool;
     const values = (try jsonObjGetRequired(type_obj, "Values", sdk_file)).Array;
     const integer_base = switch (try jsonObjGetRequired(type_obj, "IntegerBase", sdk_file)) {
         .Null => "i32",
@@ -945,6 +1035,9 @@ fn generateEnum(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
         }),
         else => jsonPanic(),
     };
+    if (flags) {
+        try out_writer.writeAll("// TODO: This Enum is marked as [Flags], what do I do with this?\n");
+    }
     try out_writer.print("pub const {} = extern enum({s}) {{\n", .{pool_name, integer_base});
     if (values.items.len == 0) {
         // zig doesn't allow empty enums
@@ -1101,6 +1194,12 @@ fn processParamAttrs(attrs: json.Array, reason: TypeRefFormatter.Reason) TypeRef
             opts.out = true;
         } else if (std.mem.eql(u8, attr_str, "Optional")) {
             opts.optional = true;
+        } else if (std.mem.eql(u8, attr_str, "RetVal")) {
+            opts.ret_val = true;
+        } else if (std.mem.eql(u8, attr_str, "NotNullTerminated")) {
+            opts.not_null_term = true;
+        } else if (std.mem.eql(u8, attr_str, "NullNullTerminated")) {
+            opts.null_null_term = true;
         } else if (std.mem.eql(u8, attr_str, "ComOutPtr")) {
             opts.com_out_ptr = true;
         } else {

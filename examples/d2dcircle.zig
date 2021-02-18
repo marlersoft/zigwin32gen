@@ -33,7 +33,7 @@ const MainWindow = struct {
     pub fn OnPaint(self: *MainWindow) callconv(.Inline) void { MainWindowOnPaint(self); }
     pub fn Resize(self: *MainWindow) callconv(.Inline) void { MainWindowResize(self); }
 
-    pub fn ClassName() [:0]const u16 { return L("Circle Window Class"); }
+    pub fn ClassName() [*:0]const u16 { return L("Circle Window Class"); }
 
     pub fn HandleMessage(self: *MainWindow, uMsg: u32, wParam: WPARAM, lParam: LPARAM) LRESULT {
         return MainWindowHandleMessage(self, uMsg, wParam, lParam);

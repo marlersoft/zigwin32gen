@@ -39,9 +39,7 @@ pub export fn wWinMain(hInstance: HINSTANCE, _: HINSTANCE, pCmdLine: [*:0]u16, n
                 if (SUCCEEDED(hr))
                 {
                     var pszFilePath : [*:0]u16 = undefined;
-                    // NOTE: the second parameter of GetDisplayName is not properly typed
-                    //       this might be an issue with my codegen not handling multi-level pointer/array types
-                    hr = pItem.IShellItem_GetDisplayName(SIGDN_FILESYSPATH, @ptrCast(**u16, &pszFilePath));
+                    hr = pItem.IShellItem_GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath);
 
                     // Display the file name to the user.
                     if (SUCCEEDED(hr))
