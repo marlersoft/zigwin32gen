@@ -252,7 +252,7 @@ fn main2() !u8 {
                 try writer.print("pub const {s} = @import(\"api/{0s}.zig\");\n", .{sdk_file.name_snake_case});
             }
             try writer.writeAll(
-                \\test "" {
+                \\test {
                 \\
             );
             try writer.print("    const api_count = {};\n", .{sdk_files.items.len});
@@ -359,7 +359,7 @@ fn main2() !u8 {
             \\pub const everything = @import("win32/everything.zig");
             \\
             \\const std = @import("std");
-            \\test "" {
+            \\test {
             \\    std.testing.refAllDecls(@This());
             \\}
             \\
@@ -479,7 +479,7 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
 
     try out_writer.writeAll(
         \\
-        \\test "" {
+        \\test {
         \\
     );
     if (sdk_file.tmp_func_ptr_workaround_list.items.len > 0) {
