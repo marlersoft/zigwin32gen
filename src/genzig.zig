@@ -166,14 +166,14 @@ fn main2() !u8 {
     }
 
     const win32json_dir_name = "deps" ++ path_sep ++ "win32json";
-    // TODO: change this to a SHA!!!
-    const win32json_checkout = "main";
+    const win32json_branch = "10.0.19041.5-preview.22";
     var win32json_dir = std.fs.cwd().openDir(win32json_dir_name, .{}) catch |e| switch (e) {
         error.FileNotFound => {
             std.debug.warn("Error: repository '{s}' does not exist, clone it with:\n", .{win32json_dir_name});
-            std.debug.warn("    git clone https://github.com/marlersoft/win32json {0s}" ++ path_sep ++ win32json_dir_name
-                ++ " && git -C {0s}" ++ path_sep ++ win32json_dir_name ++ " checkout " ++ win32json_checkout ++ " -b release\n", .{
-                    try getcwd(allocator)
+            std.debug.warn("    git clone https://github.com/marlersoft/win32json " ++
+                "{s}" ++ path_sep ++ win32json_dir_name ++
+                " -b " ++ win32json_branch ++ "\n", .{
+                try getcwd(allocator)
             });
             return error.AlreadyReported;
         },
@@ -943,15 +943,13 @@ const types_to_skip = std.ComptimeStringMap(Nothing, .{
 });
 
 const com_types_to_skip = std.ComptimeStringMap(Nothing, .{
-    // These types reference IComponent which causes a conflict because it is
-    // defined both in mmc.zig and direct_show.zig
-    .{ "IComponentData", .{} },
-    .{ "IComponent2", .{} },
-    .{ "IComponentData2", .{} },
-    .{ "IPropertySheetProvider", .{} },
+    // This type appears in direct_show.zig and imports a type named IComponent from mmc.zig, however,
+    // direct_show.zig also defines a type named IComponent, so this causes a conflict.  I dont' think
+    // the metadata is supposed to have conflicts like this, so instead of detecting it I'm just going
+    // to skip types that violate it for now.
+    .{ "IMPEG2Component", .{} },
     // These types reference IResourceManager which causes a conflict because it is
     // defined in both component_services.zig and direct_show.zig
-    .{ "IResourceManager", .{} },
     .{ "IResourceManager2", .{} },
 });
 
