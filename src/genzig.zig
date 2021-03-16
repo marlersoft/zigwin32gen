@@ -16,6 +16,9 @@ var global_void_type_from_pool_ptr : [*]const u8 = undefined;
 var global_symbol_pool = StringPool.init(allocator);
 var global_type_map = StringPool.HashMap(TypeEntry).init(allocator);
 
+var global_symbol_none : StringPool.Val = undefined;
+var global_symbol_None : StringPool.Val = undefined;
+
 const NativeType = enum {
     Boolean,
     SByte,
@@ -33,6 +36,7 @@ const NativeType = enum {
     IntPtr,
     UIntPtr,
     Guid,
+    PropertyKey,
 };
 const global_native_type_map = std.ComptimeStringMap(NativeType, .{
     .{ "Boolean", NativeType.Boolean },
@@ -51,6 +55,7 @@ const global_native_type_map = std.ComptimeStringMap(NativeType, .{
     .{ "IntPtr", NativeType.IntPtr },
     .{ "UIntPtr", NativeType.UIntPtr },
     .{ "Guid", NativeType.Guid },
+    .{ "PropertyKey", NativeType.PropertyKey },
 });
 fn nativeTypeToZigType(t: NativeType) []const u8 {
     return switch (t) {
@@ -70,6 +75,7 @@ fn nativeTypeToZigType(t: NativeType) []const u8 {
         .IntPtr => return "?*c_void",
         .UIntPtr => return "?*c_void",
         .Guid => @panic("cannot call nativeTypeToZigType for NativeType.Guid"),
+        .PropertyKey => @panic("cannot call nativeTypeToZigType for NativeType.PropertyKey"),
     };
 }
 
@@ -164,9 +170,11 @@ fn main2() !u8 {
             std.debug.warn("Total Time: {} millis\n", .{total_millis});
         }
     }
+    global_symbol_none = try global_symbol_pool.add("none");
+    global_symbol_None = try global_symbol_pool.add("None");
 
     const win32json_dir_name = "deps" ++ path_sep ++ "win32json";
-    const win32json_branch = "10.0.19041.5-preview.26";
+    const win32json_branch = "10.0.19041.5-preview.51";
     var win32json_dir = std.fs.cwd().openDir(win32json_dir_name, .{}) catch |e| switch (e) {
         error.FileNotFound => {
             std.debug.warn("Error: repository '{s}' does not exist, clone it with:\n", .{win32json_dir_name});
@@ -225,16 +233,14 @@ fn main2() !u8 {
         std.debug.warn("-----------------------------------------------------------------------\n", .{});
         std.debug.warn("loading api json files...\n", .{});
         var dir_it = api_dir.iterate();
+        var api_index : usize = 0;
         while (try dir_it.next()) |entry| {
             if (!std.mem.endsWith(u8, entry.name, ".json")) {
                 std.debug.warn("Error: expected all files to end in '.json' but got '{s}'\n", .{entry.name});
                 return error.AlreadyReported;
             }
-            if (std.mem.eql(u8, entry.name, "Js.json2")) {
-                std.debug.warn("NOTE: skipping '{s}' because it has an integer that is too big: https://github.com/ziglang/zig/issues/7901\n", .{entry.name});
-                continue;
-            }
-            std.debug.warn("loading '{s}'\n", .{entry.name});
+            std.debug.warn("{}: loading '{s}'\n", .{api_index, entry.name});
+            api_index += 1;
             //
             // TODO: would things run faster if I just memory mapped the file?
             //
@@ -430,9 +436,13 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
         .com_iface_ids = 0,
         .com_class_ids = 0,
     };
-    for (types_array.items) |*type_node_ptr| {
-        try generateType(sdk_file, out_writer, type_node_ptr.Object, &extra_type_counts);
-        try out_writer.print("\n", .{});
+    {
+        var enum_alias_conflicts = StringPool.HashMap(StringPool.Val).init(allocator);
+        defer enum_alias_conflicts.deinit();
+        for (types_array.items) |*type_node_ptr| {
+            try generateType(sdk_file, out_writer, type_node_ptr.Object, &extra_type_counts, &enum_alias_conflicts);
+            try out_writer.print("\n", .{});
+        }
     }
     std.debug.assert(sdk_file.const_exports.items.len ==
         constants_array.items.len +
@@ -770,12 +780,13 @@ fn isByteOrCharOrUInt16Type(type_obj: json.ObjectMap, sdk_file: *SdkFile) bool {
     };
 }
 
-fn fmtConstAssign(native_type: NativeType, value: json.Value) ConstValueFormatter {
-    return .{ .native_type = native_type, .value = value };
+fn fmtConstAssign(native_type: NativeType, value: json.Value, sdk_file: *SdkFile) ConstValueFormatter {
+    return .{ .native_type = native_type, .value = value, .sdk_file = sdk_file };
 }
 const ConstValueFormatter = struct {
     native_type: NativeType,
     value: json.Value,
+    sdk_file: *SdkFile,
     pub fn format(
         self: @This(),
         comptime fmt: []const u8,
@@ -792,6 +803,17 @@ const ConstValueFormatter = struct {
                 else => jsonPanicMsg("expected Guid to be a string but got: {s}", .{fmtJson(self.value)}),
             };
             try writer.print("= @import(\"../zig.zig\").Guid.initString(\"{s}\")", .{s});
+            return;
+        }
+        if (self.native_type == .PropertyKey) {
+            const obj = switch (self.value) {
+                .Object => |obj| obj,
+                else => jsonPanicMsg("expected PropertyKey to be an object but got: {s}", .{fmtJson(self.value)}),
+            };
+            try jsonObjEnforceKnownFieldsOnly(obj, &[_][]const u8 {"Fmtid", "Pid"}, self.sdk_file);
+            const fmtid = (try jsonObjGetRequired(obj, "Fmtid", self.sdk_file)).String;
+            const pid = (try jsonObjGetRequired(obj, "Pid", self.sdk_file)).Integer;
+            try writer.print("= @import(\"../zig.zig\").PropertyKey.init(\"{s}\", {})", .{fmtid, pid});
             return;
         }
         const zig_type = nativeTypeToZigType(self.native_type);
@@ -819,6 +841,10 @@ const ConstValueFormatter = struct {
     }
 };
 
+const constants_to_skip = std.ComptimeStringMap(Nothing, .{
+    // skip this constant because its name conflicts with the name of a type!
+    .{ "PEERDIST_RETRIEVAL_OPTIONS_CONTENTINFO_VERSION", .{} },
+});
 fn generateConstant(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, constant_obj: json.ObjectMap) !void {
     try jsonObjEnforceKnownFieldsOnly(constant_obj, &[_][]const u8 {"Name", "NativeType", "Value","Attrs"}, sdk_file);
     const name_tmp = (try jsonObjGetRequired(constant_obj, "Name", sdk_file)).String;
@@ -836,10 +862,24 @@ fn generateConstant(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, constant
         return error.AlreadyReported;
     };
 
-    try out_writer.print("pub const {s} {};\n", .{name_pool, fmtConstAssign(native_type, value_node)});
+    if (constants_to_skip.get(name_pool.slice)) |_| {
+        try out_writer.print("// skipped '{}'\n", .{name_pool});
+        return;
+    }
+    // This type of INVALID_HANDLE_VALUE is not correct, it should not be an i32
+    if (std.mem.eql(u8, name_pool.slice, "INVALID_HANDLE_VALUE")) {
+        switch (value_node) {
+            .Integer => |i| jsonEnforce(i == -1),
+            else => jsonPanicMsg("expected INVALID_HANDLE_VALUE to be an integer but it's been changed?", .{}),
+        }
+        try sdk_file.addApiImport("HANDLE", "SystemServices", json.Array { .allocator = undefined, .items = &[_]json.Value { }, .capacity = 0 });
+        try out_writer.print("pub const {s} = @intToPtr(HANDLE, @bitCast(usize, @as(isize, -1)));\n", .{name_pool});
+        return;
+    }
+    try out_writer.print("pub const {s} {};\n", .{name_pool, fmtConstAssign(native_type, value_node, sdk_file)});
 }
 
-fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, extra_type_counts: *ExtraTypeCounts) !void {
+fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, extra_type_counts: *ExtraTypeCounts, enum_alias_conflicts: *StringPool.HashMap(StringPool.Val)) !void {
     const kind = (try jsonObjGetRequired(type_obj, "Kind", sdk_file)).String;
     const tmp_name = (try jsonObjGetRequired(type_obj, "Name", sdk_file)).String;
 
@@ -858,7 +898,10 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
     std.debug.assert(sdk_file.type_exports.get(pool_name) == null);
     try sdk_file.type_exports.put(pool_name, .{});
 
-    if (types_to_skip.get(tmp_name)) |_| {
+    if (types_that_conflict_with_consts.get(tmp_name)) |_| {
+        try out_writer.print("// WARNING: this type symbol conflicts with a const!\n", .{});
+        try out_writer.print("pub const {s}_CONFLICT_ = usize;\n", .{tmp_name});
+    } else if (types_to_skip.get(tmp_name)) |_| {
         try out_writer.print("// TODO: not generating this type because it is causing some sort of error\n", .{});
         try out_writer.print("pub const {s} = usize;\n", .{tmp_name});
     } else if (std.mem.eql(u8, kind, "NativeTypedef")) {
@@ -913,7 +956,7 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
         const zig_type_formatter = try addTypeRefs(sdk_file, def_type, .{.reason = .direct_type_access, .is_const = false, .in = false, .out = false });
         try out_writer.print("pub const {s} = {};\n", .{tmp_name, zig_type_formatter});
     } else if (std.mem.eql(u8, kind, "Enum")) {
-        try generateEnum(sdk_file, out_writer, type_obj, &extra_type_counts.enum_values, pool_name);
+        try generateEnum(sdk_file, out_writer, type_obj, &extra_type_counts.enum_values, pool_name, enum_alias_conflicts);
     } else if (std.mem.eql(u8, kind, "Struct")) {
         try generateStruct(sdk_file, out_writer, type_obj, pool_name);
     } else if (std.mem.eql(u8, kind, "FunctionPointer")) {
@@ -940,6 +983,25 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
 const types_to_skip = std.ComptimeStringMap(Nothing, .{
     // keep this around for a convenient way to disable types
     .{ "PlaceholderForNow", .{} },
+});
+const types_that_conflict_with_consts = std.ComptimeStringMap(Nothing, .{
+    // This symbol conflicts with a constant with the exact same name
+    .{ "AE_SRVSTATUS", .{} },
+    .{ "AE_SESSLOGON", .{} },
+    .{ "AE_SESSLOGOFF", .{} },
+    .{ "AE_SESSPWERR", .{} },
+    .{ "AE_CONNSTART", .{} },
+    .{ "AE_CONNSTOP", .{} },
+    .{ "AE_CONNREJ", .{} },
+    .{ "AE_RESACCESS", .{} },
+    .{ "AE_RESACCESSREJ", .{} },
+    .{ "AE_CLOSEFILE", .{} },
+    .{ "AE_SERVICESTAT", .{} },
+    .{ "AE_ACLMOD", .{} },
+    .{ "AE_UASMOD", .{} },
+    .{ "AE_NETLOGON", .{} },
+    .{ "AE_NETLOGOFF", .{} },
+    .{ "AE_LOCKOUT", .{} },
 });
 
 const com_types_to_skip = std.ComptimeStringMap(Nothing, .{
@@ -1006,6 +1068,10 @@ const non_exhaustive_enums = std.ComptimeStringMap(Nothing, .{
 });
 
 fn shortEnumValueName(enum_type_name: []const u8, full_value_name: []const u8) []const u8 {
+    if (full_value_name.len == 0) {
+        // NOTE: this is probably a bug in the win32metadata
+        return "_noname_";
+    }
     const offset = init: {
         if ((full_value_name.len <= enum_type_name.len + 1) or
             (full_value_name[enum_type_name.len] != '_') or
@@ -1021,10 +1087,144 @@ fn shortEnumValueName(enum_type_name: []const u8, full_value_name: []const u8) [
     return full_value_name[offset..];
 }
 
-fn generateEnum(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, enum_value_export_count: *u32, pool_name: StringPool.Val) !void {
+// TODO: this is a set of enums whose value symbols conflict with other symbols
+const suppress_enum_aliases = std.ComptimeStringMap(Nothing, .{
+    // suppress this one because it has a value with an empty name?
+    // should probably file a bug for this
+    .{ "AS_ANY_TYPE", .{} },
+    // suppress this one because the CFE_UNDERLINE enum value alias conflicts with the name of an enum type
+    .{ "CFE_EFFECTS", .{} },
+    // --------------------------------------------------------------------------------
+    // suppress these enum value aliases because there is already a constant with the same name
+    // --------------------------------------------------------------------------------
+    .{ "JsRuntimeVersion", .{} },
+    .{ "GetIconInfo_hicon", .{} },
+    .{ "PFN_WdsCliCallback_dwMessageIdFlags", .{} },
+    .{ "IPPROTO", .{} },
+    .{ "MIB_IPFORWARD_TYPE", .{} },
+    .{ "OLEMISC", .{} },
+    // --------------------------------------------------------------------------------
+    // suppress the rest because there is another enum with the same enum value alias
+    // --------------------------------------------------------------------------------
+    // Security
+    .{ "WlanGetNetworkBssList_dot11BssTypeFlags", .{} },
+    .{ "NCrypt_dwFlags", .{} },
+    .{ "IAzClientContext3_GetGroups_ulOptionsFlags", .{} },
+    .{ "NCryptNotifyChangeKey_dwFlags", .{} },
+    .{ "SECPKG_ATTR_1", .{} },
+    .{ "CryptImportPKCS8_dwFlags", .{} },
+    .{ "NCryptDecrypt_dwFlags", .{} },
+    .{ "KERB_CERTIFICATE_LOGON_MessageTypeFlags", .{} },
+    .{ "SC_ACTION_TypeFlags", .{} },
+    // WindowsProgramming
+    .{ "VER_MASK", .{} },
+    // SystemServices
+    .{ "QueryInformationJobObject_JobObjectInformationClassFlags", .{} },
+    .{ "HeapSetInformation_HeapInformationClassFlags", .{} },
+    .{ "JOBOBJECT_NOTIFICATION_LIMIT_INFORMATION_2_IoRateControlToleranceInterval", .{} },
+    .{ "JOBOBJECT_RATE_CONTROL_TOLERANCE_INTERVAL", .{} },
+    .{ "JOBOBJECT_LIMIT_VIOLATION_INFORMATION_2_RateControlTolerance", .{} },
+    .{ "JOBOBJECT_IO_RATE_CONTROL_INFORMATIONFlags", .{} },
+    .{ "CreateFileMapping_flProtect", .{} },
+    // NetManagement
+    .{ "NetWkstaSetInfo_levelFlags", .{} },
+    // ComponentServices
+    .{ "ICOMAdminCatalog2_IsSafeToDelete_pCOMAdminInUseFlags", .{} },
+    .{ "ImportUnconfiguredComponents_pVarComponentType", .{} },
+    .{ "ICOMAdminCatalog_InstallApplication_lOptionsFlags", .{} },
+    .{ "ICOMAdminCatalog_ExportApplication_lOptionsFlags", .{} },
+    .{ "WerRegisterFile_regFileTypeFlags", .{} },
+    .{ "WerReportSubmit_pSubmitResultFlags", .{} },
+    .{ "WerReportCreate_repTypeFlags", .{} },
+    .{ "WerReportSubmit_consentFlags", .{} },
+    // FileSystem
+    .{ "DefineDosDevice_dwFlags", .{} },
+    .{ "CreateFile_dwShareMode", .{} },
+    .{ "CreateLogFile_fCreateDispositionFlags", .{} },
+    // Parental Controls
+    .{ "IWindowsParentalControlsCore_GetVisibility_peVisibilityFlags", .{} },
+    .{ "GetRestrictions_pdwRestrictions", .{} },
+    .{ "IWPCWebSettings_GetSettings_pdwSettingsFlags", .{} },
+    // Gdi
+    .{ "CombineRgn_iMode", .{} },
+    .{ "CreateDIBitmap_iUsage", .{} },
+    .{ "PatBlt_ropFlags", .{} },
+    // MachineLearning
+    .{ "MLOperatorTensorDataType", .{} },
+    .{ "MLOperatorExecutionType", .{} },
+    .{ "MLOperatorEdgeType", .{} },
+    // Com
+    .{ "IPropertyPageSite_OnStatusChangeFlags", .{} },
+    .{ "IOleControlSite_TransformCoordsFlags", .{} },
+    // ApplicationInstallationAndServicing
+    .{ "LPDISPLAYVAL_uiTypeFlags", .{} },
+    .{ "MsiSourceList_dwContext", .{} },
+    .{ "MsiAdvertiseScript_dwFlags", .{} },
+    .{ "MsiViewModify_eModifyModeFlags", .{} },
+    .{ "MsiCreateTransformSummaryInfo_iErrorConditions", .{} },
+    .{ "MsiCreateTransformSummaryInfo_iValidation", .{} },
+});
+
+const EnumValue = struct {
+    pool_name: StringPool.Val,
+    short_name: []const u8,
+    value: json.Value,
+    no_alias: bool,
+    pub fn valueIsZero(self: EnumValue) bool {
+        return switch (self.value) {
+            .Integer => |i| i == 0,
+            else => false,
+        };
+    }
+};
+fn matchLen(a: []const u8, b: []const u8) usize {
+    var i : usize = 0;
+    while (i < a.len and i < b.len and a[i] == b[i]) : (i += 1) { }
+    return i;
+}
+fn setShortNames(values: []EnumValue) void {
+    var at_first = true;
+    var longest_prefix_match : []const u8 = undefined;
+    for (values) |*val_ref| {
+        if ((
+                val_ref.pool_name.eql(global_symbol_none) or
+                val_ref.pool_name.eql(global_symbol_None)
+            ) and
+            val_ref.valueIsZero()
+        ) {
+            val_ref.short_name = val_ref.pool_name.slice;
+            val_ref.no_alias = true;
+            continue;
+        }
+
+        if (at_first) {
+            longest_prefix_match = val_ref.pool_name.slice;
+            at_first = false;
+        } else {
+            longest_prefix_match.len = matchLen(longest_prefix_match, val_ref.pool_name.slice);
+        }
+    }
+    for (values) |*val_ref| {
+        if (val_ref.no_alias)
+            continue;
+
+        if (val_ref.pool_name.slice.len == 0) {
+            // TODO: this happens to snmp:AS_ANY_TYPE, it's probably a bug that should be filed
+            val_ref.short_name = "__no_name__";
+        } else {
+            var cutoff = longest_prefix_match.len;
+            if (cutoff > 0 and cutoff == val_ref.pool_name.slice.len) {
+                cutoff -= 1;
+            }
+            val_ref.short_name = val_ref.pool_name.slice[cutoff..];
+        }
+    }
+}
+
+fn generateEnum(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, enum_value_export_count: *u32, pool_name: StringPool.Val, enum_alias_conflicts: *StringPool.HashMap(StringPool.Val)) !void {
     try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Kind", "Flags", "Values", "IntegerBase"}, sdk_file);
     const flags = (try jsonObjGetRequired(type_obj, "Flags", sdk_file)).Bool;
-    const values = (try jsonObjGetRequired(type_obj, "Values", sdk_file)).Array;
+    const json_values = (try jsonObjGetRequired(type_obj, "Values", sdk_file)).Array;
     const integer_base = switch (try jsonObjGetRequired(type_obj, "IntegerBase", sdk_file)) {
         .Null => "i32",
         .String => |s| nativeTypeToZigType(global_native_type_map.get(s) orelse {
@@ -1036,40 +1236,63 @@ fn generateEnum(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
     if (flags) {
         try out_writer.writeAll("// TODO: This Enum is marked as [Flags], what do I do with this?\n");
     }
-    try out_writer.print("pub const {} = extern enum({s}) {{\n", .{pool_name, integer_base});
-    if (values.items.len == 0) {
-        // zig doesn't allow empty enums
-        try out_writer.print("    _\n", .{});
-    } else for (values.items) |*value_node_ptr| {
+    const values = try allocator.alloc(EnumValue, json_values.items.len);
+    var values_initialized_len: usize = 0;
+    defer allocator.free(values);
+    for (json_values.items) |*value_node_ptr| {
         const value_obj = value_node_ptr.Object;
         try jsonObjEnforceKnownFieldsOnly(value_obj, &[_][]const u8 {"Name", "Value"}, sdk_file);
         const value_tmp_name = (try jsonObjGetRequired(value_obj, "Name", sdk_file)).String;
-        const value_short_name = shortEnumValueName(pool_name.slice, value_tmp_name);
-        const value_literal = try jsonObjGetRequired(value_obj, "Value", sdk_file);
-        try out_writer.print("    {s} = {},\n", .{std.zig.fmtId(value_short_name), fmtJson(value_literal)});
+        values[values_initialized_len] = .{
+            .pool_name = try global_symbol_pool.add(value_tmp_name),
+            .short_name = "",
+            .value = try jsonObjGetRequired(value_obj, "Value", sdk_file),
+            .no_alias = false,
+        };
+        values_initialized_len += 1;
     }
-    if (non_exhaustive_enums.get(pool_name.slice)) |_| {
-        try out_writer.print("    _,\n", .{});
+    setShortNames(values);
+
+    try out_writer.print("pub const {} = extern enum({s}) {{\n", .{pool_name, integer_base});
+    if (values.len == 0) {
+        // zig doesn't allow empty enums
+        try out_writer.print("    _\n", .{});
+    } else {
+        for (values) |val| {
+            try out_writer.print("    {s} = {},\n", .{std.zig.fmtId(val.short_name), fmtJson(val.value)});
+        }
+        if (flags) {
+            try out_writer.print("    _,\n", .{});
+        } else if (non_exhaustive_enums.get(pool_name.slice)) |_| {
+            try out_writer.print("    _,\n", .{});
+        }
     }
     try out_writer.print("}};\n", .{});
 
-    if (enums_with_value_conflicts.get(pool_name.slice)) |_| {
-        try out_writer.print("// TODO: enum '{}' has known value symbol conflicts, skipping the value aliases\n", .{pool_name});
+    if (suppress_enum_aliases.get(pool_name.slice)) |_| {
+        try out_writer.print("// TODO: enum '{}' has known issues with its value aliases\n", .{pool_name});
         return;
     }
 
-    // create aliases
-    for (values.items) |*value_node_ptr| {
-        const value_obj = value_node_ptr.Object;
-        try jsonObjEnforceKnownFieldsOnly(value_obj, &[_][]const u8 {"Name", "Value"}, sdk_file);
-        const value_tmp_name = (try jsonObjGetRequired(value_obj, "Name", sdk_file)).String;
-        const value_short_name = shortEnumValueName(pool_name.slice, value_tmp_name);
-        const value_literal = try jsonObjGetRequired(value_obj, "Value", sdk_file);
-        const pool_value_name = try global_symbol_pool.add(value_tmp_name);
-        try sdk_file.const_exports.append(pool_value_name);
-        try out_writer.print("pub const {s} = {}.{s};\n", .{value_tmp_name, pool_name, value_short_name});
+    // create value aliases
+    var alias_count: u32 = 0;
+    for (values) |val| {
+        if (enum_alias_conflicts.get(val.pool_name)) |existing| {
+            std.debug.print("error: enum value alias '{}' is defined by 2 enum types.\n", .{val.pool_name});
+            std.debug.print("       add one of the following lines to the suppress_enum_aliases list:\n", .{});
+            std.debug.print("    .{{ \"{}\", .{{}} }},\n", .{existing});
+            std.debug.print("    .{{ \"{}\", .{{}} }},\n", .{pool_name});
+            return error.AlreadyReported;
+        }
+        if (val.no_alias) {
+            continue;
+        }
+        alias_count += 1;
+        try enum_alias_conflicts.put(val.pool_name, pool_name);
+        try sdk_file.const_exports.append(val.pool_name);
+        try out_writer.print("pub const {} = {}.{};\n", .{val.pool_name, pool_name, std.zig.fmtId(val.short_name)});
     }
-    enum_value_export_count.* += @intCast(u32, values.items.len);
+    enum_value_export_count.* += alias_count;
 }
 
 fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, com_pool_name: StringPool.Val, extra_type_counts: *ExtraTypeCounts) !void {
@@ -1228,17 +1451,6 @@ const dhcp_type_conflicts = std.ComptimeStringMap(Nothing, .{
     .{ "DHCP_SUBNET_ELEMENT_UNION_V4", .{} },
     .{ "DHCP_SUBNET_ELEMENT_UNION_V6", .{} },
 });
-// TODO: this is a set of enums whose value symbols conflict with other symbols
-const enums_with_value_conflicts = std.ComptimeStringMap(Nothing, .{
-    .{ "ProcessAccessRights", .{} },
-    .{ "MLOperatorTensorDataType", .{} },
-    .{ "MLOperatorExecutionType", .{} },
-    .{ "MLOperatorEdgeType", .{} },
-    .{ "JsRuntimeVersion", .{} },
-    .{ "__MIDL___MIDL_itf_autosvcs_0001_0159_0002", .{} },
-
-});
-
 const funcs_with_issues = std.ComptimeStringMap(Nothing, .{
     // These functions don't work yet because Zig doesn't support the 16-byte Guid struct in the C ABI yet
     // See: https://github.com/ziglang/zig/issues/1481

@@ -137,12 +137,12 @@ pub export fn wWinMain(hInstance: HINSTANCE, _: HINSTANCE, __: [*:0]u16, nCmdSho
 {
     var win = MainWindow { };
 
-    if (TRUE != win.base.Create(L("Circle"), WS_OVERLAPPEDWINDOW, .{}))
+    if (TRUE != win.base.Create(L("Circle"), @enumToInt(WS_OVERLAPPEDWINDOW), .{}))
     {
         return 0;
     }
 
-    _ = ShowWindow(win.base.Window(), nCmdShow);
+    _ = ShowWindow(win.base.Window(), @intToEnum(SHOW_WINDOW_CMD, @intCast(u32, nCmdShow)));
 
     // Run the message loop.
 

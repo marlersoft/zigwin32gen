@@ -5,6 +5,9 @@ usingnamespace @import("win32").zig;
 usingnamespace @import("win32").api.system_services;
 usingnamespace @import("win32").api.windows_and_messaging;
 
+// https://github.com/microsoft/win32metadata/issues/353
+const CW_USEDEFAULT = @import("win32").missing.CW_USEDEFAULT;
+
 // NOTE: can't do usingnamespace for menu_and_resources because it has conflicts with windows_and_messaging
 //       I think this particular one is a problem with win32metadata.
 //       NOTE: should Zig allow symbol conflicts so long as they are not referenced?
@@ -73,7 +76,8 @@ pub fn BaseWindow(comptime DERIVED_TYPE: type) type { return struct {
         _ = RegisterClass(&wc);
 
         self.m_hwnd = CreateWindowEx(
-            options.dwExStyle, DERIVED_TYPE.ClassName(), lpWindowName, dwStyle, options.x, options.y,
+            @intToEnum(WINDOWS_EX_STYLE, options.dwExStyle), DERIVED_TYPE.ClassName(), lpWindowName,
+            @intToEnum(WINDOWS_STYLE, dwStyle), options.x, options.y,
             options.nWidth, options.nHeight, options.hWndParent, options.hMenu, @ptrCast(HINSTANCE, GetModuleHandle(null)), @ptrCast(*c_void, self)
             );
 

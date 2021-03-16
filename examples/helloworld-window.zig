@@ -8,6 +8,9 @@ usingnamespace @import("win32").api.system_services;
 usingnamespace @import("win32").api.windows_and_messaging;
 usingnamespace @import("win32").api.gdi;
 
+// https://github.com/microsoft/win32metadata/issues/353
+const CW_USEDEFAULT = @import("win32").missing.CW_USEDEFAULT;
+
 pub export fn wWinMain(hInstance: HINSTANCE, _: HINSTANCE, pCmdLine: [*:0]u16, nCmdShow: c_int) callconv(WINAPI) c_int
 {
 
@@ -33,7 +36,7 @@ pub export fn wWinMain(hInstance: HINSTANCE, _: HINSTANCE, pCmdLine: [*:0]u16, n
     // Create the window.
 
     const hwnd = CreateWindowEx(
-        0,                              // Optional window styles.
+        @intToEnum(WINDOWS_EX_STYLE, 0),// Optional window styles.
         CLASS_NAME,                     // Window class
         L("Learn to Program Windows"),  // Window text
         WS_OVERLAPPEDWINDOW,            // Window style
@@ -51,7 +54,7 @@ pub export fn wWinMain(hInstance: HINSTANCE, _: HINSTANCE, pCmdLine: [*:0]u16, n
         return 0;
     }
 
-    _ = ShowWindow(hwnd, nCmdShow);
+    _ = ShowWindow(hwnd, @intToEnum(SHOW_WINDOW_CMD, @intCast(u32, nCmdShow)));
 
     // Run the message loop.
     var msg : MSG = undefined;
@@ -79,7 +82,7 @@ fn WindowProc(hwnd: HWND , uMsg: u32, wParam: WPARAM, lParam: LPARAM) callconv(W
             const hdc = BeginPaint(hwnd, &ps);
 
             // All painting occurs here, between BeginPaint and EndPaint.
-            _ = FillRect(hdc, &ps.rcPaint, @intToPtr(HBRUSH, @as(usize, COLOR_WINDOW+1)));
+            _ = FillRect(hdc, &ps.rcPaint, @intToPtr(HBRUSH, @as(usize, @enumToInt(COLOR_WINDOW)+1)));
             _ = EndPaint(hwnd, &ps);
             return 0;
         },
