@@ -230,23 +230,30 @@ fn main2() !u8 {
         var out_api_dir = try out_win32_dir.openDir("api", .{});
         defer out_api_dir.close();
 
-        std.debug.warn("-----------------------------------------------------------------------\n", .{});
-        std.debug.warn("loading api json files...\n", .{});
-        var dir_it = api_dir.iterate();
-        var api_index : usize = 0;
-        while (try dir_it.next()) |entry| {
-            if (!std.mem.endsWith(u8, entry.name, ".json")) {
-                std.debug.warn("Error: expected all files to end in '.json' but got '{s}'\n", .{entry.name});
-                return error.AlreadyReported;
+        var api_list = std.ArrayList([]const u8).init(allocator);
+        defer {
+            for (api_list.items) |api_name| {
+                allocator.free(api_name);
             }
-            std.debug.warn("{}: loading '{s}'\n", .{api_index, entry.name});
-            api_index += 1;
+            api_list.deinit();
+        }
+        try readApiList(api_dir, &api_list);
+
+        // sort the list of APIs so our api order is not dependent on the file-system ordering
+        std.sort.sort([]const u8, api_list.items, Nothing {}, asciiLessThanIgnoreCase);
+
+        std.debug.warn("-----------------------------------------------------------------------\n", .{});
+        std.debug.warn("loading {} api json files...\n", .{api_list.items.len});
+
+        for (api_list.items) |api_json_basename, api_index| {
+            const api_num = api_index + 1;
+            std.debug.warn("{}/{}: loading '{s}'\n", .{api_num, api_list.items.len, api_json_basename});
             //
             // TODO: would things run faster if I just memory mapped the file?
             //
-            var file = try api_dir.openFile(entry.name, .{});
+            var file = try api_dir.openFile(api_json_basename, .{});
             defer file.close();
-            try readAndGenerateApiFile(out_api_dir, &sdk_files, entry.name, file);
+            try readAndGenerateApiFile(out_api_dir, &sdk_files, api_json_basename, file);
         }
 
         {
@@ -373,6 +380,21 @@ fn main2() !u8 {
     }
     print_time_summary = true;
     return 0;
+}
+
+fn asciiLessThanIgnoreCase(_: Nothing, lhs: []const u8, rhs: []const u8) bool {
+    return std.ascii.lessThanIgnoreCase(lhs, rhs);
+}
+
+fn readApiList(api_dir: std.fs.Dir, api_list: *std.ArrayList([]const u8)) !void {
+    var dir_it = api_dir.iterate();
+    while (try dir_it.next()) |entry| {
+        if (!std.mem.endsWith(u8, entry.name, ".json")) {
+            std.debug.warn("Error: expected all files to end in '.json' but got '{s}'\n", .{entry.name});
+            return error.AlreadyReported;
+        }
+        try api_list.append(try allocator.dupe(u8, entry.name));
+    }
 }
 
 fn readAndGenerateApiFile(out_dir: std.fs.Dir, sdk_files: *ArrayList(*SdkFile), json_basename: []const u8, file: std.fs.File) !void {
