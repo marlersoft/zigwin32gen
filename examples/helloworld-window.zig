@@ -11,7 +11,7 @@ usingnamespace @import("win32").api.gdi;
 // https://github.com/microsoft/win32metadata/issues/353
 const CW_USEDEFAULT = @import("win32").missing.CW_USEDEFAULT;
 
-pub export fn wWinMain(hInstance: HINSTANCE, _: HINSTANCE, pCmdLine: [*:0]u16, nCmdShow: c_int) callconv(WINAPI) c_int
+pub export fn wWinMain(hInstance: HINSTANCE, _: HINSTANCE, pCmdLine: [*:0]u16, nCmdShow: u32) callconv(WINAPI) c_int
 {
 
     // Register the window class.
@@ -54,7 +54,7 @@ pub export fn wWinMain(hInstance: HINSTANCE, _: HINSTANCE, pCmdLine: [*:0]u16, n
         return 0;
     }
 
-    _ = ShowWindow(hwnd, @intToEnum(SHOW_WINDOW_CMD, @intCast(u32, nCmdShow)));
+    _ = ShowWindow(hwnd, @intToEnum(SHOW_WINDOW_CMD, nCmdShow));
 
     // Run the message loop.
     var msg : MSG = undefined;

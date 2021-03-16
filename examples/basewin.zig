@@ -47,9 +47,9 @@ pub fn BaseWindow(comptime DERIVED_TYPE: type) type { return struct {
 
     pub fn Create(self: *@This(),
         lpWindowName: [*:0]const u16,
-        dwStyle: u32,
+        dwStyle: WINDOWS_STYLE,
         options: struct {
-            dwExStyle: u32 = 0,
+            dwExStyle: WINDOWS_EX_STYLE = @intToEnum(WINDOWS_EX_STYLE, 0),
             x: i32 = CW_USEDEFAULT,
             y: i32 = CW_USEDEFAULT,
             nWidth: i32 = CW_USEDEFAULT,
@@ -69,16 +69,15 @@ pub fn BaseWindow(comptime DERIVED_TYPE: type) type { return struct {
             .hbrBackground = null,
             // TODO: autogen bindings don't allow for null, should win32metadata allow Option for fields? Or should all strings allow NULL?
             .lpszMenuName = L("Placeholder"),
-            // NOTE: we need ".ptr" as a workaround for https://github.com/ziglang/zig/issues/7986
             .lpszClassName = DERIVED_TYPE.ClassName(),
         };
 
         _ = RegisterClass(&wc);
 
         self.m_hwnd = CreateWindowEx(
-            @intToEnum(WINDOWS_EX_STYLE, options.dwExStyle), DERIVED_TYPE.ClassName(), lpWindowName,
-            @intToEnum(WINDOWS_STYLE, dwStyle), options.x, options.y,
-            options.nWidth, options.nHeight, options.hWndParent, options.hMenu, @ptrCast(HINSTANCE, GetModuleHandle(null)), @ptrCast(*c_void, self)
+            options.dwExStyle, DERIVED_TYPE.ClassName(), lpWindowName,
+            dwStyle, options.x, options.y,
+            options.nWidth, options.nHeight, options.hWndParent, options.hMenu, GetModuleHandle(null), @ptrCast(*c_void, self)
             );
 
         return if (self.m_hwnd != null) TRUE else FALSE;

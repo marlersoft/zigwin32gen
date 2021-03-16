@@ -12,7 +12,7 @@ usingnamespace win32.api.com;
 usingnamespace win32.api.gdi;
 usingnamespace win32.api.shell;
 
-pub export fn wWinMain(hInstance: HINSTANCE, _: HINSTANCE, pCmdLine: [*:0]u16, nCmdShow: c_int) callconv(WINAPI) c_int
+pub export fn wWinMain(hInstance: HINSTANCE, _: HINSTANCE, pCmdLine: [*:0]u16, nCmdShow: u32) callconv(WINAPI) c_int
 {
     var hr = CoInitializeEx(null, @enumToInt(COINIT_APARTMENTTHREADED) |
         @enumToInt(COINIT_DISABLE_OLE1DDE));

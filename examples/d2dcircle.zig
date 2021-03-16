@@ -133,16 +133,16 @@ fn MainWindowResize(self: *MainWindow) void
     }
 }
 
-pub export fn wWinMain(hInstance: HINSTANCE, _: HINSTANCE, __: [*:0]u16, nCmdShow: c_int) callconv(WINAPI) c_int
+pub export fn wWinMain(hInstance: HINSTANCE, _: HINSTANCE, __: [*:0]u16, nCmdShow: u32) callconv(WINAPI) c_int
 {
     var win = MainWindow { };
 
-    if (TRUE != win.base.Create(L("Circle"), @enumToInt(WS_OVERLAPPEDWINDOW), .{}))
+    if (TRUE != win.base.Create(L("Circle"), WS_OVERLAPPEDWINDOW, .{}))
     {
         return 0;
     }
 
-    _ = ShowWindow(win.base.Window(), @intToEnum(SHOW_WINDOW_CMD, @intCast(u32, nCmdShow)));
+    _ = ShowWindow(win.base.Window(), @intToEnum(SHOW_WINDOW_CMD, nCmdShow));
 
     // Run the message loop.
 
