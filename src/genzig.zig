@@ -19,6 +19,45 @@ var global_type_map = StringPool.HashMap(TypeEntry).init(allocator);
 var global_symbol_none : StringPool.Val = undefined;
 var global_symbol_None : StringPool.Val = undefined;
 
+const ValueType = enum {
+    Byte,
+    UInt16,
+    Int32,
+    UInt32,
+    Int64,
+    UInt64,
+    Single,
+    Double,
+    String,
+    PropertyKey,
+};
+const global_value_type_map = std.ComptimeStringMap(ValueType, .{
+    .{ "Byte", ValueType.Byte },
+    .{ "UInt16", ValueType.UInt16 },
+    .{ "Int32", ValueType.Int32 },
+    .{ "UInt32", ValueType.UInt32 },
+    .{ "Int64", ValueType.Int64 },
+    .{ "UInt64", ValueType.UInt64 },
+    .{ "Single", ValueType.Single },
+    .{ "Double", ValueType.Double },
+    .{ "String", ValueType.String },
+    .{ "PropertyKey", ValueType.PropertyKey },
+});
+fn valueTypeToZigType(t: ValueType) []const u8 {
+    return switch (t) {
+        .Byte   => return "u8",
+        .UInt16 => return "u16",
+        .Int32  => return "i32",
+        .UInt32 => return "u32",
+        .Int64  => return "i64",
+        .UInt64 => return "u64",
+        .Single => return "f32",
+        .Double => return "f64",
+        .String => return "[]const u8",
+        .PropertyKey => @panic("cannot call valueTypeToZigType for ValueType.PropertyKey"),
+    };
+}
+
 const NativeType = enum {
     Boolean,
     SByte,
@@ -36,7 +75,6 @@ const NativeType = enum {
     IntPtr,
     UIntPtr,
     Guid,
-    PropertyKey,
 };
 const global_native_type_map = std.ComptimeStringMap(NativeType, .{
     .{ "Boolean", NativeType.Boolean },
@@ -55,7 +93,6 @@ const global_native_type_map = std.ComptimeStringMap(NativeType, .{
     .{ "IntPtr", NativeType.IntPtr },
     .{ "UIntPtr", NativeType.UIntPtr },
     .{ "Guid", NativeType.Guid },
-    .{ "PropertyKey", NativeType.PropertyKey },
 });
 fn nativeTypeToZigType(t: NativeType) []const u8 {
     return switch (t) {
@@ -75,7 +112,6 @@ fn nativeTypeToZigType(t: NativeType) []const u8 {
         .IntPtr => return "?*c_void",
         .UIntPtr => return "?*c_void",
         .Guid => @panic("cannot call nativeTypeToZigType for NativeType.Guid"),
-        .PropertyKey => @panic("cannot call nativeTypeToZigType for NativeType.PropertyKey"),
     };
 }
 
@@ -802,11 +838,11 @@ fn isByteOrCharOrUInt16Type(type_obj: json.ObjectMap, sdk_file: *SdkFile) bool {
     };
 }
 
-fn fmtConstAssign(native_type: NativeType, value: json.Value, sdk_file: *SdkFile) ConstValueFormatter {
-    return .{ .native_type = native_type, .value = value, .sdk_file = sdk_file };
+fn fmtConstValue(value_type: ValueType, value: json.Value, sdk_file: *SdkFile) ConstValueFormatter {
+    return .{ .value_type = value_type, .value = value, .sdk_file = sdk_file };
 }
 const ConstValueFormatter = struct {
-    native_type: NativeType,
+    value_type: ValueType,
     value: json.Value,
     sdk_file: *SdkFile,
     pub fn format(
@@ -815,41 +851,22 @@ const ConstValueFormatter = struct {
         options: std.fmt.FormatOptions,
         writer: anytype,
     ) std.os.WriteError!void {
-        if (self.native_type == .String) {
-            try writer.print("= {}", .{fmtJson(self.value)});
+        if (self.value_type == .String) {
+            try writer.print("{}", .{fmtJson(self.value)});
             return;
         }
-        if (self.native_type == .Guid) {
-            const s = switch (self.value) {
-                .String => |s| s,
-                else => jsonPanicMsg("expected Guid to be a string but got: {s}", .{fmtJson(self.value)}),
-            };
-            try writer.print("= @import(\"../zig.zig\").Guid.initString(\"{s}\")", .{s});
-            return;
-        }
-        if (self.native_type == .PropertyKey) {
-            const obj = switch (self.value) {
-                .Object => |obj| obj,
-                else => jsonPanicMsg("expected PropertyKey to be an object but got: {s}", .{fmtJson(self.value)}),
-            };
-            try jsonObjEnforceKnownFieldsOnly(obj, &[_][]const u8 {"Fmtid", "Pid"}, self.sdk_file);
-            const fmtid = (try jsonObjGetRequired(obj, "Fmtid", self.sdk_file)).String;
-            const pid = (try jsonObjGetRequired(obj, "Pid", self.sdk_file)).Integer;
-            try writer.print("= @import(\"../zig.zig\").PropertyKey.init(\"{s}\", {})", .{fmtid, pid});
-            return;
-        }
-        const zig_type = nativeTypeToZigType(self.native_type);
-        if (self.native_type == .Single or self.native_type == .Double) {
+        const zig_type = valueTypeToZigType(self.value_type);
+        if (self.value_type == .Single or self.value_type == .Double) {
             switch (self.value) {
                 .String => |float_str| {
                     if (std.mem.eql(u8, float_str, "inf")) {
-                        try writer.print("= @import(\"std\").math.inf({s})", .{zig_type});
+                        try writer.print("@import(\"std\").math.inf({s})", .{zig_type});
                         return;
                     } else if (std.mem.eql(u8, float_str, "-inf")) {
-                        try writer.print("= -@import(\"std\").math.inf({s})", .{zig_type});
+                        try writer.print("-@import(\"std\").math.inf({s})", .{zig_type});
                         return;
                     } else if (std.mem.eql(u8, float_str, "nan")) {
-                        try writer.print("= @import(\"std\").math.nan({s})", .{zig_type});
+                        try writer.print("@import(\"std\").math.nan({s})", .{zig_type});
                         return;
                     } else {
                         std.debug.panic("unexpected float string value '{s}'", .{float_str});
@@ -859,18 +876,65 @@ const ConstValueFormatter = struct {
                 else => {},
             }
         }
-        try writer.print(": {s} = {}", .{zig_type, fmtJson(self.value)});
+        try writer.print("@as({s}, {})", .{zig_type, fmtJson(self.value)});
     }
 };
 
 const constants_to_skip = std.ComptimeStringMap(Nothing, .{
     // skip this constant because its name conflicts with the name of a type!
     .{ "PEERDIST_RETRIEVAL_OPTIONS_CONTENTINFO_VERSION", .{} },
+    // skip these because these constants are integer values being cast to string pointers, however,
+    // those string pointers need to be aligned.  The types that accept these constants should probably
+    // be properly declared as union types.
+    .{ "RT_CURSOR", .{} },
+    .{ "RT_BITMAP", .{} },
+    .{ "RT_ICON", .{} },
+    .{ "RT_MENU", .{} },
+    .{ "RT_DIALOG", .{} },
+    .{ "RT_FONTDIR", .{} },
+    .{ "RT_FONT", .{} },
+    .{ "RT_ACCELERATOR", .{} },
+    .{ "RT_MESSAGETABLE", .{} },
+    .{ "RT_VERSION", .{} },
+    .{ "RT_DLGINCLUDE", .{} },
+    .{ "RT_PLUGPLAY", .{} },
+    .{ "RT_VXD", .{} },
+    .{ "RT_ANICURSOR", .{} },
+    .{ "RT_ANIICON", .{} },
+    .{ "RT_HTML", .{} },
+
+    .{ "IDC_ARROW", .{} },
+    .{ "IDC_IBEAM", .{} },
+    .{ "IDC_WAIT", .{} },
+    .{ "IDC_CROSS", .{} },
+    .{ "IDC_UPARROW", .{} },
+    .{ "IDC_SIZE", .{} },
+    .{ "IDC_ICON", .{} },
+    .{ "IDC_SIZENWSE", .{} },
+    .{ "IDC_SIZENESW", .{} },
+    .{ "IDC_SIZEWE", .{} },
+    .{ "IDC_SIZENS", .{} },
+    .{ "IDC_SIZEALL", .{} },
+    .{ "IDC_NO", .{} },
+    .{ "IDC_HAND", .{} },
+    .{ "IDC_APPSTARTING", .{} },
+    .{ "IDC_HELP", .{} },
+    .{ "IDC_PIN", .{} },
+    .{ "IDC_PERSON", .{} },
+
+    .{ "IDI_APPLICATION", .{} },
+    .{ "IDI_HAND", .{} },
+    .{ "IDI_QUESTION", .{} },
+    .{ "IDI_EXCLAMATION", .{} },
+    .{ "IDI_ASTERISK", .{} },
+    .{ "IDI_WINLOGO", .{} },
+    .{ "IDI_SHIELD", .{} },
 });
 fn generateConstant(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, constant_obj: json.ObjectMap) !void {
-    try jsonObjEnforceKnownFieldsOnly(constant_obj, &[_][]const u8 {"Name", "NativeType", "Value","Attrs"}, sdk_file);
+    try jsonObjEnforceKnownFieldsOnly(constant_obj, &[_][]const u8 {"Name", "Type", "Value", "ValueType", "Attrs"}, sdk_file);
     const name_tmp = (try jsonObjGetRequired(constant_obj, "Name", sdk_file)).String;
-    const native_type_str = (try jsonObjGetRequired(constant_obj, "NativeType", sdk_file)).String;
+    const type_ref = (try jsonObjGetRequired(constant_obj, "Type", sdk_file)).Object;
+    const value_type_str = (try jsonObjGetRequired(constant_obj, "ValueType", sdk_file)).String;
     const value_node = try jsonObjGetRequired(constant_obj, "Value", sdk_file);
 
     // TODO: handle Attrs
@@ -879,8 +943,8 @@ fn generateConstant(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, constant
     const name_pool = try global_symbol_pool.add(name_tmp);
     try sdk_file.const_exports.append(name_pool);
 
-    const native_type = global_native_type_map.get(native_type_str) orelse {
-        std.log.err("constant '{s}' has an unknown NativeType '{s}'\n", .{name_pool, native_type_str});
+    const value_type = global_value_type_map.get(value_type_str) orelse {
+        std.log.err("unknown ValueType '{s}'", .{value_type_str});
         return error.AlreadyReported;
     };
 
@@ -888,17 +952,42 @@ fn generateConstant(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, constant
         try out_writer.print("// skipped '{}'\n", .{name_pool});
         return;
     }
-    // This type of INVALID_HANDLE_VALUE is not correct, it should not be an i32
-    if (std.mem.eql(u8, name_pool.slice, "INVALID_HANDLE_VALUE")) {
-        switch (value_node) {
-            .Integer => |i| jsonEnforce(i == -1),
-            else => jsonPanicMsg("expected INVALID_HANDLE_VALUE to be an integer but it's been changed?", .{}),
+    const zig_type_formatter = try addTypeRefs(sdk_file, type_ref, .{.reason = .direct_type_access, .is_const = true, .in = false, .out = false });
+
+    const kind = (jsonObjGetRequired(type_ref, "Kind", sdk_file) catch unreachable).String;
+    if (std.mem.eql(u8, kind, "Native")) {
+        jsonEnforce(value_type != .PropertyKey);
+        jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"Kind", "Name"}, sdk_file) catch unreachable;
+        const name = (jsonObjGetRequired(type_ref, "Name", sdk_file) catch unreachable).String;
+        const native_type = global_native_type_map.get(name) orelse std.debug.panic("unknown Native type '{s}'", .{name});
+        if (native_type == .Guid) {
+            try out_writer.print("pub const {s} = Guid.initString({});\n", .{name_pool, fmtConstValue(value_type, value_node, sdk_file)});
+        } else {
+            try out_writer.print("pub const {s} = {};\n", .{name_pool, fmtConstValue(value_type, value_node, sdk_file)});
         }
-        try sdk_file.addApiImport("HANDLE", "SystemServices", json.Array { .allocator = undefined, .items = &[_]json.Value { }, .capacity = 0 });
-        try out_writer.print("pub const {s} = @intToPtr(HANDLE, @bitCast(usize, @as(isize, -1)));\n", .{name_pool});
-        return;
+    } else {
+        if (value_type == .PropertyKey) {
+            const value_obj = switch (value_node) {
+                .Object => |obj| obj,
+                else => jsonPanicMsg("expected PropertyKey to be an object but got: {s}", .{fmtJson(value_node)}),
+            };
+            try jsonObjEnforceKnownFieldsOnly(value_obj, &[_][]const u8 {"Fmtid", "Pid"}, sdk_file);
+            const fmtid = (try jsonObjGetRequired(value_obj, "Fmtid", sdk_file)).String;
+            const pid = (try jsonObjGetRequired(value_obj, "Pid", sdk_file)).Integer;
+            try out_writer.print("pub const {s} = {} {{ .fmtid = @import(\"../zig.zig\").Guid.initString(\"{s}\"), .pid = {} }};\n", .{
+                name_pool,
+                zig_type_formatter,
+                fmtid,
+                pid
+            });
+        } else {
+            try out_writer.print("pub const {s} = @import(\"../zig.zig\").typedConst({}, {});\n", .{
+                name_pool,
+                zig_type_formatter,
+                fmtConstValue(value_type, value_node, sdk_file)}
+            );
+        }
     }
-    try out_writer.print("pub const {s} {};\n", .{name_pool, fmtConstAssign(native_type, value_node, sdk_file)});
 }
 
 fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, extra_type_counts: *ExtraTypeCounts, enum_alias_conflicts: *StringPool.HashMap(StringPool.Val)) !void {
