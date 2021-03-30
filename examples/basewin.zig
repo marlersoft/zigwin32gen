@@ -5,13 +5,13 @@ usingnamespace @import("win32").zig;
 usingnamespace @import("win32").api.system_services;
 usingnamespace @import("win32").api.windows_and_messaging;
 
+const windowlongptr = @import("win32").windowlongptr;
+
 // NOTE: can't do usingnamespace for menu_and_resources because it has conflicts with windows_and_messaging
 //       I think this particular one is a problem with win32metadata.
 //       NOTE: should Zig allow symbol conflicts so long as they are not referenced?
 const mnr = @import("win32").api.menus_and_resources;
 const HMENU = mnr.HMENU;
-
-const SetWindowLongPtr = win32.missing.SetWindowLongPtr;
 
 pub fn BaseWindow(comptime DERIVED_TYPE: type) type { return struct {
 
@@ -22,15 +22,23 @@ pub fn BaseWindow(comptime DERIVED_TYPE: type) type { return struct {
         {
             const pCreate = @ptrCast(*CREATESTRUCT, @alignCast(@alignOf(CREATESTRUCT), lParam));
             pThis = @ptrCast(*DERIVED_TYPE, @alignCast(@alignOf(DERIVED_TYPE), pCreate.lpCreateParams));
-            // TODO: SetWindowLongPtr seems to be missing from win32metadata, might need to file an issue
-            _ = @import("win32").missing.SetWindowLongPtr(hwnd, .USERDATA, @bitCast(isize, @ptrToInt(pThis)));
+            // TODO: remove this if once https://github.com/microsoft/win32metadata/issues/392 is fixed
+            if (@sizeOf(usize) == 4) {
+                _ = windowlongptr.SetWindowLongPtr(hwnd, ._USERDATA, @bitCast(isize, @ptrToInt(pThis)));
+            } else {
+                _ = windowlongptr.SetWindowLongPtr(hwnd, ._USERDATA, pThis);
+            }
 
             pThis.?.base.m_hwnd = hwnd;
         }
         else
         {
-            // TODO: GetWindowLongPtr seems to be missing from win32metadata, might need to file an issue
-            pThis = @intToPtr(?*DERIVED_TYPE, @bitCast(usize, @import("win32").missing.GetWindowLongPtr(hwnd, .USERDATA)));
+            // TODO: remove this if once https://github.com/microsoft/win32metadata/issues/392 is fixed
+            if (@sizeOf(usize) == 4) {
+                pThis = @intToPtr(?*DERIVED_TYPE, @bitCast(usize, windowlongptr.GetWindowLongPtr(hwnd, ._USERDATA)));
+            } else {
+                pThis = @ptrCast(?*DERIVED_TYPE, @alignCast(@alignOf(DERIVED_TYPE), windowlongptr.GetWindowLongPtr(hwnd, ._USERDATA)));
+            }
         }
         if (pThis) |this|
         {
@@ -44,9 +52,9 @@ pub fn BaseWindow(comptime DERIVED_TYPE: type) type { return struct {
 
     pub fn Create(self: *@This(),
         lpWindowName: [*:0]const u16,
-        dwStyle: WINDOWS_STYLE,
+        dwStyle: WINDOW_STYLE,
         options: struct {
-            dwExStyle: WINDOWS_EX_STYLE = @intToEnum(WINDOWS_EX_STYLE, 0),
+            dwExStyle: WINDOW_EX_STYLE = @intToEnum(WINDOW_EX_STYLE, 0),
             x: i32 = CW_USEDEFAULT,
             y: i32 = CW_USEDEFAULT,
             nWidth: i32 = CW_USEDEFAULT,

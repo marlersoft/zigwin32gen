@@ -210,7 +210,7 @@ fn main2() !u8 {
     global_symbol_None = try global_symbol_pool.add("None");
 
     const win32json_dir_name = "deps" ++ path_sep ++ "win32json";
-    const win32json_branch = "10.0.19041.5-preview.75";
+    const win32json_branch = "10.0.19041.5-preview.90";
     var win32json_dir = std.fs.cwd().openDir(win32json_dir_name, .{}) catch |e| switch (e) {
         error.FileNotFound => {
             std.debug.warn("Error: repository '{s}' does not exist, clone it with:\n", .{win32json_dir_name});
@@ -251,12 +251,13 @@ fn main2() !u8 {
     var out_win32_dir = try out_dir.openDir("win32", .{});
     defer out_win32_dir.close();
 
-    // copy zig.zig and missing.zig modules
+    // copy zig.zig, missing.zig and windowlongptr.zig modules
     {
         var src_dir = try cwd.openDir("src", .{});
         defer src_dir.close();
         try src_dir.copyFile("zig.zig", out_win32_dir, "zig.zig", .{});
         try src_dir.copyFile("missing.zig", out_win32_dir, "missing.zig", .{});
+        try src_dir.copyFile("windowlongptr.zig", out_win32_dir, "windowlongptr.zig", .{});
     }
 
     var sdk_files = ArrayList(*SdkFile).init(allocator);
@@ -405,6 +406,7 @@ fn main2() !u8 {
             \\pub const api = @import("win32/api.zig");
             \\pub const zig = @import("win32/zig.zig");
             \\pub const missing = @import("win32/missing.zig");
+            \\pub const windowlongptr = @import("win32/windowlongptr.zig");
             \\pub const everything = @import("win32/everything.zig");
             \\
             \\const std = @import("std");
@@ -1603,11 +1605,21 @@ const dhcp_type_conflicts = std.ComptimeStringMap(Nothing, .{
     .{ "DHCP_SUBNET_ELEMENT_UNION_V4", .{} },
     .{ "DHCP_SUBNET_ELEMENT_UNION_V6", .{} },
 });
+
 const funcs_with_issues = std.ComptimeStringMap(Nothing, .{
     // These functions don't work yet because Zig doesn't support the 16-byte Guid struct in the C ABI yet
     // See: https://github.com/ziglang/zig/issues/1481
     .{ "CorePrinterDriverInstalledA", .{} },
     .{ "CorePrinterDriverInstalledW", .{} },
+});
+const funcs_64bit_only = std.ComptimeStringMap(Nothing, .{
+    .{ "SetWindowLongPtrA", .{} },
+    .{ "SetWindowLongPtrW", .{} },
+    .{ "GetWindowLongPtrA", .{} },
+    .{ "GetWindowLongPtrW", .{} },
+});
+const noreturn_funcs = std.ComptimeStringMap(Nothing, .{
+    .{ "ExitProcess", .{} },
 });
 
 const FuncPtrKind = enum { ptr, fixed, com };
@@ -1637,6 +1649,11 @@ fn generateFunction(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function
         try out_writer.print("{s}// This function from dll '{s}' is being skipped because it has some sort of issue\n", .{prefix, dll_import});
         try out_writer.print("{s}pub fn {s}() void {{ @panic(\"this function is not working\"); }}\n", .{prefix, func_name_tmp});
         return;
+    }
+
+    const only_64bit = if (funcs_64bit_only.get(func_name_tmp)) |_| true else false;
+    if (only_64bit) {
+        try out_writer.writeAll("pub usingnamespace if (@sizeOf(usize) == 8) struct {\n");
     }
 
     switch (func_kind) {
@@ -1669,10 +1686,21 @@ fn generateFunction(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function
         const param_type_formatter = try addTypeRefs(sdk_file, param_type, param_options);
         try out_writer.print("{s}    {s}: {},\n", .{prefix, std.zig.fmtId(param_name), param_type_formatter});
     }
-    // TODO: set is_const, in and out properly
-    const return_type_formatter = try addTypeRefs(sdk_file, return_type, .{ .reason = .var_decl, .is_const = false, .in = false, .out = false });
+
+    try out_writer.print("{s}) callconv(@import(\"std\").os.windows.WINAPI) ", .{prefix});
+    if (noreturn_funcs.get(func_name_tmp)) |_| {
+        try out_writer.writeAll("noreturn");
+    } else {
+        // TODO: set is_const, in and out properly
+        const return_type_formatter = try addTypeRefs(sdk_file, return_type, .{ .reason = .var_decl, .is_const = false, .in = false, .out = false });
+        try out_writer.print("{}", .{return_type_formatter});
+    }
     const term = if (func_kind == .com) "," else ";";
-    try out_writer.print("{s}) callconv(@import(\"std\").os.windows.WINAPI) {}{s}\n", .{prefix, return_type_formatter, term});
+    try out_writer.print("{s}\n", .{term});
+
+    if (only_64bit) {
+        try out_writer.writeAll("} else struct { };\n");
+    }
 }
 
 fn getPoolStringWithParts(a: *std.mem.Allocator, slices: []const []const u8) ![]const u8 {

@@ -33,7 +33,7 @@ pub export fn wWinMain(hInstance: HINSTANCE, _: HINSTANCE, pCmdLine: [*:0]u16, n
     // Create the window.
 
     const hwnd = CreateWindowEx(
-        @intToEnum(WINDOWS_EX_STYLE, 0),// Optional window styles.
+        @intToEnum(WINDOW_EX_STYLE, 0), // Optional window styles.
         CLASS_NAME,                     // Window class
         L("Learn to Program Windows"),  // Window text
         WS_OVERLAPPEDWINDOW,            // Window style

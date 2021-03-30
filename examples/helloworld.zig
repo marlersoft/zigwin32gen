@@ -1,13 +1,13 @@
 usingnamespace @import("win32").everything;
 
-pub export fn WinMainCRTStartup() callconv(@import("std").os.windows.WINAPI) c_int {
+pub export fn WinMainCRTStartup() callconv(@import("std").os.windows.WINAPI) noreturn {
     const hStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
     if (hStdOut == INVALID_HANDLE_VALUE) {
         //std.debug.warn("Error: GetStdHandle failed with {}\n", .{GetLastError()});
-        return -1; // fail
+        ExitProcess(255);
     }
-    writeAll(hStdOut, "Hello, World!") catch return -1; // fail
-    return 0; // success
+    writeAll(hStdOut, "Hello, World!") catch ExitProcess(255); // fail
+    ExitProcess(0);
 }
 
 fn writeAll(hFile: HANDLE, buffer: []const u8) !void {
