@@ -8,9 +8,6 @@ usingnamespace @import("win32").api.system_services;
 usingnamespace @import("win32").api.windows_and_messaging;
 usingnamespace @import("win32").api.gdi;
 
-// https://github.com/microsoft/win32metadata/issues/353
-const CW_USEDEFAULT = @import("win32").missing.CW_USEDEFAULT;
-
 pub export fn wWinMain(hInstance: HINSTANCE, _: HINSTANCE, pCmdLine: [*:0]u16, nCmdShow: u32) callconv(WINAPI) c_int
 {
 
@@ -18,7 +15,7 @@ pub export fn wWinMain(hInstance: HINSTANCE, _: HINSTANCE, pCmdLine: [*:0]u16, n
     const CLASS_NAME = L("Sample Window Class");
 
     const wc = WNDCLASS {
-        .style = 0,
+        .style = @intToEnum(WNDCLASS_STYLES, 0),
         .lpfnWndProc = WindowProc,
         .cbClsExtra = 0,
         .cbWndExtra = 0,

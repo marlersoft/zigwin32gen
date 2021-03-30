@@ -5,9 +5,6 @@ usingnamespace @import("win32").zig;
 usingnamespace @import("win32").api.system_services;
 usingnamespace @import("win32").api.windows_and_messaging;
 
-// https://github.com/microsoft/win32metadata/issues/353
-const CW_USEDEFAULT = @import("win32").missing.CW_USEDEFAULT;
-
 // NOTE: can't do usingnamespace for menu_and_resources because it has conflicts with windows_and_messaging
 //       I think this particular one is a problem with win32metadata.
 //       NOTE: should Zig allow symbol conflicts so long as they are not referenced?
@@ -26,14 +23,14 @@ pub fn BaseWindow(comptime DERIVED_TYPE: type) type { return struct {
             const pCreate = @ptrCast(*CREATESTRUCT, @alignCast(@alignOf(CREATESTRUCT), lParam));
             pThis = @ptrCast(*DERIVED_TYPE, @alignCast(@alignOf(DERIVED_TYPE), pCreate.lpCreateParams));
             // TODO: SetWindowLongPtr seems to be missing from win32metadata, might need to file an issue
-            _ = @import("win32").missing.SetWindowLongPtr(hwnd, GWLP_USERDATA, @bitCast(isize, @ptrToInt(pThis)));
+            _ = @import("win32").missing.SetWindowLongPtr(hwnd, .USERDATA, @bitCast(isize, @ptrToInt(pThis)));
 
             pThis.?.base.m_hwnd = hwnd;
         }
         else
         {
             // TODO: GetWindowLongPtr seems to be missing from win32metadata, might need to file an issue
-            pThis = @intToPtr(?*DERIVED_TYPE, @bitCast(usize, @import("win32").missing.GetWindowLongPtr(hwnd, GWLP_USERDATA)));
+            pThis = @intToPtr(?*DERIVED_TYPE, @bitCast(usize, @import("win32").missing.GetWindowLongPtr(hwnd, .USERDATA)));
         }
         if (pThis) |this|
         {
@@ -59,7 +56,7 @@ pub fn BaseWindow(comptime DERIVED_TYPE: type) type { return struct {
         },
     ) BOOL {
         const wc = WNDCLASS {
-            .style = 0,
+            .style = @intToEnum(WNDCLASS_STYLES, 0),
             .lpfnWndProc = WindowProc,
             .cbClsExtra = 0,
             .cbWndExtra = 0,

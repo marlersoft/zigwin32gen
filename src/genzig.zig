@@ -210,7 +210,7 @@ fn main2() !u8 {
     global_symbol_None = try global_symbol_pool.add("None");
 
     const win32json_dir_name = "deps" ++ path_sep ++ "win32json";
-    const win32json_branch = "10.0.19041.5-preview.54";
+    const win32json_branch = "10.0.19041.5-preview.75";
     var win32json_dir = std.fs.cwd().openDir(win32json_dir_name, .{}) catch |e| switch (e) {
         error.FileNotFound => {
             std.debug.warn("Error: repository '{s}' does not exist, clone it with:\n", .{win32json_dir_name});
@@ -995,9 +995,11 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
     const tmp_name = (try jsonObjGetRequired(type_obj, "Name", sdk_file)).String;
 
     if (std.mem.eql(u8, kind, "ComClassID")) {
-        try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Kind", "Guid"}, sdk_file);
+        try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Platform", "Kind", "Guid"}, sdk_file);
+        const platform_node = try jsonObjGetRequired(type_obj, "Platform", sdk_file);
         const guid = (try jsonObjGetRequired(type_obj, "Guid", sdk_file)).String;
         const clsid_pool = try global_symbol_pool.addFormatted("CLSID_{s}", .{tmp_name});
+        try generatePlatformComment(out_writer, platform_node);
         try out_writer.print("const {s}_Value = @import(\"../zig.zig\").Guid.initString(\"{s}\");\n", .{clsid_pool, guid});
         try out_writer.print("pub const {s} = &{0s}_Value;\n", .{clsid_pool});
         try sdk_file.const_exports.append(clsid_pool);
@@ -1016,13 +1018,17 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
         try out_writer.print("// TODO: not generating this type because it is causing some sort of error\n", .{});
         try out_writer.print("pub const {s} = usize;\n", .{tmp_name});
     } else if (std.mem.eql(u8, kind, "NativeTypedef")) {
-        try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Kind", "Def", "FreeFunc"}, sdk_file);
+        try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Platform", "AlsoUsableFor", "Kind", "Def", "FreeFunc"}, sdk_file);
+        const platform_node = try jsonObjGetRequired(type_obj, "Platform", sdk_file);
+        const also_usable_for_node = try jsonObjGetRequired(type_obj, "AlsoUsableFor", sdk_file);
         const def_type = (try jsonObjGetRequired(type_obj, "Def", sdk_file)).Object;
         const optional_free_func : ?[]const u8 = switch (try jsonObjGetRequired(type_obj, "FreeFunc", sdk_file)) {
             .Null => null,
             .String => |s| s,
             else => jsonPanic(),
         };
+        try generatePlatformComment(out_writer, platform_node);
+        try generateAlsoUsableForComment(out_writer, also_usable_for_node);
         if (optional_free_func) |free_func| {
             try out_writer.print("// TODO: this type has a FreeFunc '{s}', what can Zig do with this information?\n", .{free_func});
         }
@@ -1126,18 +1132,40 @@ const com_types_to_skip = std.ComptimeStringMap(Nothing, .{
     .{ "IResourceManager2", .{} },
 });
 
+fn generatePlatformComment(out_writer: std.fs.File.Writer, platform_node: std.json.Value) !void {
+    switch (platform_node) {
+        .String => |platform| {
+            try out_writer.print("// TODO: this type is limited to platform '{s}'\n", .{platform});
+        },
+        .Null => {},
+        else => jsonPanic(),
+    }
+}
+fn generateAlsoUsableForComment(out_writer: std.fs.File.Writer, also_usable_for_node: std.json.Value) !void {
+    switch (also_usable_for_node) {
+        .String => |also_usable_for| {
+            try out_writer.print("// TODO: this type is also usable for '{s}'\n", .{also_usable_for});
+        },
+        .Null => {},
+        else => jsonPanic(),
+    }
+}
+
 fn generateStruct(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, struct_pool_name: StringPool.Val) !void {
-    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Kind", "Name", "Size", "PackingSize", "Fields", "Comment", "NestedTypes"}, sdk_file);
+    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Kind", "Name", "Platform",
+        "Size", "PackingSize", "Fields", "Comment", "NestedTypes"}, sdk_file);
+    const platform_node = try jsonObjGetRequired(type_obj, "Platform", sdk_file);
     const struct_size = (try jsonObjGetRequired(type_obj, "Size", sdk_file)).Integer;
     const struct_packing_size = (try jsonObjGetRequired(type_obj, "PackingSize", sdk_file)).Integer;
     const struct_fields = (try jsonObjGetRequired(type_obj, "Fields", sdk_file)).Array;
     const struct_nested_types = (try jsonObjGetRequired(type_obj, "NestedTypes", sdk_file)).Array;
 
+    try generatePlatformComment(out_writer, platform_node);
+    try out_writer.print("pub const {} = extern struct {{\n", .{struct_pool_name});
     if (struct_fields.items.len == 0) {
         // TODO: handle nested types
-        try out_writer.print("pub const {} = extern struct {{ comment: [*]const u8 = \"TODO: why is this struct empty?\" }};\n", .{struct_pool_name});
+        try out_writer.print("    comment: [*]const u8 = \"TODO: why is this struct empty?\"\n", .{});
     } else {
-        try out_writer.print("pub const {} = extern struct {{\n", .{struct_pool_name});
         for (struct_fields.items) |*field_node_ptr| {
             const field_obj = field_node_ptr.Object;
             try jsonObjEnforceKnownFieldsOnly(field_obj, &[_][]const u8 {"Name", "Type", "Attrs"}, sdk_file);
@@ -1165,8 +1193,8 @@ fn generateStruct(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: 
             const nested_type_name = (try jsonObjGetRequired(nested_type_obj, "Name", sdk_file)).String;
             try out_writer.print("    const {s} = u32; // TODO: generate this nested type!\n", .{nested_type_name});
         }
-        try out_writer.print("}};\n", .{});
     }
+    try out_writer.print("}};\n", .{});
 }
 
 // Not sure whether enums should be exhaustive or not, for now
@@ -1200,9 +1228,6 @@ fn shortEnumValueName(enum_type_name: []const u8, full_value_name: []const u8) [
 
 // TODO: this is a set of enums whose value symbols conflict with other symbols
 const suppress_enum_aliases = std.ComptimeStringMap(Nothing, .{
-    // suppress this one because it has a value with an empty name?
-    // should probably file a bug for this
-    .{ "AS_ANY_TYPE", .{} },
     // suppress this one because the CFE_UNDERLINE enum value alias conflicts with the name of an enum type
     .{ "CFE_EFFECTS", .{} },
     // --------------------------------------------------------------------------------
@@ -1218,7 +1243,6 @@ const suppress_enum_aliases = std.ComptimeStringMap(Nothing, .{
     // suppress the rest because there is another enum with the same enum value alias
     // --------------------------------------------------------------------------------
     // Security
-    .{ "WlanGetNetworkBssList_dot11BssTypeFlags", .{} },
     .{ "NCrypt_dwFlags", .{} },
     .{ "IAzClientContext3_GetGroups_ulOptionsFlags", .{} },
     .{ "NCryptNotifyChangeKey_dwFlags", .{} },
@@ -1227,8 +1251,12 @@ const suppress_enum_aliases = std.ComptimeStringMap(Nothing, .{
     .{ "NCryptDecrypt_dwFlags", .{} },
     .{ "KERB_CERTIFICATE_LOGON_MessageTypeFlags", .{} },
     .{ "SC_ACTION_TypeFlags", .{} },
+    .{ "IIdentityProvider_Advise_dwIdentityUpdateEventsFlags", .{} },
     // WindowsProgramming
     .{ "VER_MASK", .{} },
+    .{ "SetHandleInformation_dwFlags", .{} },
+    .{ "DuplicateHandle_dwOptionsFlags", .{} },
+    .{ "REG_OPEN_CREATE_OPTIONS", .{} },
     // SystemServices
     .{ "QueryInformationJobObject_JobObjectInformationClassFlags", .{} },
     .{ "HeapSetInformation_HeapInformationClassFlags", .{} },
@@ -1237,6 +1265,10 @@ const suppress_enum_aliases = std.ComptimeStringMap(Nothing, .{
     .{ "JOBOBJECT_LIMIT_VIOLATION_INFORMATION_2_RateControlTolerance", .{} },
     .{ "JOBOBJECT_IO_RATE_CONTROL_INFORMATIONFlags", .{} },
     .{ "CreateFileMapping_flProtect", .{} },
+    .{ "PFM_FLAGS", .{} },
+    .{ "JOBOBJECT_BASIC_LIMIT_INFORMATIONFlags", .{} },
+    .{ "JOBOBJECT_SECURITY_LIMIT_INFORMATIONFlags", .{} },
+    .{ "JOBOBJECT_BASIC_UI_RESTRICTIONS_UIRestrictionsClassFlags", .{} },
     // NetManagement
     .{ "NetWkstaSetInfo_levelFlags", .{} },
     // ComponentServices
@@ -1252,6 +1284,7 @@ const suppress_enum_aliases = std.ComptimeStringMap(Nothing, .{
     .{ "DefineDosDevice_dwFlags", .{} },
     .{ "CreateFile_dwShareMode", .{} },
     .{ "CreateLogFile_fCreateDispositionFlags", .{} },
+    .{ "ReOpenFile_dwFlagsAndAttributes", .{} },
     // Parental Controls
     .{ "IWindowsParentalControlsCore_GetVisibility_peVisibilityFlags", .{} },
     .{ "GetRestrictions_pdwRestrictions", .{} },
@@ -1260,6 +1293,8 @@ const suppress_enum_aliases = std.ComptimeStringMap(Nothing, .{
     .{ "CombineRgn_iMode", .{} },
     .{ "CreateDIBitmap_iUsage", .{} },
     .{ "PatBlt_ropFlags", .{} },
+    .{ "GetCurrentObject_typeFlags", .{} },
+    .{ "SetROP2_rop2Flags", .{} },
     // MachineLearning
     .{ "MLOperatorTensorDataType", .{} },
     .{ "MLOperatorExecutionType", .{} },
@@ -1274,6 +1309,9 @@ const suppress_enum_aliases = std.ComptimeStringMap(Nothing, .{
     .{ "MsiViewModify_eModifyModeFlags", .{} },
     .{ "MsiCreateTransformSummaryInfo_iErrorConditions", .{} },
     .{ "MsiCreateTransformSummaryInfo_iValidation", .{} },
+    .{ "MsiEnumClientsEx_dwContext", .{} },
+    // WindowsAndMessaging
+    .{ "DrawIconEx_diFlags", .{} },
 });
 
 const EnumValue = struct {
@@ -1333,7 +1371,8 @@ fn setShortNames(values: []EnumValue) void {
 }
 
 fn generateEnum(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, enum_value_export_count: *u32, pool_name: StringPool.Val, enum_alias_conflicts: *StringPool.HashMap(StringPool.Val)) !void {
-    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Kind", "Flags", "Values", "IntegerBase"}, sdk_file);
+    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Platform", "AlsoUsableFor", "Kind", "Flags", "Values", "IntegerBase"}, sdk_file);
+    const platform_node = try jsonObjGetRequired(type_obj, "Platform", sdk_file);
     const flags = (try jsonObjGetRequired(type_obj, "Flags", sdk_file)).Bool;
     const json_values = (try jsonObjGetRequired(type_obj, "Values", sdk_file)).Array;
     const integer_base = switch (try jsonObjGetRequired(type_obj, "IntegerBase", sdk_file)) {
@@ -1407,7 +1446,8 @@ fn generateEnum(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
 }
 
 fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, com_pool_name: StringPool.Val, extra_type_counts: *ExtraTypeCounts) !void {
-    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Kind", "Name", "Guid", "Interface", "Methods"}, sdk_file);
+    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Kind", "Name", "Platform", "Guid", "Interface", "Methods"}, sdk_file);
+    const platform_node = try jsonObjGetRequired(type_obj, "Platform", sdk_file);
     const com_optional_guid : ?[]const u8 = switch (try jsonObjGetRequired(type_obj, "Guid", sdk_file)) {
         .Null => null,
         .String => |s| s,
@@ -1423,6 +1463,7 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
     if (skip) {
         try out_writer.print("// WARNING: this COM type has been skipped because it causes some sort of error\n", .{});
     }
+    try generatePlatformComment(out_writer, platform_node);
 
     const iid_pool = try global_symbol_pool.addFormatted("IID_{s}", .{com_pool_name.slice});
     if (com_optional_guid) |guid| {
@@ -1574,11 +1615,14 @@ const FuncPtrKind = enum { ptr, fixed, com };
 fn generateFunction(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function_obj: json.ObjectMap, func_kind: FuncPtrKind, suffix: ?u8, optional_self_type: ?[]const u8) !void {
     const prefix = if (func_kind == .com) "        " else "";
     switch (func_kind) {
-        .fixed => try jsonObjEnforceKnownFieldsOnly(function_obj, &[_][]const u8 {"Name", "SetLastError", "DllImport", "ReturnType", "Params"}, sdk_file),
-        .ptr, .com => try jsonObjEnforceKnownFieldsOnly(function_obj, &[_][]const u8 {"Kind", "Name", "SetLastError", "ReturnType", "Params"}, sdk_file),
+        .fixed => try jsonObjEnforceKnownFieldsOnly(function_obj, &[_][]const u8 {"Name", "Platform",
+            "SetLastError", "DllImport", "ReturnType", "Params"}, sdk_file),
+        .ptr, .com => try jsonObjEnforceKnownFieldsOnly(function_obj, &[_][]const u8 {"Kind", "Name", "Platform",
+            "SetLastError", "ReturnType", "Params"}, sdk_file),
     }
 
     const func_name_tmp = (try jsonObjGetRequired(function_obj, "Name", sdk_file)).String;
+    const platform_node = try jsonObjGetRequired(function_obj, "Platform", sdk_file);
     const set_last_error = (try jsonObjGetRequired(function_obj, "SetLastError", sdk_file)).Bool;
     const dll_import = if (func_kind == .fixed) (try jsonObjGetRequired(function_obj, "DllImport", sdk_file)).String else "";
     const return_type = (try jsonObjGetRequired(function_obj, "ReturnType", sdk_file)).Object;
@@ -1588,6 +1632,7 @@ fn generateFunction(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function
         try sdk_file.func_exports.put(try global_symbol_pool.add(func_name_tmp), .{});
     }
 
+    try generatePlatformComment(out_writer, platform_node);
     if (funcs_with_issues.get(func_name_tmp)) |_| {
         try out_writer.print("{s}// This function from dll '{s}' is being skipped because it has some sort of issue\n", .{prefix, dll_import});
         try out_writer.print("{s}pub fn {s}() void {{ @panic(\"this function is not working\"); }}\n", .{prefix, func_name_tmp});
