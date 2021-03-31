@@ -109,8 +109,8 @@ fn nativeTypeToZigType(t: NativeType) []const u8 {
         .Single => return "f32",
         .Double => return "f64",
         .String => return "[]const u8",
-        .IntPtr => return "?*c_void",
-        .UIntPtr => return "?*c_void",
+        .IntPtr => return "isize",
+        .UIntPtr => return "usize",
         .Guid => @panic("cannot call nativeTypeToZigType for NativeType.Guid"),
     };
 }
@@ -992,6 +992,7 @@ fn generateConstant(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, constant
     }
 }
 
+
 fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, extra_type_counts: *ExtraTypeCounts, enum_alias_conflicts: *StringPool.HashMap(StringPool.Val)) !void {
     const kind = (try jsonObjGetRequired(type_obj, "Kind", sdk_file)).String;
     const tmp_name = (try jsonObjGetRequired(type_obj, "Name", sdk_file)).String;
@@ -1068,6 +1069,12 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
                 },
                 else => jsonPanic(),
             }
+            return;
+        }
+
+        // workaround https://github.com/microsoft/win32metadata/issues/395
+        if (@import("handletypes.zig").handle_types.get(tmp_name)) |_| {
+            try out_writer.print("pub const {s} = ?*c_void;\n", .{tmp_name});
             return;
         }
 

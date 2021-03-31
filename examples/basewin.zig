@@ -20,25 +20,14 @@ pub fn BaseWindow(comptime DERIVED_TYPE: type) type { return struct {
         var pThis : ?*DERIVED_TYPE = null;
         if (uMsg == WM_NCCREATE)
         {
-            const pCreate = @ptrCast(*CREATESTRUCT, @alignCast(@alignOf(CREATESTRUCT), lParam));
+            const pCreate = @intToPtr(*CREATESTRUCT, @bitCast(usize, lParam));
             pThis = @ptrCast(*DERIVED_TYPE, @alignCast(@alignOf(DERIVED_TYPE), pCreate.lpCreateParams));
-            // TODO: remove this if once https://github.com/microsoft/win32metadata/issues/392 is fixed
-            if (@sizeOf(usize) == 4) {
-                _ = windowlongptr.SetWindowLongPtr(hwnd, ._USERDATA, @bitCast(isize, @ptrToInt(pThis)));
-            } else {
-                _ = windowlongptr.SetWindowLongPtr(hwnd, ._USERDATA, pThis);
-            }
-
+            _ = windowlongptr.SetWindowLongPtr(hwnd, ._USERDATA, @bitCast(isize, @ptrToInt(pThis)));
             pThis.?.base.m_hwnd = hwnd;
         }
         else
         {
-            // TODO: remove this if once https://github.com/microsoft/win32metadata/issues/392 is fixed
-            if (@sizeOf(usize) == 4) {
-                pThis = @intToPtr(?*DERIVED_TYPE, @bitCast(usize, windowlongptr.GetWindowLongPtr(hwnd, ._USERDATA)));
-            } else {
-                pThis = @ptrCast(?*DERIVED_TYPE, @alignCast(@alignOf(DERIVED_TYPE), windowlongptr.GetWindowLongPtr(hwnd, ._USERDATA)));
-            }
+            pThis = @intToPtr(?*DERIVED_TYPE, @bitCast(usize, windowlongptr.GetWindowLongPtr(hwnd, ._USERDATA)));
         }
         if (pThis) |this|
         {
@@ -68,7 +57,9 @@ pub fn BaseWindow(comptime DERIVED_TYPE: type) type { return struct {
             .lpfnWndProc = WindowProc,
             .cbClsExtra = 0,
             .cbWndExtra = 0,
-            .hInstance = @ptrCast(HINSTANCE, GetModuleHandle(null)),
+            // NOTE: GetModuleHandle should be returning HMODULE but it's returning isize???
+            //       I think an issue needs to be filed for this.
+            .hInstance = @intToPtr(HINSTANCE, @bitCast(usize, GetModuleHandle(null))),
             .hIcon = null,
             .hCursor = null,
             .hbrBackground = null,
@@ -82,7 +73,11 @@ pub fn BaseWindow(comptime DERIVED_TYPE: type) type { return struct {
         self.m_hwnd = CreateWindowEx(
             options.dwExStyle, DERIVED_TYPE.ClassName(), lpWindowName,
             dwStyle, options.x, options.y,
-            options.nWidth, options.nHeight, options.hWndParent, options.hMenu, GetModuleHandle(null), @ptrCast(*c_void, self)
+            options.nWidth, options.nHeight, options.hWndParent, options.hMenu,
+            // NOTE: GetModuleHandle should be returning HMODULE but it's returning isize???
+            //       I think an issue needs to be filed for this.
+            @intToPtr(*c_void, @bitCast(usize, GetModuleHandle(null))),
+            @ptrCast(*c_void, self)
             );
 
         return if (self.m_hwnd != null) TRUE else FALSE;
