@@ -1074,7 +1074,7 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
 
         // workaround https://github.com/microsoft/win32metadata/issues/395
         if (@import("handletypes.zig").handle_types.get(tmp_name)) |_| {
-            try out_writer.print("pub const {s} = ?*c_void;\n", .{tmp_name});
+            try out_writer.print("pub const {s} = ?*opaque{{}};\n", .{tmp_name});
             return;
         }
 

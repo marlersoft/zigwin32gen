@@ -76,7 +76,7 @@ pub fn BaseWindow(comptime DERIVED_TYPE: type) type { return struct {
             options.nWidth, options.nHeight, options.hWndParent, options.hMenu,
             // NOTE: GetModuleHandle should be returning HMODULE but it's returning isize???
             //       I think an issue needs to be filed for this.
-            @intToPtr(*c_void, @bitCast(usize, GetModuleHandle(null))),
+            @intToPtr(HINSTANCE, @bitCast(usize, GetModuleHandle(null))),
             @ptrCast(*c_void, self)
             );
 
