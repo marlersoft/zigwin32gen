@@ -14,18 +14,15 @@ usingnamespace win32.api.shell;
 
 pub export fn wWinMain(hInstance: HINSTANCE, _: HINSTANCE, pCmdLine: [*:0]u16, nCmdShow: u32) callconv(WINAPI) c_int
 {
-    var hr = CoInitializeEx(null, @enumToInt(COINIT_APARTMENTTHREADED) |
-        @enumToInt(COINIT_DISABLE_OLE1DDE));
+    var hr = CoInitializeEx(null, @intToEnum(COINIT,
+        @enumToInt(COINIT_APARTMENTTHREADED) |
+        @enumToInt(COINIT_DISABLE_OLE1DDE)));
     if (SUCCEEDED(hr))
     {
         var pFileOpen : *IFileOpenDialog = undefined;
 
         // Create the FileOpenDialog object.
-        // NOTE: CLSCTX_ALL is missing, see https://github.com/microsoft/win32metadata/issues/203
-        // NOTE: CoCreateInstance does not properly type it's flags parameter, see https://github.com/microsoft/win32metadata/issues/185
-        hr = CoCreateInstance(CLSID_FileOpenDialog, null, @enumToInt(win32.missing.CLSCTX_ALL),
-                IID_IFileOpenDialog, @ptrCast(**c_void, &pFileOpen));
-
+        hr = CoCreateInstance(CLSID_FileOpenDialog, null, .ALL, IID_IFileOpenDialog, @ptrCast(**c_void, &pFileOpen));
         if (SUCCEEDED(hr))
         {
             // Show the Open dialog box.

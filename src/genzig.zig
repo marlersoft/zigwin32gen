@@ -210,7 +210,7 @@ fn main2() !u8 {
     global_symbol_None = try global_symbol_pool.add("None");
 
     const win32json_dir_name = "deps" ++ path_sep ++ "win32json";
-    const win32json_branch = "10.0.19041.5-preview.90";
+    const win32json_branch = "10.0.19041.5-preview.122";
     var win32json_dir = std.fs.cwd().openDir(win32json_dir_name, .{}) catch |e| switch (e) {
         error.FileNotFound => {
             std.debug.warn("Error: repository '{s}' does not exist, clone it with:\n", .{win32json_dir_name});
@@ -662,6 +662,7 @@ const TypeRefFormatter = struct {
         ret_val: bool = false,
         // TODO: don't know what to do with this yet
         com_out_ptr: bool = false,
+        optional_bytes_param_index: ?i16 = null,
     };
 
     type_ref: json.ObjectMap,
@@ -992,6 +993,14 @@ fn generateConstant(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, constant
     }
 }
 
+// workaround https://github.com/microsoft/win32metadata/issues/389
+const also_usable_type_api_map = std.ComptimeStringMap([]const u8, .{
+    .{ "HDC", "Gdi" },
+    .{ "HGDIOBJ", "Gdi" },
+    .{ "HICON", "MenusAndResources" },
+    .{ "HANDLE", "SystemServices" },
+    .{ "HeapHandle", "SystemServices" },
+});
 
 fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, extra_type_counts: *ExtraTypeCounts, enum_alias_conflicts: *StringPool.HashMap(StringPool.Val)) !void {
     const kind = (try jsonObjGetRequired(type_obj, "Kind", sdk_file)).String;
@@ -1031,7 +1040,6 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
             else => jsonPanic(),
         };
         try generatePlatformComment(out_writer, platform_node);
-        try generateAlsoUsableForComment(out_writer, also_usable_for_node);
         if (optional_free_func) |free_func| {
             try out_writer.print("// TODO: this type has a FreeFunc '{s}', what can Zig do with this information?\n", .{free_func});
         }
@@ -1070,6 +1078,22 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
                 else => jsonPanic(),
             }
             return;
+        }
+
+        switch (also_usable_for_node) {
+            .String => |also_usable_for| {
+                if (also_usable_type_api_map.get(also_usable_for)) |api| {
+                    try sdk_file.addApiImport(also_usable_for, api, json.Array { .items = &[_]json.Value{}, .capacity = 0, .allocator = allocator });
+                    try out_writer.print("//TODO: type '{s}' is \"AlsoUsableFor\" '{s}' which means this type is implicitly\n", .{tmp_name, also_usable_for});
+                    try out_writer.print("//      convertible to '{s}' but not the other way around.  I don't know how to do this\n", .{also_usable_for});
+                    try out_writer.print("//      in Zig so for now I'm just defining it as an alias\n", .{});
+                    try out_writer.print("pub const {s} = {s};\n", .{tmp_name, also_usable_for});
+                    //try out_writer.print("pub const {s} = extern struct {{ base: {s} }};\n", .{tmp_name, also_usable_for});
+                } else std.debug.panic("AlsoUsableFor type '{s}' is missing from alsoUsableForApiMap", .{also_usable_for});
+                return;
+            },
+            .Null => {},
+            else => jsonPanic(),
         }
 
         // workaround https://github.com/microsoft/win32metadata/issues/395
@@ -1145,15 +1169,6 @@ fn generatePlatformComment(out_writer: std.fs.File.Writer, platform_node: std.js
     switch (platform_node) {
         .String => |platform| {
             try out_writer.print("// TODO: this type is limited to platform '{s}'\n", .{platform});
-        },
-        .Null => {},
-        else => jsonPanic(),
-    }
-}
-fn generateAlsoUsableForComment(out_writer: std.fs.File.Writer, also_usable_for_node: std.json.Value) !void {
-    switch (also_usable_for_node) {
-        .String => |also_usable_for| {
-            try out_writer.print("// TODO: this type is also usable for '{s}'\n", .{also_usable_for});
         },
         .Null => {},
         else => jsonPanic(),
@@ -1248,6 +1263,7 @@ const suppress_enum_aliases = std.ComptimeStringMap(Nothing, .{
     .{ "IPPROTO", .{} },
     .{ "MIB_IPFORWARD_TYPE", .{} },
     .{ "OLEMISC", .{} },
+    .{ "IMAGEHLP_CBA_EVENT_severity", .{} },
     // --------------------------------------------------------------------------------
     // suppress the rest because there is another enum with the same enum value alias
     // --------------------------------------------------------------------------------
@@ -1321,6 +1337,11 @@ const suppress_enum_aliases = std.ComptimeStringMap(Nothing, .{
     .{ "MsiEnumClientsEx_dwContext", .{} },
     // WindowsAndMessaging
     .{ "DrawIconEx_diFlags", .{} },
+    // Debug
+    .{ "SymGetHomeDirectory_type", .{} },
+    .{ "SymGetSymbolFile_Type", .{} },
+    // Multimedia
+    .{ "MIDI_OPEN_TYPE", .{} },
 });
 
 const EnumValue = struct {
@@ -1380,7 +1401,7 @@ fn setShortNames(values: []EnumValue) void {
 }
 
 fn generateEnum(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, enum_value_export_count: *u32, pool_name: StringPool.Val, enum_alias_conflicts: *StringPool.HashMap(StringPool.Val)) !void {
-    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Platform", "AlsoUsableFor", "Kind", "Flags", "Values", "IntegerBase"}, sdk_file);
+    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Platform", "Kind", "Flags", "Values", "IntegerBase"}, sdk_file);
     const platform_node = try jsonObjGetRequired(type_obj, "Platform", sdk_file);
     const flags = (try jsonObjGetRequired(type_obj, "Flags", sdk_file)).Bool;
     const json_values = (try jsonObjGetRequired(type_obj, "Values", sdk_file)).Array;
@@ -1540,9 +1561,13 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
                 try jsonObjEnforceKnownFieldsOnly(param_obj, &[_][]const u8 {"Name", "Type", "Attrs"}, sdk_file);
                 const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).String;
                 const param_type = (try jsonObjGetRequired(param_obj, "Type", sdk_file)).Object;
-                const param_options = processParamAttrs((try jsonObjGetRequired(param_obj, "Attrs", sdk_file)).Array, .var_decl);
+                const param_options = processParamAttrs((try jsonObjGetRequired(param_obj, "Attrs", sdk_file)).Array, .var_decl, sdk_file);
                 // NOTE: don't need to call addTypeRefs because it was already called in generateFunction above
                 const param_type_formatter = fmtTypeRef(param_type, param_options, .top_level, sdk_file);
+                if (param_options.optional_bytes_param_index) |bytes_param_index| {
+                    // NOTE: can't print this because we are currently inline
+                    //try out_writer.print("// TODO: what to do with BytesParamIndex {}?\n", .{bytes_param_index});
+                }
                 try out_writer.print(", {s}: {}", .{std.zig.fmtId(param_name), param_type_formatter});
             }
             // NOTE: don't need to call addTypeRefs because it was already called in generateFunction above
@@ -1564,28 +1589,43 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
     try out_writer.print("}};\n", .{});
 }
 
-fn processParamAttrs(attrs: json.Array, reason: TypeRefFormatter.Reason) TypeRefFormatter.Options {
+fn processParamAttrs(attrs: json.Array, reason: TypeRefFormatter.Reason, sdk_file: *const SdkFile) TypeRefFormatter.Options {
     var opts = TypeRefFormatter.Options { .reason = reason };
     for (attrs.items) |*attr_node_ptr| {
-        const attr_str = attr_node_ptr.String;
-        if (std.mem.eql(u8, attr_str, "Const")) {
-            opts.is_const = true;
-        } else if (std.mem.eql(u8, attr_str, "In")) {
-            opts.in = true;
-        } else if (std.mem.eql(u8, attr_str, "Out")) {
-            opts.out = true;
-        } else if (std.mem.eql(u8, attr_str, "Optional")) {
-            opts.optional = true;
-        } else if (std.mem.eql(u8, attr_str, "RetVal")) {
-            opts.ret_val = true;
-        } else if (std.mem.eql(u8, attr_str, "NotNullTerminated")) {
-            opts.not_null_term = true;
-        } else if (std.mem.eql(u8, attr_str, "NullNullTerminated")) {
-            opts.null_null_term = true;
-        } else if (std.mem.eql(u8, attr_str, "ComOutPtr")) {
-            opts.com_out_ptr = true;
-        } else {
-            jsonPanicMsg("unhandled custom param attribute '{s}'", .{attr_str});
+        switch (attr_node_ptr.*) {
+            .Object => |attr_obj| {
+                const kind = (try jsonObjGetRequired(attr_obj, "Kind", sdk_file)).String;
+                if (std.mem.eql(u8, kind, "MemorySize")) {
+                    try jsonObjEnforceKnownFieldsOnly(attr_obj, &[_][]const u8 {"Kind", "BytesParamIndex"}, sdk_file);
+                    opts.optional_bytes_param_index = @intCast(i16, (try jsonObjGetRequired(attr_obj, "BytesParamIndex", sdk_file)).Integer);
+                } else if (std.mem.eql(u8, kind, "FreeWith")) {
+                    try jsonObjEnforceKnownFieldsOnly(attr_obj, &[_][]const u8 {"Kind", "Func"}, sdk_file);
+                    const func = (try jsonObjGetRequired(attr_obj, "Func", sdk_file)).String;
+                    // TODO: what to do with this?
+                } else jsonPanicMsg("unknown param attr Kind '{s}'", .{kind});
+            },
+            .String => |attr_str| {
+                if (std.mem.eql(u8, attr_str, "Const")) {
+                    opts.is_const = true;
+                } else if (std.mem.eql(u8, attr_str, "In")) {
+                    opts.in = true;
+                } else if (std.mem.eql(u8, attr_str, "Out")) {
+                    opts.out = true;
+                } else if (std.mem.eql(u8, attr_str, "Optional")) {
+                    opts.optional = true;
+                } else if (std.mem.eql(u8, attr_str, "RetVal")) {
+                    opts.ret_val = true;
+                } else if (std.mem.eql(u8, attr_str, "NotNullTerminated")) {
+                    opts.not_null_term = true;
+                } else if (std.mem.eql(u8, attr_str, "NullNullTerminated")) {
+                    opts.null_null_term = true;
+                } else if (std.mem.eql(u8, attr_str, "ComOutPtr")) {
+                    opts.com_out_ptr = true;
+                } else {
+                    jsonPanicMsg("unhandled custom param attribute '{s}'", .{attr_str});
+                }
+            },
+            else => jsonPanic(),
         }
     }
     return opts;
@@ -1689,8 +1729,11 @@ fn generateFunction(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function
         try jsonObjEnforceKnownFieldsOnly(param_obj, &[_][]const u8 {"Name", "Type", "Attrs"}, sdk_file);
         const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).String;
         const param_type = (try jsonObjGetRequired(param_obj, "Type", sdk_file)).Object;
-        const param_options = processParamAttrs((try jsonObjGetRequired(param_obj, "Attrs", sdk_file)).Array, .var_decl);
+        const param_options = processParamAttrs((try jsonObjGetRequired(param_obj, "Attrs", sdk_file)).Array, .var_decl, sdk_file);
         const param_type_formatter = try addTypeRefs(sdk_file, param_type, param_options);
+        if (param_options.optional_bytes_param_index) |bytes_param_index| {
+            try out_writer.print("{s}    // TODO: what to do with BytesParamIndex {}?\n", .{prefix, bytes_param_index});
+        }
         try out_writer.print("{s}    {s}: {},\n", .{prefix, std.zig.fmtId(param_name), param_type_formatter});
     }
 

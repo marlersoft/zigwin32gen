@@ -197,12 +197,12 @@ const D2D1 = struct {
     pub const SkyBlue = 0x87CEEB;
 
     // TODO: this is missing
-    pub fn ColorF(o: struct { r: f32, g: f32, b: f32, a: f32 = 1 }) D3DCOLORVALUE {
+    pub fn ColorF(o: struct { r: f32, g: f32, b: f32, a: f32 = 1 }) D2D1_COLOR_F {
         return .{ .r = o.r, .g = o.g, .b = o.b, .a = o.a };
     }
 
     // TODO: this is missing
-    pub fn ColorFU32(o: struct { rgb: u32, a: f32 = 1 }) D3DCOLORVALUE {
+    pub fn ColorFU32(o: struct { rgb: u32, a: f32 = 1 }) D2D1_COLOR_F {
         return .{
             .r = @intToFloat(f32, (o.rgb >> 16) & 0xff) / 255,
             .g = @intToFloat(f32, (o.rgb >>  8) & 0xff) / 255,
