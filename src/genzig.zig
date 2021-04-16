@@ -925,7 +925,7 @@ const constants_to_skip = std.ComptimeStringMap(Nothing, .{
     .{ "IDC_PIN", .{} },
     .{ "IDC_PERSON", .{} },
 
-    .{ "IDI_APPLICATION", .{} },
+    //.{ "IDI_APPLICATION", .{} }, This one is aligned so we can generate it
     .{ "IDI_HAND", .{} },
     .{ "IDI_QUESTION", .{} },
     .{ "IDI_EXCLAMATION", .{} },
