@@ -906,7 +906,7 @@ const constants_to_skip = std.ComptimeStringMap(Nothing, .{
     .{ "RT_ANIICON", .{} },
     .{ "RT_HTML", .{} },
 
-    .{ "IDC_ARROW", .{} },
+    //.{ "IDC_ARROW", .{} }, This one is aligned so we can generate it
     .{ "IDC_IBEAM", .{} },
     .{ "IDC_WAIT", .{} },
     .{ "IDC_CROSS", .{} },
@@ -925,7 +925,7 @@ const constants_to_skip = std.ComptimeStringMap(Nothing, .{
     .{ "IDC_PIN", .{} },
     .{ "IDC_PERSON", .{} },
 
-    .{ "IDI_APPLICATION", .{} },
+    //.{ "IDI_APPLICATION", .{} }, This one is aligned so we can generate it
     .{ "IDI_HAND", .{} },
     .{ "IDI_QUESTION", .{} },
     .{ "IDI_EXCLAMATION", .{} },
