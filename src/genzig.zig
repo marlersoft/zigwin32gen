@@ -1228,6 +1228,8 @@ const non_exhaustive_enums = std.ComptimeStringMap(Nothing, .{
     // This enum is not exhaustive because it is missing a value, see
     //     https://github.com/microsoft/win32metadata/issues/203
     .{ "CLSCTX", .{} },
+    // send_flags is missing the value 0
+    .{ "send_flags", .{} },
 });
 
 fn shortEnumValueName(enum_type_name: []const u8, full_value_name: []const u8) []const u8 {
