@@ -210,7 +210,7 @@ fn main2() !u8 {
     global_symbol_None = try global_symbol_pool.add("None");
 
     const win32json_dir_name = "deps" ++ path_sep ++ "win32json";
-    const win32json_branch = "10.0.19041.5-preview.122";
+    const win32json_branch = "10.0.19041.5-preview.138";
     var win32json_dir = std.fs.cwd().openDir(win32json_dir_name, .{}) catch |e| switch (e) {
         error.FileNotFound => {
             std.debug.warn("Error: repository '{s}' does not exist, clone it with:\n", .{win32json_dir_name});
@@ -636,7 +636,7 @@ fn addTypeRefsNoFormatter(sdk_file: *SdkFile, type_ref: json.ObjectMap) anyerror
         try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"Kind", "Shape", "Child"}, sdk_file);
         try addTypeRefsNoFormatter(sdk_file, (try jsonObjGetRequired(type_ref, "Child", sdk_file)).Object);
     } else if (std.mem.eql(u8, kind, "LPArray")) {
-        try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"Kind", "NullNullTerm", "SizeParamIndex", "BytesParamIndex", "SizeConst", "Child"}, sdk_file);
+        try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"Kind", "NullNullTerm", "CountConst", "CountParamIndex", "Child"}, sdk_file);
         try addTypeRefsNoFormatter(sdk_file, (try jsonObjGetRequired(type_ref, "Child", sdk_file)).Object);
     } else if (std.mem.eql(u8, kind, "MissingClrType")) {
         try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8 {"Kind", "Name", "Namespace"}, sdk_file);
@@ -783,13 +783,12 @@ const TypeRefFormatter = struct {
             try writer.print("[{}]", .{shape_size});
             try fmtTypeRef(child, self.options, .child, self.sdk_file).format(fmt, fmt_options, writer);
         } else if (std.mem.eql(u8, kind, "LPArray")) {
-            try jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"Kind", "NullNullTerm", "SizeParamIndex", "BytesParamIndex", "SizeConst", "Child"}, self.sdk_file);
+            try jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"Kind", "NullNullTerm", "CountConst", "CountParamIndex", "Child"}, self.sdk_file);
             const null_null_term = (try jsonObjGetRequired(self.type_ref, "NullNullTerm", self.sdk_file)).Bool;
-            const size_param_index = (try jsonObjGetRequired(self.type_ref, "SizeParamIndex", self.sdk_file)).Integer;
-            const bytes_param_index = (try jsonObjGetRequired(self.type_ref, "BytesParamIndex", self.sdk_file)).Integer;
-            const size_const = (try jsonObjGetRequired(self.type_ref, "SizeConst", self.sdk_file)).Integer;
+            const count_const = (try jsonObjGetRequired(self.type_ref, "CountConst", self.sdk_file)).Integer;
+            const count_param_index = (try jsonObjGetRequired(self.type_ref, "CountParamIndex", self.sdk_file)).Integer;
             const type_ref_kind = (jsonObjGetRequired(self.type_ref, "Kind", self.sdk_file) catch unreachable).String;
-            // TODO: can Zig use size_param_index?
+            // TODO: can Zig use count_param_index?
             const child = (try jsonObjGetRequired(self.type_ref, "Child", self.sdk_file)).Object;
 
             if (self.options.optional) {
@@ -803,12 +802,12 @@ const TypeRefFormatter = struct {
                     sentinel_suffix = ":0";
                 }
 
-                if (size_const == -1 or size_const == 0) {
+                if (count_const == -1 or count_const == 0) {
                     try writer.print("[*{s}]", .{sentinel_suffix});
                 } else {
-                    try writer.print("*[{}]", .{size_const});
+                    try writer.print("*[{}]", .{count_const});
                 }
-                if (size_const <= 0 and self.options.is_const)
+                if (count_const <= 0 and self.options.is_const)
                     try writer.writeAll("const ");
                 try fmtTypeRef(child, self.options, .array, self.sdk_file).format(fmt, fmt_options, writer);
             }
@@ -1205,6 +1204,8 @@ fn generateStruct(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: 
                     field_options.not_null_term = true;
                 } else if (std.mem.eql(u8, attr_str, "NullNullTerminated")) {
                     field_options.null_null_term = true;
+                } else if (std.mem.eql(u8, attr_str, "Obselete")) {
+                    try out_writer.print("    /// Deprecated\n", .{});
                 } else {
                     jsonPanicMsg("unhandled custom field attribute {s}\n", .{attr_str});
                 }
@@ -1228,8 +1229,8 @@ const non_exhaustive_enums = std.ComptimeStringMap(Nothing, .{
     // This enum is not exhaustive because it is missing a value, see
     //     https://github.com/microsoft/win32metadata/issues/203
     .{ "CLSCTX", .{} },
-    // send_flags is missing the value 0
-    .{ "send_flags", .{} },
+    // SEND_FLAGS is missing the value 0
+    .{ "SEND_FLAGS", .{} },
 });
 
 fn shortEnumValueName(enum_type_name: []const u8, full_value_name: []const u8) []const u8 {
@@ -1256,6 +1257,10 @@ fn shortEnumValueName(enum_type_name: []const u8, full_value_name: []const u8) [
 const suppress_enum_aliases = std.ComptimeStringMap(Nothing, .{
     // suppress this one because the CFE_UNDERLINE enum value alias conflicts with the name of an enum type
     .{ "CFE_EFFECTS", .{} },
+    // these types have values that conflict with their own enum type name
+    .{ "INTERNET_DEFAULT_PORT", .{} },
+    .{ "PDH_VERSION", .{} },
+    .{ "POWER_PLATFORM_ROLE_VERSION", .{} },
     // --------------------------------------------------------------------------------
     // suppress these enum value aliases because there is already a constant with the same name
     // --------------------------------------------------------------------------------
@@ -1265,7 +1270,8 @@ const suppress_enum_aliases = std.ComptimeStringMap(Nothing, .{
     .{ "IPPROTO", .{} },
     .{ "MIB_IPFORWARD_TYPE", .{} },
     .{ "OLEMISC", .{} },
-    .{ "IMAGEHLP_CBA_EVENT_severity", .{} },
+    .{ "IMAGEHLP_CBA_EVENT_SEVERITY", .{} },
+    .{ "PFN_WDS_CLI_CALLBACK_MESSAGE_ID", .{} },
     // --------------------------------------------------------------------------------
     // suppress the rest because there is another enum with the same enum value alias
     // --------------------------------------------------------------------------------
@@ -1279,6 +1285,7 @@ const suppress_enum_aliases = std.ComptimeStringMap(Nothing, .{
     .{ "KERB_CERTIFICATE_LOGON_MessageTypeFlags", .{} },
     .{ "SC_ACTION_TypeFlags", .{} },
     .{ "IIdentityProvider_Advise_dwIdentityUpdateEventsFlags", .{} },
+    .{ "CRYPT_KEY_PROV_FLAGS", .{} },
     // WindowsProgramming
     .{ "VER_MASK", .{} },
     .{ "SetHandleInformation_dwFlags", .{} },
@@ -1677,9 +1684,9 @@ fn generateFunction(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function
     const prefix = if (func_kind == .com) "        " else "";
     switch (func_kind) {
         .fixed => try jsonObjEnforceKnownFieldsOnly(function_obj, &[_][]const u8 {"Name", "Platform",
-            "SetLastError", "DllImport", "ReturnType", "Params"}, sdk_file),
+            "SetLastError", "DllImport", "ReturnType", "Attrs", "Params"}, sdk_file),
         .ptr, .com => try jsonObjEnforceKnownFieldsOnly(function_obj, &[_][]const u8 {"Kind", "Name", "Platform",
-            "SetLastError", "ReturnType", "Params"}, sdk_file),
+            "SetLastError", "ReturnType", "Attrs", "Params"}, sdk_file),
     }
 
     const func_name_tmp = (try jsonObjGetRequired(function_obj, "Name", sdk_file)).String;
@@ -1687,12 +1694,23 @@ fn generateFunction(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function
     const set_last_error = (try jsonObjGetRequired(function_obj, "SetLastError", sdk_file)).Bool;
     const dll_import = if (func_kind == .fixed) (try jsonObjGetRequired(function_obj, "DllImport", sdk_file)).String else "";
     const return_type = (try jsonObjGetRequired(function_obj, "ReturnType", sdk_file)).Object;
+    const attrs = (try jsonObjGetRequired(function_obj, "Attrs", sdk_file)).Array;
     const params = (try jsonObjGetRequired(function_obj, "Params", sdk_file)).Array;
 
     if (func_kind == .fixed) {
         try sdk_file.func_exports.put(try global_symbol_pool.add(func_name_tmp), .{});
     }
 
+    for (attrs.items) |attr_node| {
+        switch (attr_node) {
+            .String => |attr| {
+                if (std.mem.eql(u8, attr, "SpecialName")) {
+                    try out_writer.print("{s}// TODO: this function has a \"SpecialName\", should Zig do anything with this?\n", .{prefix});
+                } else jsonPanic();
+            },
+            else => jsonPanic(),
+        }
+    }
     try generatePlatformComment(out_writer, platform_node);
     if (funcs_with_issues.get(func_name_tmp)) |_| {
         try out_writer.print("{s}// This function from dll '{s}' is being skipped because it has some sort of issue\n", .{prefix, dll_import});
