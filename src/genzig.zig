@@ -210,7 +210,7 @@ fn main2() !u8 {
     global_symbol_None = try global_symbol_pool.add("None");
 
     const win32json_dir_name = "deps" ++ path_sep ++ "win32json";
-    const win32json_branch = "10.0.19041.5-preview.138";
+    const win32json_branch = "10.0.19041.5-preview.143";
     var win32json_dir = std.fs.cwd().openDir(win32json_dir_name, .{}) catch |e| switch (e) {
         error.FileNotFound => {
             std.debug.warn("Error: repository '{s}' does not exist, clone it with:\n", .{win32json_dir_name});
