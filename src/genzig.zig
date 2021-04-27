@@ -290,7 +290,8 @@ fn main2() !u8 {
             //
             var file = try api_dir.openFile(api_json_basename, .{});
             defer file.close();
-            try readAndGenerateApiFile(out_api_dir, &sdk_files, api_json_basename, file);
+            const sdk_file = try readAndGenerateApiFile(out_api_dir, api_json_basename, file);
+            try sdk_files.append(sdk_file);
         }
 
         {
@@ -435,7 +436,7 @@ fn readApiList(api_dir: std.fs.Dir, api_list: *std.ArrayList([]const u8)) !void 
     }
 }
 
-fn readAndGenerateApiFile(out_dir: std.fs.Dir, sdk_files: *ArrayList(*SdkFile), json_basename: []const u8, file: std.fs.File) !void {
+fn readAndGenerateApiFile(out_dir: std.fs.Dir, json_basename: []const u8, file: std.fs.File) !*SdkFile {
 
     const read_start_millis = std.time.milliTimestamp();
     const content = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
@@ -455,10 +456,10 @@ fn readAndGenerateApiFile(out_dir: std.fs.Dir, sdk_files: *ArrayList(*SdkFile), 
     global_times.parse_time_millis += std.time.milliTimestamp() - parse_start_millis;
 
     var sdk_file = try SdkFile.create(try std.mem.dupe(allocator, u8, json_basename));
-    try sdk_files.append(sdk_file);
     const generate_start_millis = std.time.milliTimestamp();
     try generateFile(out_dir, sdk_file, json_tree);
     global_times.generate_time_millis += std.time.milliTimestamp() - generate_start_millis;
+    return sdk_file;
 }
 
 fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !void {
