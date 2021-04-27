@@ -210,7 +210,7 @@ fn main2() !u8 {
     global_symbol_None = try global_symbol_pool.add("None");
 
     const win32json_dir_name = "deps" ++ path_sep ++ "win32json";
-    const win32json_branch = "10.0.19041.5-preview.143";
+    const win32json_branch = "10.0.19041.166-preview";
     var win32json_dir = std.fs.cwd().openDir(win32json_dir_name, .{}) catch |e| switch (e) {
         error.FileNotFound => {
             std.debug.warn("Error: repository '{s}' does not exist, clone it with:\n", .{win32json_dir_name});
@@ -461,12 +461,6 @@ fn readAndGenerateApiFile(out_dir: std.fs.Dir, sdk_files: *ArrayList(*SdkFile), 
     global_times.generate_time_millis += std.time.milliTimestamp() - generate_start_millis;
 }
 
-const ExtraTypeCounts = struct {
-    enum_values: u32,
-    com_iface_ids: u32,
-    com_class_ids: u32,
-};
-
 fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !void {
     var out_file = try out_dir.createFile(sdk_file.zig_filename, .{});
     defer out_file.close();
@@ -491,26 +485,14 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
     try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
     try out_writer.print("// Section: Types ({})\n", .{types_array.items.len});
     try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
-    var extra_type_counts = ExtraTypeCounts {
-        .enum_values = 0,
-        .com_iface_ids = 0,
-        .com_class_ids = 0,
-    };
     {
         var enum_alias_conflicts = StringPool.HashMap(StringPool.Val).init(allocator);
         defer enum_alias_conflicts.deinit();
         for (types_array.items) |*type_node_ptr| {
-            try generateType(sdk_file, out_writer, type_node_ptr.Object, &extra_type_counts, &enum_alias_conflicts);
+            try generateType(sdk_file, out_writer, type_node_ptr.Object, &enum_alias_conflicts);
             try out_writer.print("\n", .{});
         }
     }
-    std.debug.assert(sdk_file.const_exports.items.len ==
-        constants_array.items.len +
-        extra_type_counts.enum_values +
-        extra_type_counts.com_iface_ids +
-        extra_type_counts.com_class_ids);
-    const expected_type_export_count = types_array.items.len - extra_type_counts.com_class_ids;
-    std.debug.assert(expected_type_export_count == sdk_file.type_exports.count());
     try out_writer.print("\n", .{});
     try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
     try out_writer.print("// Section: Functions ({})\n", .{functions_array.items.len});
@@ -519,7 +501,7 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
         try generateFunction(sdk_file, out_writer, function_node_ptr.Object, .fixed, null, null);
         try out_writer.print("\n", .{});
     }
-    std.debug.assert(functions_array.items.len == sdk_file.func_exports.count());
+    std.debug.assert(functions_array.items.len >= sdk_file.func_exports.count());
     try out_writer.print("\n", .{});
     try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
     try out_writer.print("// Section: Unicode Aliases ({})\n", .{unicode_aliases.items.len});
@@ -555,42 +537,25 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
     if (sdk_file.tmp_func_ptr_workaround_list.items.len > 0) {
         try out_writer.writeAll("    // The following '_ = <FuncPtrType>' lines are a workaround for https://github.com/ziglang/zig/issues/4476\n");
         for (sdk_file.tmp_func_ptr_workaround_list.items) |func_ptr_type| {
-            try out_writer.print("    _ = {s};\n", .{func_ptr_type});
+            try out_writer.print("    if (@hasDecl(@This(), \"{s}\")) {{ _ = {0s}; }}\n", .{func_ptr_type});
         }
         try out_writer.writeAll("\n");
     }
     try out_writer.print(
-        \\    const constant_export_count = {};
-        \\    const type_export_count = {};
-        \\    const enum_value_export_count = {};
-        \\    const com_iface_id_export_count = {};
-        \\    const com_class_id_export_count = {};
-        \\    const func_export_count = {};
-        \\    const unicode_alias_count = {};
-        \\    const import_count = {};
         \\    @setEvalBranchQuota(
-        \\        constant_export_count +
-        \\        type_export_count +
-        \\        enum_value_export_count +
-        \\        com_iface_id_export_count * 2 + // * 2 for value and ptr
-        \\        com_class_id_export_count * 2 + // * 2 for value and ptr
-        \\        func_export_count +
-        \\        unicode_alias_count +
-        \\        import_count +
-        \\        2 // TODO: why do I need these extra 2?
+        \\        @import("std").meta.declarations(@This()).len * 3
         \\    );
-        \\    @import("std").testing.refAllDecls(@This());
+        \\
+        \\    // reference all the pub declarations
+        \\    if (!@import("std").builtin.is_test) return;
+        \\    inline for (@import("std").meta.declarations(@This())) |decl| {{
+        \\        if (decl.is_pub) {{
+        \\            _ = decl;
+        \\        }}
+        \\    }}
         \\}}
         \\
-    , .{constants_array.items.len,
-        sdk_file.type_exports.count(),
-        extra_type_counts.enum_values,
-        extra_type_counts.com_iface_ids,
-        extra_type_counts.com_class_ids,
-        sdk_file.func_exports.count(),
-        unicode_aliases.items.len,
-        import_total,
-    });
+    , .{});
 }
 
 fn typeIsVoid(type_obj: json.ObjectMap, sdk_file: *SdkFile) !bool {
@@ -1001,12 +966,15 @@ const also_usable_type_api_map = std.ComptimeStringMap([]const u8, .{
     .{ "HeapHandle", "SystemServices" },
 });
 
-fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, extra_type_counts: *ExtraTypeCounts, enum_alias_conflicts: *StringPool.HashMap(StringPool.Val)) !void {
+fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, enum_alias_conflicts: *StringPool.HashMap(StringPool.Val)) !void {
     const kind = (try jsonObjGetRequired(type_obj, "Kind", sdk_file)).String;
     const tmp_name = (try jsonObjGetRequired(type_obj, "Name", sdk_file)).String;
+    const architectures = (try jsonObjGetRequired(type_obj, "Architectures", sdk_file)).Array;
 
     if (std.mem.eql(u8, kind, "ComClassID")) {
-        try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Platform", "Kind", "Guid"}, sdk_file);
+        if (architectures.items.len > 0)
+           jsonPanicMsg("not impl", .{});
+        try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Platform", "Architectures", "Kind", "Guid"}, sdk_file);
         const platform_node = try jsonObjGetRequired(type_obj, "Platform", sdk_file);
         const guid = (try jsonObjGetRequired(type_obj, "Guid", sdk_file)).String;
         const clsid_pool = try global_symbol_pool.addFormatted("CLSID_{s}", .{tmp_name});
@@ -1014,13 +982,20 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
         try out_writer.print("const {s}_Value = @import(\"../zig.zig\").Guid.initString(\"{s}\");\n", .{clsid_pool, guid});
         try out_writer.print("pub const {s} = &{0s}_Value;\n", .{clsid_pool});
         try sdk_file.const_exports.append(clsid_pool);
-        extra_type_counts.com_class_ids += 1;
         return;
     }
 
     const pool_name = try global_symbol_pool.add(tmp_name);
-    std.debug.assert(sdk_file.type_exports.get(pool_name) == null);
-    try sdk_file.type_exports.put(pool_name, .{});
+    if (architectures.items.len == 0) {
+        std.debug.assert(sdk_file.type_exports.get(pool_name) == null);
+        try sdk_file.type_exports.put(pool_name, .{});
+    } else {
+        try generateArchPrefix(out_writer, architectures.items);
+    }
+    defer {
+        if (architectures.items.len > 0) generateArchSuffix(out_writer);
+    }
+
 
     if (types_that_conflict_with_consts.get(tmp_name)) |_| {
         try out_writer.print("// WARNING: this type symbol conflicts with a const!\n", .{});
@@ -1029,7 +1004,8 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
         try out_writer.print("// TODO: not generating this type because it is causing some sort of error\n", .{});
         try out_writer.print("pub const {s} = usize;\n", .{tmp_name});
     } else if (std.mem.eql(u8, kind, "NativeTypedef")) {
-        try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Platform", "AlsoUsableFor", "Kind", "Def", "FreeFunc"}, sdk_file);
+        try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Platform", "Architectures",
+            "AlsoUsableFor", "Kind", "Def", "FreeFunc"}, sdk_file);
         const platform_node = try jsonObjGetRequired(type_obj, "Platform", sdk_file);
         const also_usable_for_node = try jsonObjGetRequired(type_obj, "AlsoUsableFor", sdk_file);
         const def_type = (try jsonObjGetRequired(type_obj, "Def", sdk_file)).Object;
@@ -1105,7 +1081,7 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
         const zig_type_formatter = try addTypeRefs(sdk_file, def_type, .{.reason = .direct_type_access, .is_const = false, .in = false, .out = false });
         try out_writer.print("pub const {s} = {};\n", .{tmp_name, zig_type_formatter});
     } else if (std.mem.eql(u8, kind, "Enum")) {
-        try generateEnum(sdk_file, out_writer, type_obj, &extra_type_counts.enum_values, pool_name, enum_alias_conflicts);
+        try generateEnum(sdk_file, out_writer, type_obj, pool_name, enum_alias_conflicts);
     } else if (std.mem.eql(u8, kind, "Struct")) {
         try generateStruct(sdk_file, out_writer, type_obj, pool_name);
     } else if (std.mem.eql(u8, kind, "FunctionPointer")) {
@@ -1117,21 +1093,23 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
         try generateFunction(sdk_file, out_writer, type_obj, .ptr, null, null);
         try sdk_file.tmp_func_ptr_workaround_list.append(pool_name);
     } else if (std.mem.eql(u8, kind, "Com")) {
-        try generateCom(sdk_file, out_writer, type_obj, pool_name, extra_type_counts);
-    } else if (std.mem.eql(u8, kind, "StructOrUnion")) {
+        try generateCom(sdk_file, out_writer, type_obj, pool_name);
+    } else if (std.mem.eql(u8, kind, "Union")) {
         if (dhcp_type_conflicts.get(tmp_name)) |_| {
             try out_writer.print("// TODO: this dhcp type has been removed because it conflicts with a nested type '{s}'\n", .{tmp_name});
             return;
         }
-        try out_writer.print("pub const {s} = u32; // TODO: implement StructOrUnion types?\n", .{tmp_name});
+        try out_writer.print("pub const {s} = u32; // TODO: implement Union types?\n", .{tmp_name});
     } else {
         jsonPanicMsg("{s}: unknown type Kind '{s}'", .{sdk_file.json_basename, kind});
     }
 }
 
 const types_to_skip = std.ComptimeStringMap(Nothing, .{
-    // keep this around for a convenient way to disable types
-    .{ "PlaceholderForNow", .{} },
+    // I don't know why this is happening, but when I run "zig test" on my x86_64
+    // machine, it causes ARM64_NT_NEON128 to be referenced from debug.zig
+    // which only appears in the CONTEXT type.
+    .{ "CONTEXT", .{} },
 });
 const types_that_conflict_with_consts = std.ComptimeStringMap(Nothing, .{
     // This symbol conflicts with a constant with the exact same name
@@ -1175,7 +1153,7 @@ fn generatePlatformComment(out_writer: std.fs.File.Writer, platform_node: std.js
 }
 
 fn generateStruct(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, struct_pool_name: StringPool.Val) !void {
-    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Kind", "Name", "Platform",
+    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Kind", "Name", "Platform", "Architectures",
         "Size", "PackingSize", "Fields", "Comment", "NestedTypes"}, sdk_file);
     const platform_node = try jsonObjGetRequired(type_obj, "Platform", sdk_file);
     const struct_size = (try jsonObjGetRequired(type_obj, "Size", sdk_file)).Integer;
@@ -1409,8 +1387,8 @@ fn setShortNames(values: []EnumValue) void {
     }
 }
 
-fn generateEnum(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, enum_value_export_count: *u32, pool_name: StringPool.Val, enum_alias_conflicts: *StringPool.HashMap(StringPool.Val)) !void {
-    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Platform", "Kind", "Flags", "Values", "IntegerBase"}, sdk_file);
+fn generateEnum(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, pool_name: StringPool.Val, enum_alias_conflicts: *StringPool.HashMap(StringPool.Val)) !void {
+    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Platform", "Architectures", "Kind", "Flags", "Values", "IntegerBase"}, sdk_file);
     const platform_node = try jsonObjGetRequired(type_obj, "Platform", sdk_file);
     const flags = (try jsonObjGetRequired(type_obj, "Flags", sdk_file)).Bool;
     const json_values = (try jsonObjGetRequired(type_obj, "Values", sdk_file)).Array;
@@ -1481,11 +1459,10 @@ fn generateEnum(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
         try sdk_file.const_exports.append(val.pool_name);
         try out_writer.print("pub const {} = {}.{};\n", .{val.pool_name, pool_name, std.zig.fmtId(val.short_name)});
     }
-    enum_value_export_count.* += alias_count;
 }
 
-fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, com_pool_name: StringPool.Val, extra_type_counts: *ExtraTypeCounts) !void {
-    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Kind", "Name", "Platform", "Guid", "Interface", "Methods"}, sdk_file);
+fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, com_pool_name: StringPool.Val) !void {
+    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Kind", "Name", "Platform", "Architectures", "Guid", "Interface", "Methods"}, sdk_file);
     const platform_node = try jsonObjGetRequired(type_obj, "Platform", sdk_file);
     const com_optional_guid : ?[]const u8 = switch (try jsonObjGetRequired(type_obj, "Guid", sdk_file)) {
         .Null => null,
@@ -1509,7 +1486,6 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
         try out_writer.print("const {s}_Value = @import(\"../zig.zig\").Guid.initString(\"{s}\");\n", .{iid_pool, guid});
         try out_writer.print("pub const {s} = &{0s}_Value;\n", .{iid_pool});
         try sdk_file.const_exports.append(iid_pool);
-        extra_type_counts.com_iface_ids += 1;
     }
 
     try out_writer.print("pub const {s} = extern struct {{\n", .{com_pool_name});
@@ -1668,29 +1644,39 @@ const funcs_with_issues = std.ComptimeStringMap(Nothing, .{
     .{ "CorePrinterDriverInstalledA", .{} },
     .{ "CorePrinterDriverInstalledW", .{} },
 });
-const funcs_64bit_only = std.ComptimeStringMap(Nothing, .{
-    .{ "SetWindowLongPtrA", .{} },
-    .{ "SetWindowLongPtrW", .{} },
-    .{ "GetWindowLongPtrA", .{} },
-    .{ "GetWindowLongPtrW", .{} },
-});
 const noreturn_funcs = std.ComptimeStringMap(Nothing, .{
     .{ "ExitProcess", .{} },
 });
 
 const FuncPtrKind = enum { ptr, fixed, com };
 
+fn generateArchPrefix(out_writer: std.fs.File.Writer, architectures: []json.Value) !void {
+    std.debug.assert(architectures.len > 0);
+    try out_writer.writeAll("pub usingnamespace switch (@import(\"../zig.zig\").arch) {\n");
+    var case_prefix: []const u8 = "";
+    for (architectures) |arch_node| {
+        const arch = arch_name_map.get(arch_node.String) orelse return error.UnknownArch;
+        try out_writer.print("{s}.{s}", .{case_prefix, arch_node.String});
+        case_prefix = ", ";
+    }
+    try out_writer.writeAll(" => struct {\n\n");
+}
+fn generateArchSuffix(out_writer: std.fs.File.Writer) void {
+    out_writer.writeAll("\n}, else => struct { } };\n") catch @panic("here");
+}
+
 fn generateFunction(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function_obj: json.ObjectMap, func_kind: FuncPtrKind, suffix: ?u8, optional_self_type: ?[]const u8) !void {
     const prefix = if (func_kind == .com) "        " else "";
     switch (func_kind) {
-        .fixed => try jsonObjEnforceKnownFieldsOnly(function_obj, &[_][]const u8 {"Name", "Platform",
+        .fixed => try jsonObjEnforceKnownFieldsOnly(function_obj, &[_][]const u8 {"Name", "Platform", "Architectures",
             "SetLastError", "DllImport", "ReturnType", "Attrs", "Params"}, sdk_file),
-        .ptr, .com => try jsonObjEnforceKnownFieldsOnly(function_obj, &[_][]const u8 {"Kind", "Name", "Platform",
+        .ptr, .com => try jsonObjEnforceKnownFieldsOnly(function_obj, &[_][]const u8 {"Kind", "Name", "Platform", "Architectures",
             "SetLastError", "ReturnType", "Attrs", "Params"}, sdk_file),
     }
 
     const func_name_tmp = (try jsonObjGetRequired(function_obj, "Name", sdk_file)).String;
     const platform_node = try jsonObjGetRequired(function_obj, "Platform", sdk_file);
+    const architectures = (try jsonObjGetRequired(function_obj, "Architectures", sdk_file)).Array;
     const set_last_error = (try jsonObjGetRequired(function_obj, "SetLastError", sdk_file)).Bool;
     const dll_import = if (func_kind == .fixed) (try jsonObjGetRequired(function_obj, "DllImport", sdk_file)).String else "";
     const return_type = (try jsonObjGetRequired(function_obj, "ReturnType", sdk_file)).Object;
@@ -1699,6 +1685,15 @@ fn generateFunction(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function
 
     if (func_kind == .fixed) {
         try sdk_file.func_exports.put(try global_symbol_pool.add(func_name_tmp), .{});
+    }
+
+    if (architectures.items.len > 0) {
+        // is COM supposed to support arch specific methods?
+        std.debug.assert(func_kind != .com);
+        try generateArchPrefix(out_writer, architectures.items);
+    }
+    defer {
+        if (architectures.items.len > 0) generateArchSuffix(out_writer);
     }
 
     for (attrs.items) |attr_node| {
@@ -1716,11 +1711,6 @@ fn generateFunction(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function
         try out_writer.print("{s}// This function from dll '{s}' is being skipped because it has some sort of issue\n", .{prefix, dll_import});
         try out_writer.print("{s}pub fn {s}() void {{ @panic(\"this function is not working\"); }}\n", .{prefix, func_name_tmp});
         return;
-    }
-
-    const only_64bit = if (funcs_64bit_only.get(func_name_tmp)) |_| true else false;
-    if (only_64bit) {
-        try out_writer.writeAll("pub usingnamespace if (@sizeOf(usize) == 8) struct {\n");
     }
 
     switch (func_kind) {
@@ -1767,10 +1757,6 @@ fn generateFunction(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function
     }
     const term = if (func_kind == .com) "," else ";";
     try out_writer.print("{s}\n", .{term});
-
-    if (only_64bit) {
-        try out_writer.writeAll("} else struct { };\n");
-    }
 }
 
 fn getPoolStringWithParts(a: *std.mem.Allocator, slices: []const []const u8) ![]const u8 {
@@ -1802,6 +1788,13 @@ fn generateUnicodeAliases(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, un
     try out_writer.writeAll("    },\n");
     try out_writer.writeAll("};");
 }
+
+const Arch = enum { X86, X64, Arm64 };
+const arch_name_map = std.ComptimeStringMap(Arch, .{
+    .{ "X86", Arch.X86 },
+    .{ "X64", Arch.X64 },
+    .{ "Arm64", Arch.Arm64 },
+});
 
 pub fn SliceFormatter(comptime T: type, comptime spec: []const u8) type { return struct {
     slice: []const T,
