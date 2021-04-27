@@ -1082,8 +1082,14 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
         try out_writer.print("pub const {s} = {};\n", .{tmp_name, zig_type_formatter});
     } else if (std.mem.eql(u8, kind, "Enum")) {
         try generateEnum(sdk_file, out_writer, type_obj, pool_name, enum_alias_conflicts);
+    } else if (std.mem.eql(u8, kind, "Union")) {
+        if (dhcp_type_conflicts.get(tmp_name)) |_| {
+            try out_writer.print("// TODO: this dhcp type has been removed because it conflicts with a nested type '{s}'\n", .{tmp_name});
+            return;
+        }
+        try generateStructOrUnion(sdk_file, out_writer, type_obj, pool_name, .Union);
     } else if (std.mem.eql(u8, kind, "Struct")) {
-        try generateStruct(sdk_file, out_writer, type_obj, pool_name);
+        try generateStructOrUnion(sdk_file, out_writer, type_obj, pool_name, .Struct);
     } else if (std.mem.eql(u8, kind, "FunctionPointer")) {
         if (func_ptr_dependency_loop_problems.get(tmp_name)) |_| {
             try out_writer.writeAll("// TODO: this function pointer causes dependency loop problems, so it's stubbed out\n");
@@ -1094,12 +1100,6 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
         try sdk_file.tmp_func_ptr_workaround_list.append(pool_name);
     } else if (std.mem.eql(u8, kind, "Com")) {
         try generateCom(sdk_file, out_writer, type_obj, pool_name);
-    } else if (std.mem.eql(u8, kind, "Union")) {
-        if (dhcp_type_conflicts.get(tmp_name)) |_| {
-            try out_writer.print("// TODO: this dhcp type has been removed because it conflicts with a nested type '{s}'\n", .{tmp_name});
-            return;
-        }
-        try out_writer.print("pub const {s} = u32; // TODO: implement Union types?\n", .{tmp_name});
     } else {
         jsonPanicMsg("{s}: unknown type Kind '{s}'", .{sdk_file.json_basename, kind});
     }
@@ -1152,7 +1152,7 @@ fn generatePlatformComment(out_writer: std.fs.File.Writer, platform_node: std.js
     }
 }
 
-fn generateStruct(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, struct_pool_name: StringPool.Val) !void {
+fn generateStructOrUnion(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, struct_pool_name: StringPool.Val, kind: enum { Struct, Union }) !void {
     try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Kind", "Name", "Platform", "Architectures",
         "Size", "PackingSize", "Fields", "Comment", "NestedTypes"}, sdk_file);
     const platform_node = try jsonObjGetRequired(type_obj, "Platform", sdk_file);
@@ -1162,7 +1162,8 @@ fn generateStruct(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: 
     const struct_nested_types = (try jsonObjGetRequired(type_obj, "NestedTypes", sdk_file)).Array;
 
     try generatePlatformComment(out_writer, platform_node);
-    try out_writer.print("pub const {} = extern struct {{\n", .{struct_pool_name});
+    const zig_type = if (kind == .Struct) "struct" else "union";
+    try out_writer.print("pub const {} = extern {s} {{\n", .{struct_pool_name, zig_type});
     if (struct_fields.items.len == 0) {
         // TODO: handle nested types
         try out_writer.print("    comment: [*]const u8 = \"TODO: why is this struct empty?\"\n", .{});
