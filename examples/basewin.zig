@@ -2,15 +2,15 @@
 
 const WINAPI = @import("std").os.windows.WINAPI;
 usingnamespace @import("win32").zig;
-usingnamespace @import("win32").api.system.system_services;
-usingnamespace @import("win32").api.ui.windows_and_messaging;
+usingnamespace @import("win32").system.system_services;
+usingnamespace @import("win32").ui.windows_and_messaging;
 
 const windowlongptr = @import("win32").windowlongptr;
 
 // NOTE: can't do usingnamespace for menu_and_resources because it has conflicts with windows_and_messaging
 //       I think this particular one is a problem with win32metadata.
 //       NOTE: should Zig allow symbol conflicts so long as they are not referenced?
-const mnr = @import("win32").api.ui.menus_and_resources;
+const mnr = @import("win32").ui.menus_and_resources;
 const HMENU = mnr.HMENU;
 
 pub fn BaseWindow(comptime DERIVED_TYPE: type) type { return struct {

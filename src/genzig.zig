@@ -134,14 +134,16 @@ const Module = struct {
     zig_basename: []const u8,
     children: StringPool.HashMap(*Module),
     file: ?SdkFile,
-    pub fn init(optional_parent: ?*Module, name: StringPool.Val) !Module {
-        return Module {
+    pub fn alloc(optional_parent: ?*Module, name: StringPool.Val) !*Module {
+        var module = try allocator.create(Module);
+        module.* = Module {
             .optional_parent = optional_parent,
             .name = name,
             .zig_basename = try std.mem.concat(allocator, u8, &[_][]const u8 { name.slice, ".zig" }),
             .children = StringPool.HashMap(*Module).init(allocator),
             .file = null,
         };
+        return module;
     }
 };
 
@@ -166,10 +168,10 @@ const SdkFile = struct {
     // this field is only needed to workaround: https://github.com/ziglang/zig/issues/4476
     tmp_func_ptr_workaround_list: ArrayList(StringPool.Val),
 
-    pub fn getApiDirImportPrefix(self: SdkFile) []const u8 {
+    pub fn getWin32DirImportPrefix(self: SdkFile) []const u8 {
         return import_prefix_table[self.depth];
     }
-    pub fn getWin32DirImportPrefix(self: SdkFile) []const u8 {
+    pub fn getSrcDirImportPrefix(self: SdkFile) []const u8 {
         return import_prefix_table[self.depth + 1];
     }
 
@@ -250,32 +252,25 @@ fn main2() !u8 {
         else => return e,
     };
 
-    const out_dir_string = zigwin32_dir_name ++ path_sep ++ "src";
-    try cleanDir(cwd, out_dir_string);
-    var out_dir = try cwd.openDir(out_dir_string, .{});
+    var out_dir = try cwd.openDir(zigwin32_dir_name, .{});
     defer out_dir.close();
-
-    try out_dir.makeDir("win32");
+    out_dir.deleteFile("win32.zig") catch |e| switch (e) {
+        error.FileNotFound => {},
+        else => return e,
+    };
+    try cleanDir(out_dir, "win32");
     var out_win32_dir = try out_dir.openDir("win32", .{});
     defer out_win32_dir.close();
 
-    // copy zig.zig, missing.zig and windowlongptr.zig modules
-    {
-        var src_dir = try cwd.openDir("src", .{});
-        defer src_dir.close();
-        try src_dir.copyFile("zig.zig", out_win32_dir, "zig.zig", .{});
-        try src_dir.copyFile("missing.zig", out_win32_dir, "missing.zig", .{});
-        try src_dir.copyFile("windowlongptr.zig", out_win32_dir, "windowlongptr.zig", .{});
-    }
+    const src_modules = &[_][]const u8 {
+        "zig",
+        "missing",
+        "windowlongptr",
+    };
 
-    var root_module = try allocator.create(Module);
-    root_module.* = try Module.init(null, try global_symbol_pool.add("api"));
+    const root_module = try Module.alloc(null, try global_symbol_pool.add("win32"));
 
     {
-        try out_win32_dir.makeDir("api");
-        var out_api_dir = try out_win32_dir.openDir("api", .{});
-        defer out_api_dir.close();
-
         var api_list = std.ArrayList([]const u8).init(allocator);
         defer {
             for (api_list.items) |api_name| {
@@ -299,30 +294,27 @@ fn main2() !u8 {
             //
             var file = try api_dir.openFile(api_json_basename, .{});
             defer file.close();
-            try readAndGenerateApiFile(root_module, out_api_dir, api_json_basename, file);
+            try readAndGenerateApiFile(root_module, out_win32_dir, api_json_basename, file);
         }
 
-        try generateContainerModules(out_win32_dir, root_module);
+        for (src_modules ++ &[_][]const u8 {
+            "everything",
+        }) |submodule_str| {
+            const submodule = try global_symbol_pool.add(submodule_str);
+            try root_module.children.put(submodule, try Module.alloc(root_module, submodule));
+        }
+
+        try generateContainerModules(out_dir, root_module);
         try generateEverythingModule(out_win32_dir, root_module);
     }
 
+    // copy zig.zig, missing.zig and windowlongptr.zig modules
     {
-        var win32_file = try out_dir.createFile("win32.zig", .{});
-        defer win32_file.close();
-        const writer = win32_file.writer();
-        try writer.writeAll(autogen_header ++
-            \\pub const api = @import("win32/api.zig");
-            \\pub const zig = @import("win32/zig.zig");
-            \\pub const missing = @import("win32/missing.zig");
-            \\pub const windowlongptr = @import("win32/windowlongptr.zig");
-            \\pub const everything = @import("win32/everything.zig");
-            \\
-            \\const std = @import("std");
-            \\test {
-            \\    std.testing.refAllDecls(@This());
-            \\}
-            \\
-        );
+        var src_dir = try cwd.openDir("src", .{});
+        defer src_dir.close();
+        inline for (src_modules) |mod| {
+            try src_dir.copyFile(mod ++ ".zig", out_win32_dir, mod ++ ".zig", .{});
+        }
     }
     print_time_summary = true;
     return 0;
@@ -382,9 +374,6 @@ fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !vo
         }
     }
 
-    // TODO: should I remove this and use @import("api.zig") instead?
-    try writer.writeAll("const api = @import(\"api.zig\");\n");
-
     for (sdk_files.items) |sdk_file| {
         try writer.print("// {s} exports {} constants:\n", .{sdk_file.zig_name, sdk_file.const_exports.items.len});
         for (sdk_file.const_exports.items) |constant| {
@@ -392,7 +381,7 @@ fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !vo
                 try writer.print("// WARNING: redifinition of constant symbol '{s}' in module '{s}' (going with module '{s}')\n", .{
                     constant, sdk_file.zig_name, other_sdk_file.zig_name});
             } else {
-                try writer.print("pub const {s} = api.{s}.{0s};\n", .{constant, sdk_file.zig_name});
+                try writer.print("pub const {s} = @import(\"../win32.zig\").{s}.{0s};\n", .{constant, sdk_file.zig_name});
                 try shared_export_map.put(constant, sdk_file);
             }
         }
@@ -405,7 +394,7 @@ fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !vo
                 try writer.print("// WARNING: redefinition of type symbol '{s}' from '{s}', going with '{s}'\n", .{
                     type_name, sdk_file.zig_name, first_type_sdk.zig_name});
             } else {
-                try writer.print("pub const {s} = api.{s}.{0s};\n", .{type_name, sdk_file.zig_name});
+                try writer.print("pub const {s} = @import(\"../win32.zig\").{s}.{0s};\n", .{type_name, sdk_file.zig_name});
             }
         }
         try writer.print("// {s} exports {} functions:\n", .{sdk_file.zig_name, sdk_file.func_exports.count()});
@@ -416,7 +405,7 @@ fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !vo
                 try writer.print("// WARNING: redifinition of function '{s}' in module '{s}' (going with module '{s}')\n", .{
                     func, sdk_file.zig_name, other_sdk_file.zig_name});
             } else {
-                try writer.print("pub const {s} = api.{s}.{0s};\n", .{func, sdk_file.zig_name});
+                try writer.print("pub const {s} = @import(\"../win32.zig\").{s}.{0s};\n", .{func, sdk_file.zig_name});
                 try shared_export_map.put(func, sdk_file);
             }
         }
@@ -457,7 +446,6 @@ fn moduleLessThan(context: void, lhs: *Module, rhs: *Module) bool {
 
 fn generateContainerModules(dir: std.fs.Dir, module: *Module) anyerror!void {
     if (module.children.count() == 0) {
-        std.debug.assert(module.file != null);
         return;
     }
 
@@ -554,8 +542,7 @@ fn readAndGenerateApiFile(root_module: *Module, out_dir: std.fs.Dir, json_basena
             if (module.children.get(name_pool)) |existing| {
                 module = existing;
             } else {
-                const new_module = try allocator.create(Module);
-                new_module.* = try Module.init(module, name_pool);
+                const new_module = try Module.alloc(module, name_pool);
                 try module.children.put(name_pool, new_module);
                 module = new_module;
             }
@@ -653,7 +640,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.ValueTree) !
                     api_path[i] = '/';
             }
             try out_writer.print("const {s} = @import(\"{s}{s}.zig\").{0s};\n",
-                .{name, sdk_file.getApiDirImportPrefix(), api_path});
+                .{name, sdk_file.getWin32DirImportPrefix(), api_path});
         }
     }
 
@@ -1793,7 +1780,7 @@ const FuncPtrKind = enum { ptr, fixed, com };
 
 fn generateArchPrefix(out_writer: std.fs.File.Writer, module_depth: u2, architectures: []json.Value) !void {
     std.debug.assert(architectures.len > 0);
-    try out_writer.print("pub usingnamespace switch (@import(\"{s}zig.zig\").arch) {{\n", .{import_prefix_table[module_depth+1]});
+    try out_writer.print("pub usingnamespace switch (@import(\"{s}zig.zig\").arch) {{\n", .{import_prefix_table[module_depth]});
     var case_prefix: []const u8 = "";
     for (architectures) |arch_node| {
         const arch = arch_name_map.get(arch_node.String) orelse return error.UnknownArch;
