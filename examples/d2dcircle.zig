@@ -3,14 +3,14 @@ pub const UNICODE = true;
 
 const WINAPI = @import("std").os.windows.WINAPI;
 usingnamespace @import("win32").zig;
-usingnamespace @import("win32").api.system_services;
-usingnamespace @import("win32").api.windows_and_messaging;
-usingnamespace @import("win32").api.gdi;
-usingnamespace @import("win32").api.direct2d;
-usingnamespace @import("win32").api.direct3d9;
-usingnamespace @import("win32").api.dxgi;
-usingnamespace @import("win32").api.com;
-usingnamespace @import("win32").api.display_devices;
+usingnamespace @import("win32").api.system.system_services;
+usingnamespace @import("win32").api.ui.windows_and_messaging;
+usingnamespace @import("win32").api.graphics.gdi;
+usingnamespace @import("win32").api.graphics.direct2d;
+usingnamespace @import("win32").api.graphics.direct3d9;
+usingnamespace @import("win32").api.graphics.dxgi;
+usingnamespace @import("win32").api.system.com;
+usingnamespace @import("win32").api.ui.display_devices;
 
 usingnamespace @import("basewin.zig");
 

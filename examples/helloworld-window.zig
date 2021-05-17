@@ -4,9 +4,9 @@ pub const UNICODE = true;
 const WINAPI = @import("std").os.windows.WINAPI;
 
 usingnamespace @import("win32").zig;
-usingnamespace @import("win32").api.system_services;
-usingnamespace @import("win32").api.windows_and_messaging;
-usingnamespace @import("win32").api.gdi;
+usingnamespace @import("win32").api.system.system_services;
+usingnamespace @import("win32").api.ui.windows_and_messaging;
+usingnamespace @import("win32").api.graphics.gdi;
 
 pub export fn wWinMain(hInstance: HINSTANCE, _: HINSTANCE, pCmdLine: [*:0]u16, nCmdShow: u32) callconv(WINAPI) c_int
 {

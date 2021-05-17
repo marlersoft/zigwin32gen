@@ -128,11 +128,36 @@ const target_kind_map = std.ComptimeStringMap(TargetKind, .{
 
 const Nothing = struct {};
 
+const Module = struct {
+    optional_parent: ?*Module,
+    name: StringPool.Val,
+    zig_basename: []const u8,
+    children: StringPool.HashMap(*Module),
+    file: ?SdkFile,
+    pub fn init(optional_parent: ?*Module, name: StringPool.Val) !Module {
+        return Module {
+            .optional_parent = optional_parent,
+            .name = name,
+            .zig_basename = try std.mem.concat(allocator, u8, &[_][]const u8 { name.slice, ".zig" }),
+            .children = StringPool.HashMap(*Module).init(allocator),
+            .file = null,
+        };
+    }
+};
+
+const import_prefix_table = &[_][]const u8 {
+    "",
+    "../",
+    "../../",
+    "../../../",
+    "../../../../",
+};
+
 const SdkFile = struct {
     json_basename: []const u8,
-    name_original_case: []const u8,
-    name_snake_case: []const u8,
-    zig_filename: []const u8,
+    json_name: []const u8,
+    zig_name: []const u8,
+    depth: u2,
     const_exports: ArrayList(StringPool.Val),
     uses_guid: bool,
     top_level_api_imports: StringPool.HashMap(StringPool.Val),
@@ -141,32 +166,15 @@ const SdkFile = struct {
     // this field is only needed to workaround: https://github.com/ziglang/zig/issues/4476
     tmp_func_ptr_workaround_list: ArrayList(StringPool.Val),
 
-    pub fn create(json_basename: []const u8) !*SdkFile {
-        const sdk_file = try allocator.create(SdkFile);
-        errdefer allocator.destroy(sdk_file);
-        const name_original_case = json_basename[0..json_basename.len - ".json".len];
-        const name_snake_case = try cameltosnake.camelToSnakeAlloc(allocator, name_original_case);
-        errdefer allocator.free(name_snake_case);
-        const zig_filename = try std.mem.concat(allocator, u8, &[_][]const u8 {name_snake_case, ".zig"});
-        errdefer allocator.free(zig_filename);
-
-        sdk_file.* = .{
-            .json_basename = json_basename,
-            .name_original_case = name_original_case,
-            .name_snake_case = name_snake_case,
-            .zig_filename = zig_filename,
-            .const_exports = ArrayList(StringPool.Val).init(allocator),
-            .uses_guid = false,
-            .top_level_api_imports = StringPool.HashMap(StringPool.Val).init(allocator),
-            .type_exports = StringPool.HashMap(Nothing).init(allocator),
-            .func_exports = StringPool.HashMap(Nothing).init(allocator),
-            .tmp_func_ptr_workaround_list = ArrayList(StringPool.Val).init(allocator),
-        };
-        return sdk_file;
+    pub fn getApiDirImportPrefix(self: SdkFile) []const u8 {
+        return import_prefix_table[self.depth];
+    }
+    pub fn getWin32DirImportPrefix(self: SdkFile) []const u8 {
+        return import_prefix_table[self.depth + 1];
     }
 
     pub fn addApiImport(self: *SdkFile, name: []const u8, api: []const u8, parents: json.Array) !void {
-        if (!std.mem.eql(u8, self.name_original_case, api)) {
+        if (!std.mem.eql(u8, self.json_name, api)) {
             const top_level_symbol = try global_symbol_pool.add(
                 if (parents.items.len == 0) name else parents.items[0].String);
             const pool_api = try global_symbol_pool.add(api);
@@ -210,7 +218,7 @@ fn main2() !u8 {
     global_symbol_None = try global_symbol_pool.add("None");
 
     const win32json_dir_name = "deps" ++ path_sep ++ "win32json";
-    const win32json_branch = "10.0.19041.166-preview";
+    const win32json_branch = "10.0.19041.202-preview";
     var win32json_dir = std.fs.cwd().openDir(win32json_dir_name, .{}) catch |e| switch (e) {
         error.FileNotFound => {
             std.debug.warn("Error: repository '{s}' does not exist, clone it with:\n", .{win32json_dir_name});
@@ -260,8 +268,9 @@ fn main2() !u8 {
         try src_dir.copyFile("windowlongptr.zig", out_win32_dir, "windowlongptr.zig", .{});
     }
 
-    var sdk_files = ArrayList(*SdkFile).init(allocator);
-    defer sdk_files.deinit();
+    var root_module = try allocator.create(Module);
+    root_module.* = try Module.init(null, try global_symbol_pool.add("api"));
+
     {
         try out_win32_dir.makeDir("api");
         var out_api_dir = try out_win32_dir.openDir("api", .{});
@@ -290,113 +299,11 @@ fn main2() !u8 {
             //
             var file = try api_dir.openFile(api_json_basename, .{});
             defer file.close();
-            const sdk_file = try readAndGenerateApiFile(out_api_dir, api_json_basename, file);
-            try sdk_files.append(sdk_file);
+            try readAndGenerateApiFile(root_module, out_api_dir, api_json_basename, file);
         }
 
-        {
-            var api_file = try out_win32_dir.createFile("api.zig", .{});
-            defer api_file.close();
-            const writer = api_file.writer();
-            try writer.writeAll(autogen_header);
-            for (sdk_files.items) |sdk_file| {
-                try writer.print("pub const {s} = @import(\"api/{0s}.zig\");\n", .{sdk_file.name_snake_case});
-            }
-            try writer.writeAll(
-                \\test {
-                \\
-            );
-            try writer.print("    const api_count = {};\n", .{sdk_files.items.len});
-            try writer.writeAll(
-                \\    @setEvalBranchQuota(api_count);
-                \\    @import("std").testing.refAllDecls(@This());
-                \\}
-                \\
-            );
-        }
-
-        {
-            var everything_file = try out_win32_dir.createFile("everything.zig", .{});
-            defer everything_file.close();
-            const writer = everything_file.writer();
-            try writer.writeAll(autogen_header ++
-                \\//! This module contains aliases to ALL symbols inside the Win32 SDK.  It allows
-                \\//! an application to access any and all symbols through a single import.
-                \\
-                \\pub const L = @import("zig.zig").L;
-                \\
-                \\pub usingnamespace @import("missing.zig");
-                \\
-            );
-
-            // TODO: workaround issue where constants/functions are defined more than once, not sure what the right solution
-            //       is for all these, maybe some modules are not compatible with each other.  This could just be the permanent
-            //       solution as well, if there are conflicts, we could just say the user has to import the specific module they want.
-            // TODO: I think the right way to reslve conflicts in everything.zig is to have a priority order for the apis.
-            //       If I just sort the API's in the right order, more common apis go first, then my current logic will work.
-            var shared_export_map = StringPool.HashMap(*SdkFile).init(allocator);
-            defer shared_export_map.deinit();
-
-            // populate the shared_export_map, start with types first
-            // because types can be referenced within the modules (unlike consts/functions)
-            for (sdk_files.items) |sdk_file| {
-                var type_export_it = sdk_file.type_exports.iterator();
-                while (type_export_it.next()) |kv| {
-                    const type_name = kv.key;
-                    if (shared_export_map.get(type_name)) |_| {
-                        //try shared_export_map.put(type_name, .{ .first_sdk_file_ptr = entry.first_sdk_file_ptr, .duplicates = entry.duplicates + 1 });
-                    } else {
-                        //try shared_export_map.put(type_name, .{ .first_sdk_file_ptr = sdk_file, .duplicates = 0 });
-                        try shared_export_map.put(type_name, sdk_file);
-                    }
-                }
-            }
-
-
-            // we wrap all the api symbols in a sub-struct because some of the api
-            // names conflict some of the symbols.  This prevents those conflicts.
-            try writer.print("const api = struct {{\n", .{});
-            for (sdk_files.items) |sdk_file| {
-                try writer.print("    const {s} = @import(\"api/{0s}.zig\");\n", .{sdk_file.name_snake_case});
-            }
-            try writer.print("}};\n", .{});
-            for (sdk_files.items) |sdk_file| {
-                try writer.print("// {s} exports {} constants:\n", .{sdk_file.name_snake_case, sdk_file.const_exports.items.len});
-                for (sdk_file.const_exports.items) |constant| {
-                    if (shared_export_map.get(constant)) |other_sdk_file| {
-                        try writer.print("// WARNING: redifinition of constant symbol '{s}' in module '{s}' (going with module '{s}')\n", .{
-                            constant, sdk_file.name_snake_case, other_sdk_file.name_snake_case});
-                    } else {
-                        try writer.print("pub const {s} = api.{s}.{0s};\n", .{constant, sdk_file.name_snake_case});
-                        try shared_export_map.put(constant, sdk_file);
-                    }
-                }
-                try writer.print("// {s} exports {} types:\n", .{sdk_file.name_snake_case, sdk_file.type_exports.count()});
-                var export_it = sdk_file.type_exports.iterator();
-                while (export_it.next()) |kv| {
-                    const type_name = kv.key;
-                    const first_type_sdk = shared_export_map.get(type_name) orelse unreachable;
-                    if (first_type_sdk != sdk_file) {
-                        try writer.print("// WARNING: redefinition of type symbol '{s}' from '{s}', going with '{s}'\n", .{
-                            type_name, sdk_file.name_snake_case, first_type_sdk.name_snake_case});
-                    } else {
-                        try writer.print("pub const {s} = api.{s}.{0s};\n", .{type_name, sdk_file.name_snake_case});
-                    }
-                }
-                try writer.print("// {s} exports {} functions:\n", .{sdk_file.name_snake_case, sdk_file.func_exports.count()});
-                var func_it = sdk_file.func_exports.iterator();
-                while (func_it.next()) |kv| {
-                    const func = kv.key;
-                    if (shared_export_map.get(func)) |other_sdk_file| {
-                        try writer.print("// WARNING: redifinition of function '{s}' in module '{s}' (going with module '{s}')\n", .{
-                            func, sdk_file.name_snake_case, other_sdk_file.name_snake_case});
-                    } else {
-                        try writer.print("pub const {s} = api.{s}.{0s};\n", .{func, sdk_file.name_snake_case});
-                        try shared_export_map.put(func, sdk_file);
-                    }
-                }
-            }
-        }
+        try generateContainerModules(out_win32_dir, root_module);
+        try generateEverythingModule(out_win32_dir, root_module);
     }
 
     {
@@ -421,6 +328,101 @@ fn main2() !u8 {
     return 0;
 }
 
+fn gatherSdkFiles(sdk_files: *ArrayList(*SdkFile), module: *Module) anyerror!void {
+    if (module.file) |_| {
+        try sdk_files.append(&module.file.?);
+    }
+    const children = try allocMapValues(allocator, *Module, module.children);
+    defer allocator.free(children);
+    std.sort.sort(*Module, children, {}, moduleLessThan); // sort so the order is predictable
+    for (children) |child| {
+        try gatherSdkFiles(sdk_files, child);
+    }
+}
+
+fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !void {
+    var everything_file = try out_win32_dir.createFile("everything.zig", .{});
+    defer everything_file.close();
+    const writer = everything_file.writer();
+    try writer.writeAll(autogen_header ++
+        \\//! This module contains aliases to ALL symbols inside the Win32 SDK.  It allows
+        \\//! an application to access any and all symbols through a single import.
+        \\
+        \\pub const L = @import("zig.zig").L;
+        \\
+        \\pub usingnamespace @import("missing.zig");
+        \\
+    );
+
+    var sdk_files = ArrayList(*SdkFile).init(allocator);
+    defer sdk_files.deinit();
+
+    try gatherSdkFiles(&sdk_files, root_module);
+
+    // TODO: workaround issue where constants/functions are defined more than once, not sure what the right solution
+    //       is for all these, maybe some modules are not compatible with each other.  This could just be the permanent
+    //       solution as well, if there are conflicts, we could just say the user has to import the specific module they want.
+    // TODO: I think the right way to reslve conflicts in everything.zig is to have a priority order for the apis.
+    //       If I just sort the API's in the right order, more common apis go first, then my current logic will work.
+    var shared_export_map = StringPool.HashMap(*SdkFile).init(allocator);
+    defer shared_export_map.deinit();
+
+    // populate the shared_export_map, start with types first
+    // because types can be referenced within the modules (unlike consts/functions)
+    for (sdk_files.items) |sdk_file| {
+        var type_export_it = sdk_file.type_exports.iterator();
+        while (type_export_it.next()) |kv| {
+            const type_name = kv.key;
+            if (shared_export_map.get(type_name)) |_| {
+                //try shared_export_map.put(type_name, .{ .first_sdk_file_ptr = entry.first_sdk_file_ptr, .duplicates = entry.duplicates + 1 });
+            } else {
+                //try shared_export_map.put(type_name, .{ .first_sdk_file_ptr = sdk_file, .duplicates = 0 });
+                try shared_export_map.put(type_name, sdk_file);
+            }
+        }
+    }
+
+    // TODO: should I remove this and use @import("api.zig") instead?
+    try writer.writeAll("const api = @import(\"api.zig\");\n");
+
+    for (sdk_files.items) |sdk_file| {
+        try writer.print("// {s} exports {} constants:\n", .{sdk_file.zig_name, sdk_file.const_exports.items.len});
+        for (sdk_file.const_exports.items) |constant| {
+            if (shared_export_map.get(constant)) |other_sdk_file| {
+                try writer.print("// WARNING: redifinition of constant symbol '{s}' in module '{s}' (going with module '{s}')\n", .{
+                    constant, sdk_file.zig_name, other_sdk_file.zig_name});
+            } else {
+                try writer.print("pub const {s} = api.{s}.{0s};\n", .{constant, sdk_file.zig_name});
+                try shared_export_map.put(constant, sdk_file);
+            }
+        }
+        try writer.print("// {s} exports {} types:\n", .{sdk_file.zig_name, sdk_file.type_exports.count()});
+        var export_it = sdk_file.type_exports.iterator();
+        while (export_it.next()) |kv| {
+            const type_name = kv.key;
+            const first_type_sdk = shared_export_map.get(type_name) orelse unreachable;
+            if (first_type_sdk != sdk_file) {
+                try writer.print("// WARNING: redefinition of type symbol '{s}' from '{s}', going with '{s}'\n", .{
+                    type_name, sdk_file.zig_name, first_type_sdk.zig_name});
+            } else {
+                try writer.print("pub const {s} = api.{s}.{0s};\n", .{type_name, sdk_file.zig_name});
+            }
+        }
+        try writer.print("// {s} exports {} functions:\n", .{sdk_file.zig_name, sdk_file.func_exports.count()});
+        var func_it = sdk_file.func_exports.iterator();
+        while (func_it.next()) |kv| {
+            const func = kv.key;
+            if (shared_export_map.get(func)) |other_sdk_file| {
+                try writer.print("// WARNING: redifinition of function '{s}' in module '{s}' (going with module '{s}')\n", .{
+                    func, sdk_file.zig_name, other_sdk_file.zig_name});
+            } else {
+                try writer.print("pub const {s} = api.{s}.{0s};\n", .{func, sdk_file.zig_name});
+                try shared_export_map.put(func, sdk_file);
+            }
+        }
+    }
+}
+
 fn asciiLessThanIgnoreCase(_: Nothing, lhs: []const u8, rhs: []const u8) bool {
     return std.ascii.lessThanIgnoreCase(lhs, rhs);
 }
@@ -436,7 +438,73 @@ fn readApiList(api_dir: std.fs.Dir, api_list: *std.ArrayList([]const u8)) !void 
     }
 }
 
-fn readAndGenerateApiFile(out_dir: std.fs.Dir, json_basename: []const u8, file: std.fs.File) !*SdkFile {
+fn allocMapValues(alloc: *std.mem.Allocator, comptime T: type, map: anytype) ![]T {
+    var values = try alloc.alloc(T, map.count());
+    errdefer alloc.free(values);
+    {
+        var i: usize = 0;
+        var it = map.iterator(); while (it.next()) |entry| : (i += 1) {
+            values[i] = entry.value;
+        }
+        std.debug.assert(i == map.count());
+    }
+    return values;
+}
+
+fn moduleLessThan(context: void, lhs: *Module, rhs: *Module) bool {
+    return std.ascii.lessThanIgnoreCase(lhs.name.slice, rhs.name.slice);
+}
+
+fn generateContainerModules(dir: std.fs.Dir, module: *Module) anyerror!void {
+    if (module.children.count() == 0) {
+        std.debug.assert(module.file != null);
+        return;
+    }
+
+    var file = blk: {
+        if (module.file) |_| {
+            const file = try dir.openFile(module.zig_basename, .{ .read = false, .write = true });
+            try file.seekFromEnd(0);
+            break :blk file;
+        }
+        break :blk try dir.createFile(module.zig_basename, .{});
+    };
+    defer file.close();
+    const writer = file.writer();
+
+    try writer.writeAll(autogen_header);
+
+    const children = try allocMapValues(allocator, *Module, module.children);
+    defer allocator.free(children);
+
+    std.sort.sort(*Module, children, {}, moduleLessThan);
+    if (module.file) |_| {
+        try writer.print("//--------------------------------------------------------------------------------\n", .{});
+        try writer.print("// Section: SubModules ({})\n", .{children.len});
+        try writer.print("//--------------------------------------------------------------------------------\n", .{});
+    }
+    for (children) |child| {
+        try writer.print("pub const {s} = @import(\"{s}/{0s}.zig\");\n", .{child.name, module.name.slice});
+    }
+
+    if (module.file) |_| { } else {
+        try writer.writeAll(
+            \\test {
+            \\    @import("std").testing.refAllDecls(@This());
+            \\}
+            \\
+        );
+    }
+
+    var next_dir = try dir.openDir(module.name.slice, .{});
+    defer next_dir.close();
+
+    for (children) |child| {
+        try generateContainerModules(next_dir, child);
+    }
+}
+
+fn readAndGenerateApiFile(root_module: *Module, out_dir: std.fs.Dir, json_basename: []const u8, file: std.fs.File) !void {
 
     const read_start_millis = std.time.milliTimestamp();
     const content = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
@@ -455,15 +523,70 @@ fn readAndGenerateApiFile(out_dir: std.fs.Dir, json_basename: []const u8, file: 
     defer json_tree.deinit();
     global_times.parse_time_millis += std.time.milliTimestamp() - parse_start_millis;
 
-    var sdk_file = try SdkFile.create(try std.mem.dupe(allocator, u8, json_basename));
+
+    const json_basename_copy = try std.mem.dupe(allocator, u8, json_basename);
+    const json_name = json_basename_copy[0..json_basename_copy.len - ".json".len];
+    const zig_name = try cameltosnake.camelToSnakeAlloc(allocator, json_name);
+    errdefer allocator.free(zig_name);
+
+    var module_dir = out_dir;
+    defer if (module_dir.fd != out_dir.fd) module_dir.close();
+
+    var module: *Module = root_module;
+    var depth: u2 = 0;
+
+    {
+        var first = true;
+        var it = std.mem.tokenize(zig_name, ".");
+        while (it.next()) |name_part| {
+            if (module != root_module) {
+                depth += 1;
+                if (module.children.count() == 0) {
+                    try module_dir.makeDir(module.name.slice);
+                }
+                const next_dir = try module_dir.openDir(module.name.slice, .{});
+                if (module_dir.fd != out_dir.fd)
+                    module_dir.close();
+                module_dir = next_dir;
+            }
+
+            const name_pool = try global_symbol_pool.add(name_part);
+            if (module.children.get(name_pool)) |existing| {
+                module = existing;
+            } else {
+                const new_module = try allocator.create(Module);
+                new_module.* = try Module.init(module, name_pool);
+                try module.children.put(name_pool, new_module);
+                module = new_module;
+            }
+        }
+    }
+
+    if (module.file) |_| {
+        jsonPanicMsg("qualified name '{s}' already has an sdk file?", .{zig_name});
+    }
+    module.file = SdkFile {
+        .json_basename = json_basename_copy,
+        .json_name = json_name,
+        .zig_name = zig_name,
+        .depth = depth,
+        .const_exports = ArrayList(StringPool.Val).init(allocator),
+        .uses_guid = false,
+        .top_level_api_imports = StringPool.HashMap(StringPool.Val).init(allocator),
+        .type_exports = StringPool.HashMap(Nothing).init(allocator),
+        .func_exports = StringPool.HashMap(Nothing).init(allocator),
+        .tmp_func_ptr_workaround_list = ArrayList(StringPool.Val).init(allocator),
+    };
+
     const generate_start_millis = std.time.milliTimestamp();
-    try generateFile(out_dir, sdk_file, json_tree);
+    try generateFile(module_dir, module, json_tree);
     global_times.generate_time_millis += std.time.milliTimestamp() - generate_start_millis;
-    return sdk_file;
 }
 
-fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !void {
-    var out_file = try out_dir.createFile(sdk_file.zig_filename, .{});
+fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.ValueTree) !void {
+    const sdk_file = &module.file.?;
+
+    var out_file = try module_dir.createFile(module.zig_basename, .{});
     defer out_file.close();
     const out_writer = out_file.writer();
 
@@ -514,7 +637,7 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
     try out_writer.print("// Section: Imports ({})\n", .{import_total});
     try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
     if (sdk_file.uses_guid) {
-        try out_writer.writeAll("const Guid = @import(\"../zig.zig\").Guid;\n");
+        try out_writer.print("const Guid = @import(\"{s}zig.zig\").Guid;\n", .{sdk_file.getWin32DirImportPrefix()});
     }
     {
         var it = sdk_file.top_level_api_imports.iterator();
@@ -522,11 +645,15 @@ fn generateFile(out_dir: std.fs.Dir, sdk_file: *SdkFile, tree: json.ValueTree) !
             const name = import.key;
             const api_upper = import.value;
 
-            // TODO: should I cache this upper to lower mapping instead of allocating/freeing each time?
-            const api_lower = try cameltosnake.camelToSnakeAlloc(allocator, api_upper.slice);
-            defer allocator.free(api_lower);
-
-            try out_writer.print("const {s} = @import(\"{s}.zig\").{0s};\n", .{name, api_lower});
+            // TODO: should I cache this mapping from api ref to api import path?
+            const api_path = try cameltosnake.camelToSnakeAlloc(allocator, api_upper.slice);
+            defer allocator.free(api_path);
+            for (api_path) |c, i| {
+                if (c == '.')
+                    api_path[i] = '/';
+            }
+            try out_writer.print("const {s} = @import(\"{s}{s}.zig\").{0s};\n",
+                .{name, sdk_file.getApiDirImportPrefix(), api_path});
         }
     }
 
@@ -628,6 +755,8 @@ const TypeRefFormatter = struct {
         ret_val: bool = false,
         // TODO: don't know what to do with this yet
         com_out_ptr: bool = false,
+        // TODO: don't know what to do with this yet
+        do_not_release: bool = false,
         optional_bytes_param_index: ?i16 = null,
     };
 
@@ -942,15 +1071,17 @@ fn generateConstant(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, constant
             try jsonObjEnforceKnownFieldsOnly(value_obj, &[_][]const u8 {"Fmtid", "Pid"}, sdk_file);
             const fmtid = (try jsonObjGetRequired(value_obj, "Fmtid", sdk_file)).String;
             const pid = (try jsonObjGetRequired(value_obj, "Pid", sdk_file)).Integer;
-            try out_writer.print("pub const {s} = {} {{ .fmtid = @import(\"../zig.zig\").Guid.initString(\"{s}\"), .pid = {} }};\n", .{
+            try out_writer.print("pub const {s} = {} {{ .fmtid = @import(\"{s}zig.zig\").Guid.initString(\"{s}\"), .pid = {} }};\n", .{
                 name_pool,
                 zig_type_formatter,
+                sdk_file.getWin32DirImportPrefix(),
                 fmtid,
                 pid
             });
         } else {
-            try out_writer.print("pub const {s} = @import(\"../zig.zig\").typedConst({}, {});\n", .{
+            try out_writer.print("pub const {s} = @import(\"{s}zig.zig\").typedConst({}, {});\n", .{
                 name_pool,
+                sdk_file.getWin32DirImportPrefix(),
                 zig_type_formatter,
                 fmtConstValue(value_type, value_node, sdk_file)}
             );
@@ -960,11 +1091,11 @@ fn generateConstant(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, constant
 
 // workaround https://github.com/microsoft/win32metadata/issues/389
 const also_usable_type_api_map = std.ComptimeStringMap([]const u8, .{
-    .{ "HDC", "Gdi" },
-    .{ "HGDIOBJ", "Gdi" },
-    .{ "HICON", "MenusAndResources" },
-    .{ "HANDLE", "SystemServices" },
-    .{ "HeapHandle", "SystemServices" },
+    .{ "HDC", "Graphics.Gdi" },
+    .{ "HGDIOBJ", "Graphics.Gdi" },
+    .{ "HICON", "UI.MenusAndResources" },
+    .{ "HANDLE", "System.SystemServices" },
+    .{ "HeapHandle", "System.SystemServices" },
 });
 
 fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, enum_alias_conflicts: *StringPool.HashMap(StringPool.Val)) !void {
@@ -980,7 +1111,7 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
         const guid = (try jsonObjGetRequired(type_obj, "Guid", sdk_file)).String;
         const clsid_pool = try global_symbol_pool.addFormatted("CLSID_{s}", .{tmp_name});
         try generatePlatformComment(out_writer, platform_node);
-        try out_writer.print("const {s}_Value = @import(\"../zig.zig\").Guid.initString(\"{s}\");\n", .{clsid_pool, guid});
+        try out_writer.print("const {s}_Value = @import(\"{s}zig.zig\").Guid.initString(\"{s}\");\n", .{clsid_pool, sdk_file.getWin32DirImportPrefix(), guid});
         try out_writer.print("pub const {s} = &{0s}_Value;\n", .{clsid_pool});
         try sdk_file.const_exports.append(clsid_pool);
         return;
@@ -991,7 +1122,7 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
         std.debug.assert(sdk_file.type_exports.get(pool_name) == null);
         try sdk_file.type_exports.put(pool_name, .{});
     } else {
-        try generateArchPrefix(out_writer, architectures.items);
+        try generateArchPrefix(out_writer, sdk_file.depth, architectures.items);
     }
     defer {
         if (architectures.items.len > 0) generateArchSuffix(out_writer);
@@ -1390,9 +1521,10 @@ fn setShortNames(values: []EnumValue) void {
 }
 
 fn generateEnum(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, pool_name: StringPool.Val, enum_alias_conflicts: *StringPool.HashMap(StringPool.Val)) !void {
-    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Platform", "Architectures", "Kind", "Flags", "Values", "IntegerBase"}, sdk_file);
+    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Platform", "Architectures", "Kind", "Flags", "Scoped", "Values", "IntegerBase"}, sdk_file);
     const platform_node = try jsonObjGetRequired(type_obj, "Platform", sdk_file);
     const flags = (try jsonObjGetRequired(type_obj, "Flags", sdk_file)).Bool;
+    const scoped = (try jsonObjGetRequired(type_obj, "Scoped", sdk_file)).Bool;
     const json_values = (try jsonObjGetRequired(type_obj, "Values", sdk_file)).Array;
     const integer_base = switch (try jsonObjGetRequired(type_obj, "IntegerBase", sdk_file)) {
         .Null => "i32",
@@ -1438,6 +1570,10 @@ fn generateEnum(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
     }
     try out_writer.print("}};\n", .{});
 
+    if (scoped) {
+        try out_writer.print("// NOTE: not creating aliases because this enum is 'Scoped'\n", .{});
+        return;
+    }
     if (suppress_enum_aliases.get(pool_name.slice)) |_| {
         try out_writer.print("// TODO: enum '{}' has known issues with its value aliases\n", .{pool_name});
         return;
@@ -1485,7 +1621,8 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
 
     const iid_pool = try global_symbol_pool.addFormatted("IID_{s}", .{com_pool_name.slice});
     if (com_optional_guid) |guid| {
-        try out_writer.print("const {s}_Value = @import(\"../zig.zig\").Guid.initString(\"{s}\");\n", .{iid_pool, guid});
+        try out_writer.print("const {s}_Value = @import(\"{s}zig.zig\").Guid.initString(\"{s}\");\n",
+            .{ iid_pool, sdk_file.getWin32DirImportPrefix(), guid});
         try out_writer.print("pub const {s} = &{0s}_Value;\n", .{iid_pool});
         try sdk_file.const_exports.append(iid_pool);
     }
@@ -1608,6 +1745,8 @@ fn processParamAttrs(attrs: json.Array, reason: TypeRefFormatter.Reason, sdk_fil
                     opts.null_null_term = true;
                 } else if (std.mem.eql(u8, attr_str, "ComOutPtr")) {
                     opts.com_out_ptr = true;
+                } else if (std.mem.eql(u8, attr_str, "DoNotRelease")) {
+                    opts.do_not_release = true;
                 } else {
                     jsonPanicMsg("unhandled custom param attribute '{s}'", .{attr_str});
                 }
@@ -1652,9 +1791,9 @@ const noreturn_funcs = std.ComptimeStringMap(Nothing, .{
 
 const FuncPtrKind = enum { ptr, fixed, com };
 
-fn generateArchPrefix(out_writer: std.fs.File.Writer, architectures: []json.Value) !void {
+fn generateArchPrefix(out_writer: std.fs.File.Writer, module_depth: u2, architectures: []json.Value) !void {
     std.debug.assert(architectures.len > 0);
-    try out_writer.writeAll("pub usingnamespace switch (@import(\"../zig.zig\").arch) {\n");
+    try out_writer.print("pub usingnamespace switch (@import(\"{s}zig.zig\").arch) {{\n", .{import_prefix_table[module_depth+1]});
     var case_prefix: []const u8 = "";
     for (architectures) |arch_node| {
         const arch = arch_name_map.get(arch_node.String) orelse return error.UnknownArch;
@@ -1692,7 +1831,7 @@ fn generateFunction(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function
     if (architectures.items.len > 0) {
         // is COM supposed to support arch specific methods?
         std.debug.assert(func_kind != .com);
-        try generateArchPrefix(out_writer, architectures.items);
+        try generateArchPrefix(out_writer, sdk_file.depth, architectures.items);
     }
     defer {
         if (architectures.items.len > 0) generateArchSuffix(out_writer);
@@ -1768,7 +1907,7 @@ fn getPoolStringWithParts(a: *std.mem.Allocator, slices: []const []const u8) ![]
 }
 
 fn generateUnicodeAliases(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, unicode_aliases: []json.Value) !void {
-    try out_writer.writeAll("pub usingnamespace switch (@import(\"../zig.zig\").unicode_mode) {\n");
+    try out_writer.print   ("pub usingnamespace switch (@import(\"{s}zig.zig\").unicode_mode) {{\n", .{sdk_file.getWin32DirImportPrefix()});
     try out_writer.writeAll("    .ansi => struct {\n");
     for (unicode_aliases) |*alias_node_ptr| {
         try out_writer.print("        pub const {s} = {0s}A;\n", .{alias_node_ptr.String});
@@ -1901,6 +2040,7 @@ pub fn fmtJson(value: anytype) JsonFormatter {
     }
     return .{ .value = value };
 }
+
 
 fn cleanDir(dir: std.fs.Dir, sub_path: []const u8) !void {
     try dir.deleteTree(sub_path);

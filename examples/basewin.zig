@@ -2,15 +2,15 @@
 
 const WINAPI = @import("std").os.windows.WINAPI;
 usingnamespace @import("win32").zig;
-usingnamespace @import("win32").api.system_services;
-usingnamespace @import("win32").api.windows_and_messaging;
+usingnamespace @import("win32").api.system.system_services;
+usingnamespace @import("win32").api.ui.windows_and_messaging;
 
 const windowlongptr = @import("win32").windowlongptr;
 
 // NOTE: can't do usingnamespace for menu_and_resources because it has conflicts with windows_and_messaging
 //       I think this particular one is a problem with win32metadata.
 //       NOTE: should Zig allow symbol conflicts so long as they are not referenced?
-const mnr = @import("win32").api.menus_and_resources;
+const mnr = @import("win32").api.ui.menus_and_resources;
 const HMENU = mnr.HMENU;
 
 pub fn BaseWindow(comptime DERIVED_TYPE: type) type { return struct {
@@ -57,9 +57,7 @@ pub fn BaseWindow(comptime DERIVED_TYPE: type) type { return struct {
             .lpfnWndProc = WindowProc,
             .cbClsExtra = 0,
             .cbWndExtra = 0,
-            // NOTE: GetModuleHandle should be returning HMODULE but it's returning isize???
-            //       I think an issue needs to be filed for this.
-            .hInstance = @intToPtr(HINSTANCE, @bitCast(usize, GetModuleHandle(null))),
+            .hInstance = GetModuleHandle(null),
             .hIcon = null,
             .hCursor = null,
             .hbrBackground = null,
@@ -74,9 +72,7 @@ pub fn BaseWindow(comptime DERIVED_TYPE: type) type { return struct {
             options.dwExStyle, DERIVED_TYPE.ClassName(), lpWindowName,
             dwStyle, options.x, options.y,
             options.nWidth, options.nHeight, options.hWndParent, options.hMenu,
-            // NOTE: GetModuleHandle should be returning HMODULE but it's returning isize???
-            //       I think an issue needs to be filed for this.
-            @intToPtr(HINSTANCE, @bitCast(usize, GetModuleHandle(null))),
+            GetModuleHandle(null),
             @ptrCast(*c_void, self)
             );
 
