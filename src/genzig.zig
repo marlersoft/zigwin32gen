@@ -1190,6 +1190,12 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
             else => jsonPanic(),
         }
 
+        // NOTE: for now, I'm just hardcoding a few types to redirect to the ones defined in 'std'
+        //       this allows apps to use values of these types interchangeably with bindings in std
+        if (@import("handletypes.zig").std_handle_types.get(tmp_name)) |std_sym| {
+            try out_writer.print("pub const {s} = @import(\"std\").{s};\n", .{tmp_name, std_sym});
+            return;
+        }
         // workaround https://github.com/microsoft/win32metadata/issues/395
         if (@import("handletypes.zig").handle_types.get(tmp_name)) |_| {
             try out_writer.print("pub const {s} = ?*opaque{{}};\n", .{tmp_name});

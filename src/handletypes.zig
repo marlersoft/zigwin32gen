@@ -1,9 +1,12 @@
 //! workaround github.com/microsoft/win32metadata/issues/395
 const std = @import("std");
+pub const std_handle_types = std.ComptimeStringMap([]const u8, .{
+    .{ "HANDLE", "os.windows.HANDLE" },
+    .{ "SOCKET", "os.socket_t" },
+});
 pub const handle_types = list: {
     @setEvalBranchQuota(3000);
     break :list std.ComptimeStringMap(struct{}, .{
-        .{ "HANDLE", .{} },
         .{ "HICON", .{} },
         .{ "HCURSOR", .{} },
         .{ "HBRUSH", .{} },
