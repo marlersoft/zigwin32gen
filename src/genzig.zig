@@ -1229,6 +1229,8 @@ const types_to_skip = std.ComptimeStringMap(Nothing, .{
     // machine, it causes ARM64_NT_NEON128 to be referenced from debug.zig
     // which only appears in the CONTEXT type.
     .{ "CONTEXT", .{} },
+    // error: array of 'win32.ui.shell.FILEDESCRIPTORA' not allowed in packed struct due to padding bits
+    .{ "FILEGROUPDESCRIPTORA", .{} },
 });
 const types_that_conflict_with_consts = std.ComptimeStringMap(Nothing, .{
     // This symbol conflicts with a constant with the exact same name
@@ -1282,7 +1284,16 @@ fn generateStructOrUnion(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, typ
 
     try generatePlatformComment(out_writer, platform_node);
     const zig_type = if (kind == .Struct) "struct" else "union";
-    try out_writer.print("pub const {} = extern {s} {{\n", .{struct_pool_name, zig_type});
+    const struct_mod: []const u8 = blk: { switch (struct_packing_size) {
+        0 => break :blk "extern",
+        1 => break :blk "packed",
+        2, 4 => {
+            try out_writer.print("// WARNING: this type has a packing size of {}, not sure how to handle this\n", .{struct_packing_size});
+            break :blk "extern";
+        },
+        else => jsonPanicMsg("unhandled struct/union packing size {}", .{struct_packing_size}),
+    }};
+    try out_writer.print("pub const {} = {s} {s} {{\n", .{struct_pool_name, struct_mod, zig_type});
     if (struct_fields.items.len == 0) {
         // TODO: handle nested types
         try out_writer.print("    comment: [*]const u8 = \"TODO: why is this struct empty?\"\n", .{});
