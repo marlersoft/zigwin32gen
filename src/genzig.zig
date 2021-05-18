@@ -1365,7 +1365,6 @@ const suppress_enum_aliases = std.ComptimeStringMap(Nothing, .{
     .{ "JsRuntimeVersion", .{} },
     .{ "GetIconInfo_hicon", .{} },
     .{ "PFN_WdsCliCallback_dwMessageIdFlags", .{} },
-    .{ "IPPROTO", .{} },
     .{ "MIB_IPFORWARD_TYPE", .{} },
     .{ "OLEMISC", .{} },
     .{ "IMAGEHLP_CBA_EVENT_SEVERITY", .{} },
