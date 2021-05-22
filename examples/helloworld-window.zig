@@ -23,7 +23,7 @@ pub export fn wWinMain(hInstance: HINSTANCE, _: HINSTANCE, pCmdLine: [*:0]u16, n
         .hIcon = null,
         .hCursor = null,
         .hbrBackground = null,
-        // TODO: autogen bindings don't allow for null, should win32metadata allow Option for fields? Or should all strings allow NULL?
+        // TODO: this field is not marked as options so we can't use null atm
         .lpszMenuName = L("Some Menu Name"),
         .lpszClassName = CLASS_NAME,
     };
