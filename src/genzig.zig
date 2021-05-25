@@ -861,9 +861,11 @@ fn generateTypeRefRec(sdk_file: *SdkFile, writer: *CodeWriter, self: TypeRefForm
             }
         }
 
+        // for now, all nested type references MUST be in the same scope so this
+        // just causes issues
         //for (parents.items) |*parent_ptr| {
-        //    try writer.writeAll(parent_ptr.String);
-        //    try writer.writeAll(".");
+        //    try writer.writef("{s}", .{parent_ptr.String}, .{.start=.any,.nl=false});
+        //    try writer.write(".", .{.start=.any,.nl=false});
         //}
         try writer.writef("{s}", .{name}, .{.start=.any,.nl=false});
     } else if (std.mem.eql(u8, kind, "PointerTo")) {
