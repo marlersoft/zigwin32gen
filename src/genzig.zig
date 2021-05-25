@@ -575,56 +575,56 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.ValueTree) !
 
     var out_file = try module_dir.createFile(module.zig_basename, .{});
     defer out_file.close();
-    const out_writer = out_file.writer();
+    var code_writer = CodeWriter { .writer = out_file.writer(), .depth = 0, .midline = false };
+    const writer = &code_writer;
 
-    try out_writer.writeAll(autogen_header);
+    try writer.writeBlock(autogen_header);
     // We can't import the everything module because it will re-introduce the same symbols we are exporting
-    //try out_writer.print("usingnamespace @import(\"everything.zig\");\n", .{});
+    //try writer.print("usingnamespace @import(\"everything.zig\");\n", .{});
     const root_obj = tree.root.Object;
     const constants_array = (try jsonObjGetRequired(root_obj, "Constants", sdk_file)).Array;
     const types_array = (try jsonObjGetRequired(root_obj, "Types", sdk_file)).Array;
     const functions_array = (try jsonObjGetRequired(root_obj, "Functions", sdk_file)).Array;
     const unicode_aliases = (try jsonObjGetRequired(root_obj, "UnicodeAliases", sdk_file)).Array;
-    try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
-    try out_writer.print("// Section: Constants ({})\n", .{constants_array.items.len});
-    try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
+    try writer.line("//--------------------------------------------------------------------------------");
+    try writer.linef("// Section: Constants ({})", .{constants_array.items.len});
+    try writer.line("//--------------------------------------------------------------------------------");
     for (constants_array.items) |*constant_node_ptr| {
-        try generateConstant(sdk_file, out_writer, constant_node_ptr.Object);
+        try generateConstant(sdk_file, writer, constant_node_ptr.Object);
     }
     std.debug.assert(constants_array.items.len == sdk_file.const_exports.items.len);
-    try out_writer.print("\n", .{});
-    try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
-    try out_writer.print("// Section: Types ({})\n", .{types_array.items.len});
-    try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
+    try writer.line("");
+    try writer.line("//--------------------------------------------------------------------------------");
+    try writer.linef("// Section: Types ({})", .{types_array.items.len});
+    try writer.line("//--------------------------------------------------------------------------------");
     {
         var enum_alias_conflicts = StringPool.HashMap(StringPool.Val).init(allocator);
         defer enum_alias_conflicts.deinit();
         for (types_array.items) |*type_node_ptr| {
-            try generateType(sdk_file, out_writer, type_node_ptr.Object, &enum_alias_conflicts);
-            try out_writer.print("\n", .{});
+            try generateType(sdk_file, writer, type_node_ptr.Object, &enum_alias_conflicts, 0);
+            try writer.line("");
         }
     }
-    try out_writer.print("\n", .{});
-    try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
-    try out_writer.print("// Section: Functions ({})\n", .{functions_array.items.len});
-    try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
+    try writer.line("");
+    try writer.line("//--------------------------------------------------------------------------------");
+    try writer.linef("// Section: Functions ({})", .{functions_array.items.len});
+    try writer.line("//--------------------------------------------------------------------------------");
     for (functions_array.items) |*function_node_ptr| {
-        try generateFunction(sdk_file, out_writer, function_node_ptr.Object, .fixed, null, null);
-        try out_writer.print("\n", .{});
+        try generateFunction(sdk_file, writer, function_node_ptr.Object, .fixed, null, null);
+        try writer.line("");
     }
     std.debug.assert(functions_array.items.len >= sdk_file.func_exports.count());
-    try out_writer.print("\n", .{});
-    try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
-    try out_writer.print("// Section: Unicode Aliases ({})\n", .{unicode_aliases.items.len});
-    try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
-    try generateUnicodeAliases(sdk_file, out_writer, unicode_aliases.items);
+    try writer.line("");
+    try writer.line("//--------------------------------------------------------------------------------");
+    try writer.linef("// Section: Unicode Aliases ({})", .{unicode_aliases.items.len});
+    try writer.line("//--------------------------------------------------------------------------------");
+    try generateUnicodeAliases(sdk_file, writer, unicode_aliases.items);
     const import_total = @boolToInt(sdk_file.uses_guid) + sdk_file.top_level_api_imports.count();
-    try out_writer.print("\n", .{});
-    try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
-    try out_writer.print("// Section: Imports ({})\n", .{import_total});
-    try out_writer.print("//--------------------------------------------------------------------------------\n", .{});
+    try writer.line("//--------------------------------------------------------------------------------");
+    try writer.linef("// Section: Imports ({})", .{import_total});
+    try writer.line("//--------------------------------------------------------------------------------");
     if (sdk_file.uses_guid) {
-        try out_writer.print("const Guid = @import(\"{s}zig.zig\").Guid;\n", .{sdk_file.getWin32DirImportPrefix()});
+        try writer.linef("const Guid = @import(\"{s}zig.zig\").Guid;", .{sdk_file.getWin32DirImportPrefix()});
     }
     {
         var it = sdk_file.top_level_api_imports.iterator();
@@ -639,38 +639,38 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.ValueTree) !
                 if (c == '.')
                     api_path[i] = '/';
             }
-            try out_writer.print("const {s} = @import(\"{s}{s}.zig\").{0s};\n",
+            try writer.linef("const {s} = @import(\"{s}{s}.zig\").{0s};",
                 .{name, sdk_file.getWin32DirImportPrefix(), api_path});
         }
     }
 
-    try out_writer.writeAll(
+    try writer.writeBlock(
         \\
         \\test {
         \\
     );
     if (sdk_file.tmp_func_ptr_workaround_list.items.len > 0) {
-        try out_writer.writeAll("    // The following '_ = <FuncPtrType>' lines are a workaround for https://github.com/ziglang/zig/issues/4476\n");
+        try writer.line("    // The following '_ = <FuncPtrType>' lines are a workaround for https://github.com/ziglang/zig/issues/4476");
         for (sdk_file.tmp_func_ptr_workaround_list.items) |func_ptr_type| {
-            try out_writer.print("    if (@hasDecl(@This(), \"{s}\")) {{ _ = {0s}; }}\n", .{func_ptr_type});
+            try writer.linef("    if (@hasDecl(@This(), \"{s}\")) {{ _ = {0s}; }}", .{func_ptr_type});
         }
-        try out_writer.writeAll("\n");
+        try writer.line("");
     }
-    try out_writer.print(
+    try writer.writeBlock(
         \\    @setEvalBranchQuota(
         \\        @import("std").meta.declarations(@This()).len * 3
         \\    );
         \\
         \\    // reference all the pub declarations
         \\    if (!@import("std").builtin.is_test) return;
-        \\    inline for (@import("std").meta.declarations(@This())) |decl| {{
-        \\        if (decl.is_pub) {{
+        \\    inline for (@import("std").meta.declarations(@This())) |decl| {
+        \\        if (decl.is_pub) {
         \\            _ = decl;
-        \\        }}
-        \\    }}
-        \\}}
+        \\        }
+        \\    }
+        \\}
         \\
-    , .{});
+    );
 }
 
 fn typeIsVoid(type_obj: json.ObjectMap, sdk_file: *SdkFile) !bool {
@@ -785,7 +785,7 @@ const TypeRefFormatter = struct {
             const name = (try jsonObjGetRequired(self.type_ref, "Name", self.sdk_file)).String;
             const target_kind_str = (try jsonObjGetRequired(self.type_ref, "TargetKind", self.sdk_file)).String;
             const target_kind = target_kind_map.get(target_kind_str) orelse
-                jsonPanicMsg("unknown TargetKind '{s}'\n", .{target_kind_str});
+                jsonPanicMsg("unknown TargetKind '{s}'", .{target_kind_str});
             const parents = (try jsonObjGetRequired(self.type_ref, "Parents", self.sdk_file)).Array;
 
             if (self.options.reason == .var_decl) {
@@ -1014,7 +1014,7 @@ const constants_to_skip = std.ComptimeStringMap(Nothing, .{
     .{ "IDI_WINLOGO", .{} },
     .{ "IDI_SHIELD", .{} },
 });
-fn generateConstant(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, constant_obj: json.ObjectMap) !void {
+fn generateConstant(sdk_file: *SdkFile, writer: *CodeWriter, constant_obj: json.ObjectMap) !void {
     try jsonObjEnforceKnownFieldsOnly(constant_obj, &[_][]const u8 {"Name", "Type", "Value", "ValueType", "Attrs"}, sdk_file);
     const name_tmp = (try jsonObjGetRequired(constant_obj, "Name", sdk_file)).String;
     const type_ref = (try jsonObjGetRequired(constant_obj, "Type", sdk_file)).Object;
@@ -1033,7 +1033,7 @@ fn generateConstant(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, constant
     };
 
     if (constants_to_skip.get(name_pool.slice)) |_| {
-        try out_writer.print("// skipped '{}'\n", .{name_pool});
+        try writer.linef("// skipped '{}'", .{name_pool});
         return;
     }
     const zig_type_formatter = try addTypeRefs(sdk_file, type_ref, .{.reason = .direct_type_access, .is_const = true, .in = false, .out = false });
@@ -1045,9 +1045,9 @@ fn generateConstant(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, constant
         const name = (jsonObjGetRequired(type_ref, "Name", sdk_file) catch unreachable).String;
         const native_type = global_native_type_map.get(name) orelse std.debug.panic("unknown Native type '{s}'", .{name});
         if (native_type == .Guid) {
-            try out_writer.print("pub const {s} = Guid.initString({});\n", .{name_pool, fmtConstValue(value_type, value_node, sdk_file)});
+            try writer.linef("pub const {s} = Guid.initString({});", .{name_pool, fmtConstValue(value_type, value_node, sdk_file)});
         } else {
-            try out_writer.print("pub const {s} = {};\n", .{name_pool, fmtConstValue(value_type, value_node, sdk_file)});
+            try writer.linef("pub const {s} = {};", .{name_pool, fmtConstValue(value_type, value_node, sdk_file)});
         }
     } else {
         if (value_type == .PropertyKey) {
@@ -1058,7 +1058,7 @@ fn generateConstant(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, constant
             try jsonObjEnforceKnownFieldsOnly(value_obj, &[_][]const u8 {"Fmtid", "Pid"}, sdk_file);
             const fmtid = (try jsonObjGetRequired(value_obj, "Fmtid", sdk_file)).String;
             const pid = (try jsonObjGetRequired(value_obj, "Pid", sdk_file)).Integer;
-            try out_writer.print("pub const {s} = {} {{ .fmtid = @import(\"{s}zig.zig\").Guid.initString(\"{s}\"), .pid = {} }};\n", .{
+            try writer.linef("pub const {s} = {} {{ .fmtid = @import(\"{s}zig.zig\").Guid.initString(\"{s}\"), .pid = {} }};", .{
                 name_pool,
                 zig_type_formatter,
                 sdk_file.getWin32DirImportPrefix(),
@@ -1066,7 +1066,7 @@ fn generateConstant(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, constant
                 pid
             });
         } else {
-            try out_writer.print("pub const {s} = @import(\"{s}zig.zig\").typedConst({}, {});\n", .{
+            try writer.linef("pub const {s} = @import(\"{s}zig.zig\").typedConst({}, {});", .{
                 name_pool,
                 sdk_file.getWin32DirImportPrefix(),
                 zig_type_formatter,
@@ -1085,7 +1085,64 @@ const also_usable_type_api_map = std.ComptimeStringMap([]const u8, .{
     .{ "HeapHandle", "System.SystemServices" },
 });
 
-fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, enum_alias_conflicts: *StringPool.HashMap(StringPool.Val)) !void {
+const Depth = u3;
+
+const CodeWriter = struct {
+    writer: std.fs.File.Writer,
+    depth: u3,
+    midline: bool,
+
+    pub fn writeBlock(self: CodeWriter, comptime s: []const u8) !void {
+        std.debug.assert(s[s.len-1] == '\n');
+        std.debug.assert(self.depth == 0);
+        std.debug.assert(!self.midline);
+        try self.writer.writeAll(s);
+    }
+
+    pub const LineOpt = struct {
+        start: enum { line, allow_mid, mid } = .line,
+        nl: bool = true,
+    };
+    pub fn writef(self: *CodeWriter, comptime fmt: []const u8, args: anytype, comptime opt: LineOpt) !void {
+        std.debug.assert(null == std.mem.indexOf(u8, fmt, "\n"));
+        const do_indent = blk: { switch (opt.start) {
+            .line => {
+                std.debug.assert(!self.midline);
+                break :blk true;
+            },
+            .allow_mid => break :blk !self.midline,
+            .mid => {
+                std.debug.assert(self.midline);
+                break :blk false;
+            },
+        }};
+        if (do_indent) {
+            var i: @TypeOf(self.depth) = 0;
+            while (i < self.depth) : (i += 1) {
+                try self.writer.writeAll("    ");
+            }
+            self.midline = true;
+        }
+        if (@typeInfo(@TypeOf(args)).Struct.fields.len == 0) {
+            try self.writer.writeAll(fmt ++ (if (opt.nl) "\n" else ""));
+        } else {
+            try self.writer.print(fmt ++ (if (opt.nl) "\n" else ""), args);
+        }
+        self.midline = !opt.nl;
+    }
+
+    pub fn write(self: *CodeWriter, comptime s: []const u8, comptime opt: LineOpt) !void {
+        try self.writef(s, .{}, opt);
+    }
+    pub fn line(self: *CodeWriter, comptime s: []const u8) !void {
+        try self.writef(s, .{}, .{});
+    }
+    pub fn linef(self: *CodeWriter, comptime fmt: []const u8, args: anytype) !void {
+        try self.writef(fmt, args, .{});
+    }
+};
+
+fn generateType(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap, enum_alias_conflicts: *StringPool.HashMap(StringPool.Val), depth: Depth) !void {
     const kind = (try jsonObjGetRequired(type_obj, "Kind", sdk_file)).String;
     const tmp_name = (try jsonObjGetRequired(type_obj, "Name", sdk_file)).String;
     const architectures = (try jsonObjGetRequired(type_obj, "Architectures", sdk_file)).Array;
@@ -1097,32 +1154,35 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
         const platform_node = try jsonObjGetRequired(type_obj, "Platform", sdk_file);
         const guid = (try jsonObjGetRequired(type_obj, "Guid", sdk_file)).String;
         const clsid_pool = try global_symbol_pool.addFormatted("CLSID_{s}", .{tmp_name});
-        try generatePlatformComment(out_writer, platform_node);
-        try out_writer.print("const {s}_Value = @import(\"{s}zig.zig\").Guid.initString(\"{s}\");\n", .{clsid_pool, sdk_file.getWin32DirImportPrefix(), guid});
-        try out_writer.print("pub const {s} = &{0s}_Value;\n", .{clsid_pool});
+        try generatePlatformComment(writer, platform_node);
+        try writer.linef("const {s}_Value = @import(\"{s}zig.zig\").Guid.initString(\"{s}\");", .{clsid_pool, sdk_file.getWin32DirImportPrefix(), guid});
+        try writer.linef("pub const {s} = &{0s}_Value;", .{clsid_pool});
         try sdk_file.const_exports.append(clsid_pool);
         return;
     }
 
     const pool_name = try global_symbol_pool.add(tmp_name);
     if (architectures.items.len == 0) {
-        std.debug.assert(sdk_file.type_exports.get(pool_name) == null);
-        try sdk_file.type_exports.put(pool_name, .{});
+        if (depth == 0) {
+            std.debug.assert(sdk_file.type_exports.get(pool_name) == null);
+            try sdk_file.type_exports.put(pool_name, .{});
+        }
     } else {
-        try generateArchPrefix(out_writer, sdk_file.depth, architectures.items);
+        try generateArchPrefix(writer, sdk_file.depth, architectures.items);
     }
     defer {
-        if (architectures.items.len > 0) generateArchSuffix(out_writer);
+        if (architectures.items.len > 0) generateArchSuffix(writer);
     }
-
+    const visibility: []const u8 = if (depth == 0) "pub " else "";
 
     if (types_that_conflict_with_consts.get(tmp_name)) |_| {
-        try out_writer.print("// WARNING: this type symbol conflicts with a const!\n", .{});
-        try out_writer.print("pub const {s}_CONFLICT_ = usize;\n", .{tmp_name});
+        try writer.line("// WARNING: this type symbol conflicts with a const!");
+        try writer.linef("{s}const {s}_CONFLICT_ = usize;", .{visibility, tmp_name});
     } else if (types_to_skip.get(tmp_name)) |_| {
-        try out_writer.print("// TODO: not generating this type because it is causing some sort of error\n", .{});
-        try out_writer.print("pub const {s} = usize;\n", .{tmp_name});
+        try writer.line("// TODO: not generating this type because it is causing some sort of error");
+        try writer.linef("{s}const {s} = usize;", .{visibility, tmp_name});
     } else if (std.mem.eql(u8, kind, "NativeTypedef")) {
+        std.debug.assert(depth == 0);
         try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Platform", "Architectures",
             "AlsoUsableFor", "Kind", "Def", "FreeFunc"}, sdk_file);
         const platform_node = try jsonObjGetRequired(type_obj, "Platform", sdk_file);
@@ -1133,9 +1193,9 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
             .String => |s| s,
             else => jsonPanic(),
         };
-        try generatePlatformComment(out_writer, platform_node);
+        try generatePlatformComment(writer, platform_node);
         if (optional_free_func) |free_func| {
-            try out_writer.print("// TODO: this type has a FreeFunc '{s}', what can Zig do with this information?\n", .{free_func});
+            try writer.linef("// TODO: this type has a FreeFunc '{s}', what can Zig do with this information?", .{free_func});
         }
 
         // HANDLE PSTR and PWSTR specially because win32metadata is not properly declaring them as arrays, only pointers
@@ -1163,11 +1223,11 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
             switch (native_type) {
                 .Byte => {
                     jsonEnforce(special == .pstr);
-                    try out_writer.writeAll("pub const PSTR = [*:0]u8;\n");
+                    try writer.line("pub const PSTR = [*:0]u8;");
                 },
                 .Char => {
                     jsonEnforce(special == .pwstr);
-                    try out_writer.writeAll("pub const PWSTR = [*:0]u16;\n");
+                    try writer.line("pub const PWSTR = [*:0]u16;");
                 },
                 else => jsonPanic(),
             }
@@ -1178,11 +1238,11 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
             .String => |also_usable_for| {
                 if (also_usable_type_api_map.get(also_usable_for)) |api| {
                     try sdk_file.addApiImport(also_usable_for, api, json.Array { .items = &[_]json.Value{}, .capacity = 0, .allocator = allocator });
-                    try out_writer.print("//TODO: type '{s}' is \"AlsoUsableFor\" '{s}' which means this type is implicitly\n", .{tmp_name, also_usable_for});
-                    try out_writer.print("//      convertible to '{s}' but not the other way around.  I don't know how to do this\n", .{also_usable_for});
-                    try out_writer.print("//      in Zig so for now I'm just defining it as an alias\n", .{});
-                    try out_writer.print("pub const {s} = {s};\n", .{tmp_name, also_usable_for});
-                    //try out_writer.print("pub const {s} = extern struct {{ base: {s} }};\n", .{tmp_name, also_usable_for});
+                    try writer.linef("//TODO: type '{s}' is \"AlsoUsableFor\" '{s}' which means this type is implicitly", .{tmp_name, also_usable_for});
+                    try writer.linef("//      convertible to '{s}' but not the other way around.  I don't know how to do this", .{also_usable_for});
+                    try writer.line("//      in Zig so for now I'm just defining it as an alias");
+                    try writer.linef("{s}const {s} = {s};", .{visibility, tmp_name, also_usable_for});
+                    //try writer.linef("pub const {s} = extern struct {{ base: {s} }};", .{tmp_name, also_usable_for});
                 } else std.debug.panic("AlsoUsableFor type '{s}' is missing from alsoUsableForApiMap", .{also_usable_for});
                 return;
             },
@@ -1193,38 +1253,41 @@ fn generateType(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
         // NOTE: for now, I'm just hardcoding a few types to redirect to the ones defined in 'std'
         //       this allows apps to use values of these types interchangeably with bindings in std
         if (@import("handletypes.zig").std_handle_types.get(tmp_name)) |std_sym| {
-            try out_writer.print("pub const {s} = @import(\"std\").{s};\n", .{tmp_name, std_sym});
+            try writer.linef("{s}const {s} = @import(\"std\").{s};", .{visibility, tmp_name, std_sym});
             return;
         }
         // workaround https://github.com/microsoft/win32metadata/issues/395
         if (@import("handletypes.zig").handle_types.get(tmp_name)) |_| {
-            try out_writer.print("pub const {s} = ?*opaque{{}};\n", .{tmp_name});
+            try writer.linef("{s}const {s} = ?*opaque{{}};", .{visibility, tmp_name});
             return;
         }
 
         // TODO: set is_const, in and out properly
         const zig_type_formatter = try addTypeRefs(sdk_file, def_type, .{.reason = .direct_type_access, .is_const = false, .in = false, .out = false });
-        try out_writer.print("pub const {s} = {};\n", .{tmp_name, zig_type_formatter});
+        try writer.linef("{s}const {s} = {};", .{visibility, tmp_name, zig_type_formatter});
     } else if (std.mem.eql(u8, kind, "Enum")) {
-        try generateEnum(sdk_file, out_writer, type_obj, pool_name, enum_alias_conflicts);
+        std.debug.assert(depth == 0);
+        try generateEnum(sdk_file, writer, type_obj, depth, pool_name, enum_alias_conflicts);
     } else if (std.mem.eql(u8, kind, "Union")) {
         if (dhcp_type_conflicts.get(tmp_name)) |_| {
-            try out_writer.print("// TODO: this dhcp type has been removed because it conflicts with a nested type '{s}'\n", .{tmp_name});
+            try writer.linef("// TODO: this dhcp type has been removed because it conflicts with a nested type '{s}'", .{tmp_name});
             return;
         }
-        try generateStructOrUnion(sdk_file, out_writer, type_obj, pool_name, .Union);
+        try generateStructOrUnion(sdk_file, writer, type_obj, depth, pool_name, .Union, enum_alias_conflicts);
     } else if (std.mem.eql(u8, kind, "Struct")) {
-        try generateStructOrUnion(sdk_file, out_writer, type_obj, pool_name, .Struct);
+        try generateStructOrUnion(sdk_file, writer, type_obj, depth, pool_name, .Struct, enum_alias_conflicts);
     } else if (std.mem.eql(u8, kind, "FunctionPointer")) {
+        std.debug.assert(depth == 0);
         if (func_ptr_dependency_loop_problems.get(tmp_name)) |_| {
-            try out_writer.writeAll("// TODO: this function pointer causes dependency loop problems, so it's stubbed out\n");
-            try out_writer.print("pub const {s} = fn() callconv(@import(\"std\").os.windows.WINAPI) void;\n", .{tmp_name});
+            try writer.line("// TODO: this function pointer causes dependency loop problems, so it's stubbed out");
+            try writer.linef("{s}const {s} = fn() callconv(@import(\"std\").os.windows.WINAPI) void;", .{visibility, tmp_name});
             return;
         }
-        try generateFunction(sdk_file, out_writer, type_obj, .ptr, null, null);
+        try generateFunction(sdk_file, writer, type_obj, .ptr, null, null);
         try sdk_file.tmp_func_ptr_workaround_list.append(pool_name);
     } else if (std.mem.eql(u8, kind, "Com")) {
-        try generateCom(sdk_file, out_writer, type_obj, pool_name);
+        std.debug.assert(depth == 0);
+        try generateCom(sdk_file, writer, type_obj, pool_name);
     } else {
         jsonPanicMsg("{s}: unknown type Kind '{s}'", .{sdk_file.json_basename, kind});
     }
@@ -1269,17 +1332,17 @@ const com_types_to_skip = std.ComptimeStringMap(Nothing, .{
     .{ "IResourceManager2", .{} },
 });
 
-fn generatePlatformComment(out_writer: std.fs.File.Writer, platform_node: std.json.Value) !void {
+fn generatePlatformComment(writer: *CodeWriter, platform_node: std.json.Value) !void {
     switch (platform_node) {
         .String => |platform| {
-            try out_writer.print("// TODO: this type is limited to platform '{s}'\n", .{platform});
+            try writer.linef("// TODO: this type is limited to platform '{s}'", .{platform});
         },
         .Null => {},
         else => jsonPanic(),
     }
 }
 
-fn generateStructOrUnion(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, struct_pool_name: StringPool.Val, kind: enum { Struct, Union }) !void {
+fn generateStructOrUnion(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap, depth: Depth, struct_pool_name: StringPool.Val, kind: enum { Struct, Union }, enum_alias_conflicts: *StringPool.HashMap(StringPool.Val)) anyerror!void {
     try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Kind", "Name", "Platform", "Architectures",
         "Size", "PackingSize", "Fields", "Comment", "NestedTypes"}, sdk_file);
     const platform_node = try jsonObjGetRequired(type_obj, "Platform", sdk_file);
@@ -1288,21 +1351,22 @@ fn generateStructOrUnion(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, typ
     const struct_fields = (try jsonObjGetRequired(type_obj, "Fields", sdk_file)).Array;
     const struct_nested_types = (try jsonObjGetRequired(type_obj, "NestedTypes", sdk_file)).Array;
 
-    try generatePlatformComment(out_writer, platform_node);
+    try generatePlatformComment(writer, platform_node);
     const zig_type = if (kind == .Struct) "struct" else "union";
     const struct_mod: []const u8 = blk: { switch (struct_packing_size) {
         0 => break :blk "extern",
         1 => break :blk "packed",
         2, 4 => {
-            try out_writer.print("// WARNING: this type has a packing size of {}, not sure how to handle this\n", .{struct_packing_size});
+            try writer.linef("// WARNING: this type has a packing size of {}, not sure how to handle this", .{struct_packing_size});
             break :blk "extern";
         },
         else => jsonPanicMsg("unhandled struct/union packing size {}", .{struct_packing_size}),
     }};
-    try out_writer.print("pub const {} = {s} {s} {{\n", .{struct_pool_name, struct_mod, zig_type});
+    const visibility: []const u8 = if (depth == 0) "pub " else "";
+    try writer.linef("{s}const {} = {s} {s} {{", .{visibility, struct_pool_name, struct_mod, zig_type});
     if (struct_fields.items.len == 0) {
         // TODO: handle nested types
-        try out_writer.print("    comment: [*]const u8 = \"TODO: why is this struct empty?\"\n", .{});
+        try writer.line("    comment: [*]const u8 = \"TODO: why is this struct empty?\"");
     } else {
         for (struct_fields.items) |*field_node_ptr| {
             const field_obj = field_node_ptr.Object;
@@ -1320,21 +1384,22 @@ fn generateStructOrUnion(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, typ
                 } else if (std.mem.eql(u8, attr_str, "NullNullTerminated")) {
                     field_options.null_null_term = true;
                 } else if (std.mem.eql(u8, attr_str, "Obselete")) {
-                    try out_writer.print("    /// Deprecated\n", .{});
+                    try writer.line("    /// Deprecated");
                 } else {
-                    jsonPanicMsg("unhandled custom field attribute {s}\n", .{attr_str});
+                    jsonPanicMsg("unhandled custom field attribute {s}", .{attr_str});
                 }
             }
             const field_type_formatter = try addTypeRefs(sdk_file, field_type, field_options);
-            try out_writer.print("    {}: {},\n", .{std.zig.fmtId(field_name), field_type_formatter});
+            try writer.linef("    {}: {},", .{std.zig.fmtId(field_name), field_type_formatter});
         }
         for (struct_nested_types.items) |*nested_type_node_ptr| {
             const nested_type_obj = nested_type_node_ptr.Object;
             const nested_type_name = (try jsonObjGetRequired(nested_type_obj, "Name", sdk_file)).String;
-            try out_writer.print("    const {s} = u32; // TODO: generate this nested type!\n", .{nested_type_name});
+            try writer.linef("    const {s} = u32; // TODO: generate this nested type!", .{nested_type_name});
+            //try generateType(sdk_file, writer, nested_type_obj, enum_alias_conflicts, depth + 1);
         }
     }
-    try out_writer.print("}};\n", .{});
+    try writer.line("};");
 }
 
 // Not sure whether enums should be exhaustive or not, for now
@@ -1523,7 +1588,7 @@ fn setShortNames(values: []EnumValue) void {
     }
 }
 
-fn generateEnum(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, pool_name: StringPool.Val, enum_alias_conflicts: *StringPool.HashMap(StringPool.Val)) !void {
+fn generateEnum(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap, depth: Depth, pool_name: StringPool.Val, enum_alias_conflicts: *StringPool.HashMap(StringPool.Val)) !void {
     try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Platform", "Architectures", "Kind", "Flags", "Scoped", "Values", "IntegerBase"}, sdk_file);
     const platform_node = try jsonObjGetRequired(type_obj, "Platform", sdk_file);
     const flags = (try jsonObjGetRequired(type_obj, "Flags", sdk_file)).Bool;
@@ -1532,13 +1597,13 @@ fn generateEnum(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
     const integer_base = switch (try jsonObjGetRequired(type_obj, "IntegerBase", sdk_file)) {
         .Null => "i32",
         .String => |s| nativeTypeToZigType(global_native_type_map.get(s) orelse {
-            std.log.err("enum '{}' has an unknown IntegerBase '{s}'\n", .{pool_name, s});
+            std.log.err("enum '{}' has an unknown IntegerBase '{s}'", .{pool_name, s});
             return error.AlreadyReported;
         }),
         else => jsonPanic(),
     };
     if (flags) {
-        try out_writer.writeAll("// TODO: This Enum is marked as [Flags], what do I do with this?\n");
+        try writer.line("// TODO: This Enum is marked as [Flags], what do I do with this?");
     }
     const values = try allocator.alloc(EnumValue, json_values.items.len);
     var values_initialized_len: usize = 0;
@@ -1557,28 +1622,28 @@ fn generateEnum(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
     }
     setShortNames(values);
 
-    try out_writer.print("pub const {} = extern enum({s}) {{\n", .{pool_name, integer_base});
+    try writer.linef("pub const {} = extern enum({s}) {{", .{pool_name, integer_base});
     if (values.len == 0) {
         // zig doesn't allow empty enums
-        try out_writer.print("    _\n", .{});
+        try writer.line("    _");
     } else {
         for (values) |val| {
-            try out_writer.print("    {s} = {},\n", .{std.zig.fmtId(val.short_name), fmtJson(val.value)});
+            try writer.linef("    {s} = {},", .{std.zig.fmtId(val.short_name), fmtJson(val.value)});
         }
         if (flags) {
-            try out_writer.print("    _,\n", .{});
+            try writer.linef("    _,", .{});
         } else if (non_exhaustive_enums.get(pool_name.slice)) |_| {
-            try out_writer.print("    _,\n", .{});
+            try writer.linef("    _,", .{});
         }
     }
-    try out_writer.print("}};\n", .{});
+    try writer.line("};");
 
     if (scoped) {
-        try out_writer.print("// NOTE: not creating aliases because this enum is 'Scoped'\n", .{});
+        try writer.linef("// NOTE: not creating aliases because this enum is 'Scoped'", .{});
         return;
     }
     if (suppress_enum_aliases.get(pool_name.slice)) |_| {
-        try out_writer.print("// TODO: enum '{}' has known issues with its value aliases\n", .{pool_name});
+        try writer.linef("// TODO: enum '{}' has known issues with its value aliases", .{pool_name});
         return;
     }
 
@@ -1598,11 +1663,11 @@ fn generateEnum(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: js
         alias_count += 1;
         try enum_alias_conflicts.put(val.pool_name, pool_name);
         try sdk_file.const_exports.append(val.pool_name);
-        try out_writer.print("pub const {} = {}.{};\n", .{val.pool_name, pool_name, std.zig.fmtId(val.short_name)});
+        try writer.linef("pub const {} = {}.{};", .{val.pool_name, pool_name, std.zig.fmtId(val.short_name)});
     }
 }
 
-fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: json.ObjectMap, com_pool_name: StringPool.Val) !void {
+fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap, com_pool_name: StringPool.Val) !void {
     try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Kind", "Name", "Platform", "Architectures", "Guid", "Interface", "Methods"}, sdk_file);
     const platform_node = try jsonObjGetRequired(type_obj, "Platform", sdk_file);
     const com_optional_guid : ?[]const u8 = switch (try jsonObjGetRequired(type_obj, "Guid", sdk_file)) {
@@ -1618,28 +1683,28 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
     const com_methods = (try jsonObjGetRequired(type_obj, "Methods", sdk_file)).Array;
     const skip = com_types_to_skip.has(com_pool_name.slice);
     if (skip) {
-        try out_writer.print("// WARNING: this COM type has been skipped because it causes some sort of error\n", .{});
+        try writer.line("// WARNING: this COM type has been skipped because it causes some sort of error");
     }
-    try generatePlatformComment(out_writer, platform_node);
+    try generatePlatformComment(writer, platform_node);
 
     const iid_pool = try global_symbol_pool.addFormatted("IID_{s}", .{com_pool_name.slice});
     if (com_optional_guid) |guid| {
-        try out_writer.print("const {s}_Value = @import(\"{s}zig.zig\").Guid.initString(\"{s}\");\n",
+        try writer.linef("const {s}_Value = @import(\"{s}zig.zig\").Guid.initString(\"{s}\");",
             .{ iid_pool, sdk_file.getWin32DirImportPrefix(), guid});
-        try out_writer.print("pub const {s} = &{0s}_Value;\n", .{iid_pool});
+        try writer.linef("pub const {s} = &{0s}_Value;", .{iid_pool});
         try sdk_file.const_exports.append(iid_pool);
     }
 
-    try out_writer.print("pub const {s} = extern struct {{\n", .{com_pool_name});
-    try out_writer.print("    pub const VTable = extern struct {{\n", .{});
+    try writer.linef("pub const {s} = extern struct {{", .{com_pool_name});
+    try writer.line("    pub const VTable = extern struct {");
     var iface_formatter : TypeRefFormatter = undefined;
 
     if (skip) {
-        try out_writer.print("        _: *opaque{{}}, // just a placeholder because this COM type is skipped\n", .{});
+        try writer.line("        _: *opaque{}, // just a placeholder because this COM type is skipped");
     } else {
         if (com_optional_iface) |iface| {
             iface_formatter = try addTypeRefs(sdk_file, iface, .{ .reason = .direct_type_access });
-            try out_writer.print("        base: {}.VTable,\n", .{iface_formatter});
+            try writer.linef("        base: {}.VTable,", .{iface_formatter});
         }
 
         // some COM objects have methods with the same name and only differ in parameter types
@@ -1650,23 +1715,23 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
             const method_name = (try jsonObjGetRequired(method_node_ptr.Object, "Name", sdk_file)).String;
             const count = method_conflicts.get(method_name) orelse 0;
             try method_conflicts.put(method_name, count + 1);
-            try generateFunction(sdk_file, out_writer, method_node_ptr.Object, .com, if (count == 0) null else count, com_pool_name.slice);
+            try generateFunction(sdk_file, writer, method_node_ptr.Object, .com, if (count == 0) null else count, com_pool_name.slice);
         }
     }
 
-    try out_writer.print("    }};\n", .{});
-    try out_writer.print("    vtable: *const VTable,\n", .{});
+    try writer.line("    };");
+    try writer.linef("    vtable: *const VTable,", .{});
 
     // some COM objects have methods with the same name and only differ in parameter types
     var method_conflicts = StringHashMap(u8).init(allocator);
     defer method_conflicts.deinit();
 
     // Generate wrapper methods for every entry in the vtable
-    try out_writer.print("    pub fn MethodMixin(comptime T: type) type {{ return struct {{\n", .{});
+    try writer.line("    pub fn MethodMixin(comptime T: type) type { return struct {");
     if (!skip) {
         if (com_optional_iface) |iface| {
             // For now we're putting this inside a sub-struct to avoid name conflicts
-            try out_writer.print("        pub usingnamespace {}.MethodMixin(T);\n", .{iface_formatter});
+            try writer.linef("        pub usingnamespace {}.MethodMixin(T);", .{iface_formatter});
         }
         for (com_methods.items) |*method_node_ptr| {
             const method_obj = method_node_ptr.Object;
@@ -1677,12 +1742,12 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
             const count = method_conflicts.get(method_name) orelse 0;
             try method_conflicts.put(method_name, count + 1);
 
-            try out_writer.print("        // NOTE: method is namespaced with interface name to avoid conflicts for now\n", .{});
-            try out_writer.print("        pub fn {s}_{s}", .{com_pool_name, method_name});
+            try writer.line("        // NOTE: method is namespaced with interface name to avoid conflicts for now");
+            try writer.writef("        pub fn {s}_{s}", .{com_pool_name, method_name}, .{.nl=false});
             if (count > 0) {
-                try out_writer.print("{}", .{count});
+                try writer.writef("{}", .{count}, .{.start=.mid,.nl=false});
             }
-            try out_writer.print("(self: *const T", .{});
+            try writer.write("(self: *const T", .{.start=.mid,.nl=false});
             for (params.items) |*param_node_ptr| {
                 const param_obj = param_node_ptr.Object;
                 try jsonObjEnforceKnownFieldsOnly(param_obj, &[_][]const u8 {"Name", "Type", "Attrs"}, sdk_file);
@@ -1693,27 +1758,27 @@ fn generateCom(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, type_obj: jso
                 const param_type_formatter = fmtTypeRef(param_type, param_options, .top_level, sdk_file);
                 if (param_options.optional_bytes_param_index) |bytes_param_index| {
                     // NOTE: can't print this because we are currently inline
-                    //try out_writer.print("// TODO: what to do with BytesParamIndex {}?\n", .{bytes_param_index});
+                    //try writer.linef("// TODO: what to do with BytesParamIndex {}?", .{bytes_param_index});
                 }
-                try out_writer.print(", {s}: {}", .{std.zig.fmtId(param_name), param_type_formatter});
+                try writer.writef(", {s}: {}", .{std.zig.fmtId(param_name), param_type_formatter}, .{.start=.mid,.nl=false});
             }
             // NOTE: don't need to call addTypeRefs because it was already called in generateFunction above
             // TODO: set is_const, in and out properly
             const return_type_formatter = fmtTypeRef(return_type, .{ .reason = .var_decl, .is_const = false, .in = false, .out = false }, .top_level, sdk_file);
-            try out_writer.print(") callconv(.Inline) {} {{\n", .{return_type_formatter});
-            try out_writer.print("            return @ptrCast(*const {s}.VTable, self.vtable).{s}(@ptrCast(*const {0s}, self)", .{com_pool_name, std.zig.fmtId(method_name)});
+            try writer.writef(") callconv(.Inline) {} {{", .{return_type_formatter}, .{.start=.mid});
+            try writer.writef("            return @ptrCast(*const {s}.VTable, self.vtable).{s}(@ptrCast(*const {0s}, self)", .{com_pool_name, std.zig.fmtId(method_name)}, .{.nl=false});
             for (params.items) |*param_node_ptr| {
                 const param_obj = param_node_ptr.Object;
                 const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).String;
-                try out_writer.print(", {s}", .{std.zig.fmtId(param_name)});
+                try writer.writef(", {s}", .{std.zig.fmtId(param_name)}, .{.start=.mid,.nl=false});
             }
-            try out_writer.print(");\n", .{});
-            try out_writer.print("        }}\n", .{});
+            try writer.write(");", .{.start=.allow_mid});
+            try writer.line("        }");
         }
     }
-    try out_writer.print("    }};}}\n", .{});
-    try out_writer.print("    pub usingnamespace MethodMixin(@This());\n", .{});
-    try out_writer.print("}};\n", .{});
+    try writer.line("    };}");
+    try writer.line("    pub usingnamespace MethodMixin(@This());");
+    try writer.line("};");
 }
 
 fn processParamAttrs(attrs: json.Array, reason: TypeRefFormatter.Reason, sdk_file: *const SdkFile) TypeRefFormatter.Options {
@@ -1794,22 +1859,24 @@ const noreturn_funcs = std.ComptimeStringMap(Nothing, .{
 
 const FuncPtrKind = enum { ptr, fixed, com };
 
-fn generateArchPrefix(out_writer: std.fs.File.Writer, module_depth: u2, architectures: []json.Value) !void {
+fn generateArchPrefix(writer: *CodeWriter, module_depth: u2, architectures: []json.Value) !void {
     std.debug.assert(architectures.len > 0);
-    try out_writer.print("pub usingnamespace switch (@import(\"{s}zig.zig\").arch) {{\n", .{import_prefix_table[module_depth]});
+    try writer.linef("pub usingnamespace switch (@import(\"{s}zig.zig\").arch) {{", .{import_prefix_table[module_depth]});
     var case_prefix: []const u8 = "";
     for (architectures) |arch_node| {
         const arch = arch_name_map.get(arch_node.String) orelse return error.UnknownArch;
-        try out_writer.print("{s}.{s}", .{case_prefix, arch_node.String});
+        try writer.writef("{s}.{s}", .{case_prefix, arch_node.String}, .{.start=.allow_mid, .nl=false});
         case_prefix = ", ";
     }
-    try out_writer.writeAll(" => struct {\n\n");
+    try writer.write(" => struct {", .{.start = .allow_mid});
+    try writer.line("");
 }
-fn generateArchSuffix(out_writer: std.fs.File.Writer) void {
-    out_writer.writeAll("\n}, else => struct { } };\n") catch @panic("here");
+fn generateArchSuffix(writer: *CodeWriter) void {
+    writer.line("") catch @panic("here");
+    writer.line("}, else => struct { } };") catch @panic("here");
 }
 
-fn generateFunction(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function_obj: json.ObjectMap, func_kind: FuncPtrKind, suffix: ?u8, optional_self_type: ?[]const u8) !void {
+fn generateFunction(sdk_file: *SdkFile, writer: *CodeWriter, function_obj: json.ObjectMap, func_kind: FuncPtrKind, suffix: ?u8, optional_self_type: ?[]const u8) !void {
     const prefix = if (func_kind == .com) "        " else "";
     switch (func_kind) {
         .fixed => try jsonObjEnforceKnownFieldsOnly(function_obj, &[_][]const u8 {"Name", "Platform", "Architectures",
@@ -1834,49 +1901,49 @@ fn generateFunction(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function
     if (architectures.items.len > 0) {
         // is COM supposed to support arch specific methods?
         std.debug.assert(func_kind != .com);
-        try generateArchPrefix(out_writer, sdk_file.depth, architectures.items);
+        try generateArchPrefix(writer, sdk_file.depth, architectures.items);
     }
     defer {
-        if (architectures.items.len > 0) generateArchSuffix(out_writer);
+        if (architectures.items.len > 0) generateArchSuffix(writer);
     }
 
     for (attrs.items) |attr_node| {
         switch (attr_node) {
             .String => |attr| {
                 if (std.mem.eql(u8, attr, "SpecialName")) {
-                    try out_writer.print("{s}// TODO: this function has a \"SpecialName\", should Zig do anything with this?\n", .{prefix});
+                    try writer.linef("{s}// TODO: this function has a \"SpecialName\", should Zig do anything with this?", .{prefix});
                 } else jsonPanic();
             },
             else => jsonPanic(),
         }
     }
-    try generatePlatformComment(out_writer, platform_node);
+    try generatePlatformComment(writer, platform_node);
     if (funcs_with_issues.get(func_name_tmp)) |_| {
-        try out_writer.print("{s}// This function from dll '{s}' is being skipped because it has some sort of issue\n", .{prefix, dll_import});
-        try out_writer.print("{s}pub fn {s}() void {{ @panic(\"this function is not working\"); }}\n", .{prefix, func_name_tmp});
+        try writer.linef("{s}// This function from dll '{s}' is being skipped because it has some sort of issue", .{prefix, dll_import});
+        try writer.linef("{s}pub fn {s}() void {{ @panic(\"this function is not working\"); }}", .{prefix, func_name_tmp});
         return;
     }
 
     switch (func_kind) {
         .fixed => {
             jsonEnforce(suffix == null);
-            try out_writer.print("{s}pub extern \"{s}\" fn {s}(\n", .{prefix, dll_import, std.zig.fmtId(func_name_tmp)});
+            try writer.linef("{s}pub extern \"{s}\" fn {s}(", .{prefix, dll_import, std.zig.fmtId(func_name_tmp)});
         },
         .ptr => {
             jsonEnforce(suffix == null);
-            try out_writer.print("{s}pub const {s} = fn(\n", .{prefix, std.zig.fmtId(func_name_tmp)});
+            try writer.linef("{s}pub const {s} = fn(", .{prefix, std.zig.fmtId(func_name_tmp)});
         },
         .com => {
             if (suffix) |s| {
-                try out_writer.print("{s}{s}{}", .{prefix, func_name_tmp, s});
+                try writer.writef("{s}{s}{}", .{prefix, func_name_tmp, s}, .{.nl=false});
             } else {
-                try out_writer.print("{s}{s}", .{prefix, std.zig.fmtId(func_name_tmp)});
+                try writer.writef("{s}{s}", .{prefix, std.zig.fmtId(func_name_tmp)}, .{.nl=false});
             }
-            try out_writer.print(": fn(\n", .{});
+            try writer.write(": fn(", .{.start=.mid});
         },
     }
     if (optional_self_type) |self_type| {
-        try out_writer.print("{s}    self: *const {s},\n", .{prefix, self_type});
+        try writer.linef("{s}    self: *const {s},", .{prefix, self_type});
     }
     for (params.items) |*param_node_ptr| {
         const param_obj = param_node_ptr.Object;
@@ -1886,21 +1953,21 @@ fn generateFunction(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, function
         const param_options = processParamAttrs((try jsonObjGetRequired(param_obj, "Attrs", sdk_file)).Array, .var_decl, sdk_file);
         const param_type_formatter = try addTypeRefs(sdk_file, param_type, param_options);
         if (param_options.optional_bytes_param_index) |bytes_param_index| {
-            try out_writer.print("{s}    // TODO: what to do with BytesParamIndex {}?\n", .{prefix, bytes_param_index});
+            try writer.linef("{s}    // TODO: what to do with BytesParamIndex {}?", .{prefix, bytes_param_index});
         }
-        try out_writer.print("{s}    {s}: {},\n", .{prefix, std.zig.fmtId(param_name), param_type_formatter});
+        try writer.linef("{s}    {s}: {},", .{prefix, std.zig.fmtId(param_name), param_type_formatter});
     }
 
-    try out_writer.print("{s}) callconv(@import(\"std\").os.windows.WINAPI) ", .{prefix});
+    try writer.writef("{s}) callconv(@import(\"std\").os.windows.WINAPI) ", .{prefix}, .{.nl=false});
     if (noreturn_funcs.get(func_name_tmp)) |_| {
-        try out_writer.writeAll("noreturn");
+        try writer.write("noreturn", .{.start=.mid,.nl=false});
     } else {
         // TODO: set is_const, in and out properly
         const return_type_formatter = try addTypeRefs(sdk_file, return_type, .{ .reason = .var_decl, .is_const = false, .in = false, .out = false });
-        try out_writer.print("{}", .{return_type_formatter});
+        try writer.writef("{}", .{return_type_formatter}, .{.start=.mid,.nl=false});
     }
     const term = if (func_kind == .com) "," else ";";
-    try out_writer.print("{s}\n", .{term});
+    try writer.writef("{s}", .{term}, .{.start=.mid});
 }
 
 fn getPoolStringWithParts(a: *std.mem.Allocator, slices: []const []const u8) ![]const u8 {
@@ -1909,28 +1976,28 @@ fn getPoolStringWithParts(a: *std.mem.Allocator, slices: []const []const u8) ![]
     return try global_symbol_pool.add(tmp);
 }
 
-fn generateUnicodeAliases(sdk_file: *SdkFile, out_writer: std.fs.File.Writer, unicode_aliases: []json.Value) !void {
-    try out_writer.print   ("pub usingnamespace switch (@import(\"{s}zig.zig\").unicode_mode) {{\n", .{sdk_file.getWin32DirImportPrefix()});
-    try out_writer.writeAll("    .ansi => struct {\n");
+fn generateUnicodeAliases(sdk_file: *SdkFile, writer: *CodeWriter, unicode_aliases: []json.Value) !void {
+    try writer.linef   ("pub usingnamespace switch (@import(\"{s}zig.zig\").unicode_mode) {{", .{sdk_file.getWin32DirImportPrefix()});
+    try writer.line    ("    .ansi => struct {");
     for (unicode_aliases) |*alias_node_ptr| {
-        try out_writer.print("        pub const {s} = {0s}A;\n", .{alias_node_ptr.String});
+        try writer.linef("        pub const {s} = {0s}A;", .{alias_node_ptr.String});
     }
-    try out_writer.writeAll("    },\n");
-    try out_writer.writeAll("    .wide => struct {\n");
+    try writer.line("    },");
+    try writer.line("    .wide => struct {");
     for (unicode_aliases) |*alias_node_ptr| {
-        try out_writer.print("        pub const {s} = {0s}W;\n", .{alias_node_ptr.String});
+        try writer.linef("        pub const {s} = {0s}W;", .{alias_node_ptr.String});
     }
-    try out_writer.writeAll("    },\n");
-    try out_writer.writeAll("    .unspecified => if (@import(\"builtin\").is_test) struct {\n");
+    try writer.line("    },");
+    try writer.line("    .unspecified => if (@import(\"builtin\").is_test) struct {");
     for (unicode_aliases) |*alias_node_ptr| {
-        try out_writer.print("        pub const {s} = *opaque{{}};\n", .{alias_node_ptr.String});
+        try writer.linef("        pub const {s} = *opaque{{}};", .{alias_node_ptr.String});
     }
-    try out_writer.writeAll("    } else struct {\n");
+    try writer.line("    } else struct {");
     for (unicode_aliases) |*alias_node_ptr| {
-        try out_writer.print("        pub const {s} = @compileError(\"'{0s}' requires that UNICODE be set to true or false in the root module\");\n", .{alias_node_ptr.String});
+        try writer.linef("        pub const {s} = @compileError(\"'{0s}' requires that UNICODE be set to true or false in the root module\");", .{alias_node_ptr.String});
     }
-    try out_writer.writeAll("    },\n");
-    try out_writer.writeAll("};");
+    try writer.line("    },");
+    try writer.line("};");
 }
 
 const Arch = enum { X86, X64, Arm64 };
