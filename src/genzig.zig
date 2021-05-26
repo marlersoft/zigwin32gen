@@ -1392,21 +1392,12 @@ fn generateStructOrUnionDef(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: j
     const struct_fields = (try jsonObjGetRequired(type_obj, "Fields", sdk_file)).Array;
     const struct_nested_types = (try jsonObjGetRequired(type_obj, "NestedTypes", sdk_file)).Array;
 
-    const pack_data: struct { mod: []const u8, good: bool } = switch (struct_packing_size) {
-        0 => .{ .mod = "extern", .good = true },
-        1 => .{ .mod = "packed", .good = true },
-        2, 4 => .{ .mod = "extern", .good = false },
-        else => jsonPanicMsg("unhandled struct/union packing size {}", .{struct_packing_size}),
-    };
+    const type_mod: []const u8 = if (struct_packing_size == 1) "packed" else "extern";
     const zig_type = if (kind == .Struct) "struct" else "union";
 
-    try writer.writef("{s} {s} {{", .{pack_data.mod, zig_type}, .{.start=.any});
+    try writer.writef("{s} {s} {{", .{type_mod, zig_type}, .{.start=.any});
     writer.depth += 1;
     defer writer.depth -=1;
-
-    if (!pack_data.good) {
-        try writer.linef("// WARNING: this type has PackingSize={}, how to handle this in Zig?", .{struct_packing_size});
-    }
 
     var anon_types = AnonTypes.init();
     defer anon_types.deinit();
@@ -1435,6 +1426,12 @@ fn generateStructOrUnionDef(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: j
     if (struct_fields.items.len == 0) {
         try writer.line("placeholder: usize, // TODO: why is this type empty?");
     } else {
+        if (struct_packing_size > 1 and kind == .Union) {
+            try writer.line("// WARNING: unable to add field alignment because it's not implemented for unions");
+        } else if (struct_packing_size > 1) {
+            try writer.line("// WARNING: unable to add field alignment because it's causing a compiler bug");
+            // Assertion failed at /home/vsts/work/1/s/src/stage1/analyze.cpp:8758 in resolve_llvm_types_struct. This is a bug in the Zig compiler.thread 3298 panic: 
+        }
         for (struct_fields.items) |*field_node_ptr| {
             const field_obj = field_node_ptr.Object;
             try jsonObjEnforceKnownFieldsOnly(field_obj, &[_][]const u8 {"Name", "Type", "Attrs"}, sdk_file);
@@ -1459,6 +1456,10 @@ fn generateStructOrUnionDef(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: j
             const field_type_formatter = try addTypeRefs(sdk_file, field_type, field_options);
             try writer.writef("{}: ", .{std.zig.fmtId(field_name)}, .{.nl=false});
             try generateTypeRef(sdk_file, writer, field_type_formatter);
+            if (struct_packing_size > 1 and kind == .Struct) {
+                // NOTE: this is causing a compiler bug
+                //try writer.writef(" align({})", .{struct_packing_size}, .{.start=.mid,.nl=false});
+            }
             try writer.write(",", .{.start=.mid});
         }
     }
