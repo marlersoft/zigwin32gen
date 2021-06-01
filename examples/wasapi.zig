@@ -76,7 +76,7 @@ pub fn getDefaultDevice() !void {
 }
 
 pub fn main() !u8 {
-    const config_value = @enumToInt(COINIT_APARTMENTTHREADED) | @enumToInt(COINIT_DISABLE_OLE1DDE);
+    const config_value = COINIT.initFlags(.{.APARTMENTTHREADED = 1, .DISABLE_OLE1DDE = 1});
     {
         const status = CoInitialize(null); // CoInitializeEx(null, @intToEnum(COINIT, config_value));
         if (FAILED(status)) {

@@ -1665,9 +1665,6 @@ fn generateEnum(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMa
         }),
         else => jsonPanic(),
     };
-    if (flags) {
-        try writer.line("// TODO: This Enum is marked as [Flags], what do I do with this?");
-    }
     const values = try allocator.alloc(EnumValue, json_values.items.len);
     var values_initialized_len: usize = 0;
     defer allocator.free(values);
@@ -1698,6 +1695,21 @@ fn generateEnum(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMa
         } else if (non_exhaustive_enums.get(pool_name.slice)) |_| {
             try writer.linef("    _,", .{});
         }
+    }
+    if (flags) {
+        try writer.line("    pub fn initFlags(o: struct {");
+        for (values) |val| {
+            try writer.linef("        {}: u1 = 0,", .{std.zig.fmtId(val.short_name)});
+        }
+        try writer.linef("    }}) {s} {{", .{pool_name});
+        try writer.linef("        return @intToEnum({s},", .{pool_name});
+        var prefix: []const u8 = " ";
+        for (values) |val| {
+            try writer.linef("            {s} (if (o.{s} == 1) @enumToInt({s}.{1s}) else 0)", .{prefix, std.zig.fmtId(val.short_name), pool_name});
+            prefix = "|";
+        }
+        try writer.line("        );");
+        try writer.line("    }");
     }
     try writer.line("};");
 
