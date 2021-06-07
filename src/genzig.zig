@@ -220,7 +220,7 @@ fn main2() !u8 {
     global_symbol_None = try global_symbol_pool.add("None");
 
     const win32json_dir_name = "deps" ++ path_sep ++ "win32json";
-    const win32json_branch = "10.0.19041.202-preview";
+    const win32json_branch = "10.2.84-preview";
     var win32json_dir = std.fs.cwd().openDir(win32json_dir_name, .{}) catch |e| switch (e) {
         error.FileNotFound => {
             std.debug.warn("Error: repository '{s}' does not exist, clone it with:\n", .{win32json_dir_name});
@@ -460,7 +460,6 @@ fn generateContainerModules(dir: std.fs.Dir, module: *Module) anyerror!void {
     defer file.close();
     const writer = file.writer();
 
-    try writer.writeAll(autogen_header);
 
     const children = try allocMapValues(allocator, *Module, module.children);
     defer allocator.free(children);
@@ -470,6 +469,8 @@ fn generateContainerModules(dir: std.fs.Dir, module: *Module) anyerror!void {
         try writer.print("//--------------------------------------------------------------------------------\n", .{});
         try writer.print("// Section: SubModules ({})\n", .{children.len});
         try writer.print("//--------------------------------------------------------------------------------\n", .{});
+    } else {
+        try writer.writeAll(autogen_header);
     }
     for (children) |child| {
         try writer.print("pub const {s} = @import(\"{s}/{0s}.zig\");\n", .{child.name, module.name.slice});
@@ -1108,7 +1109,7 @@ fn generateConstant(sdk_file: *SdkFile, writer: *CodeWriter, constant_obj: json.
 const also_usable_type_api_map = std.ComptimeStringMap([]const u8, .{
     .{ "HDC", "Graphics.Gdi" },
     .{ "HGDIOBJ", "Graphics.Gdi" },
-    .{ "HICON", "UI.MenusAndResources" },
+    .{ "HICON", "UI.WindowsAndMessaging" },
     .{ "HANDLE", "System.SystemServices" },
     .{ "HeapHandle", "System.SystemServices" },
 });
