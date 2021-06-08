@@ -106,5 +106,10 @@ pub const handle_types = list: {
         .{ "HPTPROVIDER", .{} },
         .{ "HPSS", .{} },
         .{ "HPSSWALK", .{} },
+        .{ "HSTRING_BUFFER", .{} },
+        .{ "JET_SESID", .{} },
+        .{ "PSID", .{} },
+        .{ "AUTHZ_AUDIT_EVENT_HANDLE", .{} },
+        .{ "HeapHandle", .{} },
     });
 };

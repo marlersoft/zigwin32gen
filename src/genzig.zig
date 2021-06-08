@@ -818,11 +818,10 @@ fn generateTypeRefRec(sdk_file: *SdkFile, writer: *CodeWriter, self: TypeRefForm
 
         if (self.options.reason == .var_decl) {
             if (self.options.optional) {
-                switch (target_kind) {
-                    .Com, .FunctionPointer => {
-                        try writer.write("?", .{.start=.any,.nl=false});
-                    },
-                    .Default => {},
+                // workaround https://github.com/microsoft/win32metadata/issues/519
+                if (std.mem.eql(u8, name, "LPARAM") or std.mem.eql(u8, name, "WPARAM")) {
+                } else {
+                try writer.write("?", .{.start=.any,.nl=false});
                 }
             }
             switch (target_kind) {
@@ -845,10 +844,6 @@ fn generateTypeRefRec(sdk_file: *SdkFile, writer: *CodeWriter, self: TypeRefForm
             break :blk .other;
         };
         if (special == .pstr or special == .pwstr) {
-            if (self.options.optional) {
-                try writer.write("?", .{.start=.any,.nl=false});
-            }
-
             // if we deviated from the options we set for PSTR/PWSTR, then generate the native zig
             // type directly instead of referencing the PSTR/PWSTR type
             if (self.options.is_const or self.options.not_null_term) {
@@ -872,14 +867,17 @@ fn generateTypeRefRec(sdk_file: *SdkFile, writer: *CodeWriter, self: TypeRefForm
     } else if (std.mem.eql(u8, kind, "PointerTo")) {
         try jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"Kind", "Child"}, sdk_file);
         const child = (try jsonObjGetRequired(self.type_ref, "Child", sdk_file)).Object;
+        var child_options = self.options;
         if (self.options.optional) {
+            child_options.optional = false;
             try writer.write("?", .{.start=.any,.nl=false});
         }
         try writer.write("*", .{.start=.any,.nl=false});
         if (self.options.is_const) {
+            child_options.is_const = false; // TODO: is this right?
             try writer.write("const ", .{.start=.any,.nl=false});
         }
-        try generateTypeRefRec(sdk_file, writer, fmtTypeRef(child, self.options), .child);
+        try generateTypeRefRec(sdk_file, writer, fmtTypeRef(child, child_options), .child);
     } else if (std.mem.eql(u8, kind, "Array")) {
         try jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"Kind", "Shape", "Child"}, sdk_file);
         const child = (try jsonObjGetRequired(self.type_ref, "Child", sdk_file)).Object;
@@ -902,8 +900,9 @@ fn generateTypeRefRec(sdk_file: *SdkFile, writer: *CodeWriter, self: TypeRefForm
         const type_ref_kind = (try jsonObjGetRequired(self.type_ref, "Kind", sdk_file)).String;
         // TODO: can Zig use count_param_index?
         const child = (try jsonObjGetRequired(self.type_ref, "Child", sdk_file)).Object;
-
+        var child_options = self.options;
         if (self.options.optional) {
+            child_options.optional = false;
             try writer.write("?", .{.start=.any,.nl=false});
         }
         if (null_null_term) {
@@ -921,7 +920,7 @@ fn generateTypeRefRec(sdk_file: *SdkFile, writer: *CodeWriter, self: TypeRefForm
             }
             if (count_const <= 0 and self.options.is_const)
                 try writer.write("const ", .{.start=.any,.nl=false});
-            try generateTypeRefRec(sdk_file, writer, fmtTypeRef(child, self.options), .array);
+            try generateTypeRefRec(sdk_file, writer, fmtTypeRef(child, child_options), .array);
         }
     } else if (std.mem.eql(u8, kind, "MissingClrType")) {
         try jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"Kind", "Name", "Namespace"}, sdk_file);
@@ -1039,6 +1038,10 @@ const constants_to_skip = std.ComptimeStringMap(Nothing, .{
     .{ "IDI_ASTERISK", .{} },
     .{ "IDI_WINLOGO", .{} },
     .{ "IDI_SHIELD", .{} },
+
+    // HWND_DESKTOP and HWND_TOP are HWND types, but they are 0 so they need to be ?HWND
+    .{ "HWND_DESKTOP", .{} },
+    .{ "HWND_TOP", .{} },
 });
 fn generateConstant(sdk_file: *SdkFile, writer: *CodeWriter, constant_obj: json.ObjectMap) !void {
     try jsonObjEnforceKnownFieldsOnly(constant_obj, &[_][]const u8 {"Name", "Type", "Value", "ValueType", "Attrs"}, sdk_file);
@@ -1283,7 +1286,7 @@ fn generateType(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMa
         }
         // workaround https://github.com/microsoft/win32metadata/issues/395
         if (@import("handletypes.zig").handle_types.get(tmp_name)) |_| {
-            try writer.linef("pub const {s} = ?*opaque{{}};", .{tmp_name});
+            try writer.linef("pub const {s} = *opaque{{}};", .{tmp_name});
             return;
         }
 
@@ -1920,6 +1923,27 @@ const funcs_with_issues = std.ComptimeStringMap(Nothing, .{
     // See: https://github.com/ziglang/zig/issues/1481
     .{ "CorePrinterDriverInstalledA", .{} },
     .{ "CorePrinterDriverInstalledW", .{} },
+    // workaround https://github.com/microsoft/win32metadata/issues/520
+    .{ "AuthzInitializeResourceManagerEx", .{} },
+    // The 3rd parameter "ObjectType" is "Optional" but is typed as an enum?
+    // but the docs says it's a pointer?? wtf is going on with this one?
+    .{ "BuildTrusteeWithObjectsAndNameA", .{} },
+    .{ "BuildTrusteeWithObjectsAndNameW", .{} },
+    // these functions contain invalid optional types (https://github.com/microsoft/win32metadata/issues/519)
+    .{ "NCryptOpenKey", .{} },
+    .{ "NCryptTranslateHandle", .{} },
+    .{ "CryptSignAndEncodeCertificate", .{} },
+    .{ "MFPCreateMediaPlayer", .{} },
+    .{ "QOSRemoveSocketFromFlow", .{} },
+    .{ "PrjUpdateFileIfNeeded", .{} },
+    .{ "PrjDeleteFile", .{} },
+    .{ "JetSetSystemParameterA", .{} },
+    .{ "JetSetSystemParameterW", .{} },
+    .{ "MsiGetComponentPathExA", .{} },
+    .{ "MsiGetComponentPathExW", .{} },
+    .{ "SymLoadModuleEx", .{} },
+    .{ "SymLoadModuleExW", .{} },
+    .{ "PssDuplicateSnapshot", .{} },
 });
 const noreturn_funcs = std.ComptimeStringMap(Nothing, .{
     .{ "ExitProcess", .{} },
