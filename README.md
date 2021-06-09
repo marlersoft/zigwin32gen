@@ -13,7 +13,7 @@ git clone https://github.com/marlersoft/zigwin32
 Then run the following command to generate the latest bindings:
 
 ```
-zig build genzig
+zig build
 ```
 
 On the first run, running this command will provide an error message saying that the `win32json` dependency is missing, and will provide you with a git command to clone it and checkout the expected version.
