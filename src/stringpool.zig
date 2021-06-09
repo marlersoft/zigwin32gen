@@ -56,17 +56,18 @@ pub const StringPool = struct {
         return val;
     }
 
-    fn eqlVal(a: Val, b: Val) bool {
-        return std.hash_map.eqlString(a.slice, b.slice);
-    }
-    fn hashVal(s: Val) u64 {
-        return std.hash_map.hashString(s.slice);
-    }
+    const HashContext = struct {
+        pub fn hash(self: HashContext, s: Val) u64 {
+            return std.hash_map.hashString(s.slice);
+        }
+        pub fn eql(self: HashContext, a: Val, b: Val) bool {
+            return std.hash_map.eqlString(a.slice, b.slice);
+        }
+    };
 
     pub fn HashMap(comptime V: type) type {
-        return std.HashMap(Val, V, hashVal, eqlVal, std.hash_map.DefaultMaxLoadPercentage);
+        return std.HashMap(Val, V, HashContext, std.hash_map.DefaultMaxLoadPercentage);
     }
-
 };
 
 test "stringpool"

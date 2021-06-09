@@ -364,7 +364,7 @@ fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !vo
     for (sdk_files.items) |sdk_file| {
         var type_export_it = sdk_file.type_exports.iterator();
         while (type_export_it.next()) |kv| {
-            const type_name = kv.key;
+            const type_name = kv.key_ptr.*;
             if (shared_export_map.get(type_name)) |_| {
                 //try shared_export_map.put(type_name, .{ .first_sdk_file_ptr = entry.first_sdk_file_ptr, .duplicates = entry.duplicates + 1 });
             } else {
@@ -388,7 +388,7 @@ fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !vo
         try writer.print("// {s} exports {} types:\n", .{sdk_file.zig_name, sdk_file.type_exports.count()});
         var export_it = sdk_file.type_exports.iterator();
         while (export_it.next()) |kv| {
-            const type_name = kv.key;
+            const type_name = kv.key_ptr.*;
             const first_type_sdk = shared_export_map.get(type_name) orelse unreachable;
             if (first_type_sdk != sdk_file) {
                 try writer.print("// WARNING: redefinition of type symbol '{s}' from '{s}', going with '{s}'\n", .{
@@ -400,7 +400,7 @@ fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !vo
         try writer.print("// {s} exports {} functions:\n", .{sdk_file.zig_name, sdk_file.func_exports.count()});
         var func_it = sdk_file.func_exports.iterator();
         while (func_it.next()) |kv| {
-            const func = kv.key;
+            const func = kv.key_ptr.*;
             if (shared_export_map.get(func)) |other_sdk_file| {
                 try writer.print("// WARNING: redifinition of function '{s}' in module '{s}' (going with module '{s}')\n", .{
                     func, sdk_file.zig_name, other_sdk_file.zig_name});
@@ -433,7 +433,7 @@ fn allocMapValues(alloc: *std.mem.Allocator, comptime T: type, map: anytype) ![]
     {
         var i: usize = 0;
         var it = map.iterator(); while (it.next()) |entry| : (i += 1) {
-            values[i] = entry.value;
+            values[i] = entry.value_ptr.*;
         }
         std.debug.assert(i == map.count());
     }
@@ -630,8 +630,8 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.ValueTree) !
     {
         var it = sdk_file.top_level_api_imports.iterator();
         while (it.next()) |import| {
-            const name = import.key;
-            const api_upper = import.value;
+            const name = import.key_ptr.*;
+            const api_upper = import.value_ptr.*;
 
             // TODO: should I cache this mapping from api ref to api import path?
             const api_path = try cameltosnake.camelToSnakeAlloc(allocator, api_upper.slice);
@@ -2159,10 +2159,10 @@ fn jsonObjEnforceKnownFieldsOnlyImpl(map: json.ObjectMap, known_fields: []const 
     var it = map.iterator();
     fieldLoop: while (it.next()) |kv| {
         for (known_fields) |known_field| {
-            if (std.mem.eql(u8, known_field, kv.key))
+            if (std.mem.eql(u8, known_field, kv.key_ptr.*))
                 continue :fieldLoop;
         }
-        std.debug.warn("{s}: Error: JSON object has unknown field '{s}', expected one of: {}\n", .{file_for_error, kv.key, formatSliceT([]const u8, "s", known_fields)});
+        std.debug.warn("{s}: Error: JSON object has unknown field '{s}', expected one of: {}\n", .{file_for_error, kv.key_ptr.*, formatSliceT([]const u8, "s", known_fields)});
         jsonPanic();
     }
 }
