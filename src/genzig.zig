@@ -343,7 +343,7 @@ fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !vo
     var everything_file = try out_win32_dir.createFile("everything.zig", .{});
     defer everything_file.close();
     const writer = everything_file.writer();
-    try writer.writeAll(autogen_header ++
+    try writer.writeAll(removeCr(autogen_header ++
         \\//! This module contains aliases to ALL symbols inside the Win32 SDK.  It allows
         \\//! an application to access any and all symbols through a single import.
         \\
@@ -351,7 +351,7 @@ fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !vo
         \\
         \\pub usingnamespace @import("missing.zig");
         \\
-    );
+    ));
 
     var sdk_files = ArrayList(*SdkFile).init(allocator);
     defer sdk_files.deinit();
@@ -484,12 +484,12 @@ fn generateContainerModules(dir: std.fs.Dir, module: *Module) anyerror!void {
     }
 
     if (module.file) |_| { } else {
-        try writer.writeAll(
+        try writer.writeAll(removeCr(
             \\test {
             \\    @import("std").testing.refAllDecls(@This());
             \\}
             \\
-        );
+        ));
     }
 
     var next_dir = try dir.openDir(module.name.slice, .{});
@@ -665,11 +665,11 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.ValueTree) !
         }
     }
 
-    try writer.writeBlock(
+    try writer.writeBlock(comptime removeCr(
         \\
         \\test {
         \\
-    );
+    ));
     if (sdk_file.tmp_func_ptr_workaround_list.items.len > 0) {
         try writer.line("    // The following '_ = <FuncPtrType>' lines are a workaround for https://github.com/ziglang/zig/issues/4476");
         for (sdk_file.tmp_func_ptr_workaround_list.items) |func_ptr_type| {
@@ -677,7 +677,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.ValueTree) !
         }
         try writer.line("");
     }
-    try writer.writeBlock(
+    try writer.writeBlock(comptime removeCr(
         \\    @setEvalBranchQuota(
         \\        @import("std").meta.declarations(@This()).len * 3
         \\    );
@@ -691,7 +691,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.ValueTree) !
         \\    }
         \\}
         \\
-    );
+    ));
 }
 
 fn typeIsVoid(type_obj: json.ObjectMap, sdk_file: *SdkFile) !bool {
@@ -2273,4 +2273,25 @@ fn getcwd(a: *std.mem.Allocator) ![]u8 {
     const path_allocated = try a.alloc(u8, path.len);
     std.mem.copy(u8, path_allocated, path);
     return path_allocated;
+}
+
+fn withoutCrLen(s: []const u8) usize {
+    @setEvalBranchQuota(3000);
+    return s.len - std.mem.count(u8, s, "\r");
+}
+
+fn removeCr(comptime s: []const u8) *const [withoutCrLen(s):0]u8 {
+    comptime {
+        const len = withoutCrLen(s);
+        var without_cr: [len:0]u8 = undefined;
+        var i: usize = 0;
+        for (s) |e| {
+            if (e != '\r') {
+                without_cr[i] = e;
+                i += 1;
+            }
+        }
+        std.debug.assert(i == len);
+        return &without_cr;
+    }
 }
