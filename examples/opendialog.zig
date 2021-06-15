@@ -6,13 +6,14 @@ const WINAPI = @import("std").os.windows.WINAPI;
 
 const win32 = @import("win32");
 usingnamespace win32.zig;
+usingnamespace win32.foundation;
 usingnamespace win32.system.system_services;
 usingnamespace win32.ui.windows_and_messaging;
 usingnamespace win32.system.com;
 usingnamespace win32.graphics.gdi;
 usingnamespace win32.ui.shell;
 
-pub export fn wWinMain(hInstance: HINSTANCE, _: HINSTANCE, pCmdLine: [*:0]u16, nCmdShow: u32) callconv(WINAPI) c_int
+pub export fn wWinMain(hInstance: HINSTANCE, _: ?HINSTANCE, pCmdLine: [*:0]u16, nCmdShow: u32) callconv(WINAPI) c_int
 {
     var hr = CoInitializeEx(null, COINIT.initFlags(.{.APARTMENTTHREADED = 1, .DISABLE_OLE1DDE = 1}));
     if (SUCCEEDED(hr))

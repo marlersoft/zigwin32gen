@@ -4,11 +4,12 @@ pub const UNICODE = true;
 const WINAPI = @import("std").os.windows.WINAPI;
 
 usingnamespace @import("win32").zig;
+usingnamespace @import("win32").foundation;
 usingnamespace @import("win32").system.system_services;
 usingnamespace @import("win32").ui.windows_and_messaging;
 usingnamespace @import("win32").graphics.gdi;
 
-pub export fn wWinMain(hInstance: HINSTANCE, _: HINSTANCE, pCmdLine: [*:0]u16, nCmdShow: u32) callconv(WINAPI) c_int
+pub export fn wWinMain(hInstance: HINSTANCE, _: ?HINSTANCE, pCmdLine: [*:0]u16, nCmdShow: u32) callconv(WINAPI) c_int
 {
 
     // Register the window class.

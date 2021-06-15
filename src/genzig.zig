@@ -1466,6 +1466,8 @@ fn generateStructOrUnionDef(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: j
                     field_options.null_null_term = true;
                 } else if (std.mem.eql(u8, attr_str, "Obselete")) {
                     try writer.line("/// Deprecated");
+                } else if (std.mem.eql(u8, attr_str, "Optional")) {
+                    field_options.optional = true;
                 } else {
                     jsonPanicMsg("unhandled custom field attribute {s}", .{attr_str});
                 }
@@ -1988,9 +1990,9 @@ fn generateFunction(sdk_file: *SdkFile, writer: *CodeWriter, function_obj: json.
     const prefix = if (func_kind == .com) "        " else "";
     switch (func_kind) {
         .fixed => try jsonObjEnforceKnownFieldsOnly(function_obj, &[_][]const u8 {"Name", "Platform", "Architectures",
-            "SetLastError", "DllImport", "ReturnType", "Attrs", "Params"}, sdk_file),
+            "SetLastError", "DllImport", "ReturnType", "ReturnAttrs", "Attrs", "Params"}, sdk_file),
         .ptr, .com => try jsonObjEnforceKnownFieldsOnly(function_obj, &[_][]const u8 {"Kind", "Name", "Platform", "Architectures",
-            "SetLastError", "ReturnType", "Attrs", "Params"}, sdk_file),
+            "SetLastError", "ReturnType", "ReturnAttrs", "Attrs", "Params"}, sdk_file),
     }
 
     const func_name_tmp = (try jsonObjGetRequired(function_obj, "Name", sdk_file)).String;
@@ -1999,6 +2001,7 @@ fn generateFunction(sdk_file: *SdkFile, writer: *CodeWriter, function_obj: json.
     const set_last_error = (try jsonObjGetRequired(function_obj, "SetLastError", sdk_file)).Bool;
     const dll_import = if (func_kind == .fixed) (try jsonObjGetRequired(function_obj, "DllImport", sdk_file)).String else "";
     const return_type = (try jsonObjGetRequired(function_obj, "ReturnType", sdk_file)).Object;
+    const return_attrs = (try jsonObjGetRequired(function_obj, "ReturnAttrs", sdk_file)).Array;
     const attrs = (try jsonObjGetRequired(function_obj, "Attrs", sdk_file)).Array;
     const params = (try jsonObjGetRequired(function_obj, "Params", sdk_file)).Array;
 
@@ -2074,8 +2077,8 @@ fn generateFunction(sdk_file: *SdkFile, writer: *CodeWriter, function_obj: json.
         try writer.write("noreturn", .{.start=.mid,.nl=false});
     } else {
         // TODO: set is_const, in and out properly
-        const return_type_formatter = try addTypeRefs(sdk_file, arches, return_type, .{
-            .reason = .var_decl, .is_const = false, .in = false, .out = false, .anon_types = null });
+        const return_opts = processParamAttrs(return_attrs, .var_decl, sdk_file);
+        const return_type_formatter = try addTypeRefs(sdk_file, arches, return_type, return_opts);
         try generateTypeRef(sdk_file, writer, return_type_formatter);
     }
     const term = if (func_kind == .com) "," else ";";

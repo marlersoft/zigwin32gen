@@ -3,6 +3,7 @@ pub const UNICODE = true;
 
 const WINAPI = @import("std").os.windows.WINAPI;
 usingnamespace @import("win32").zig;
+usingnamespace @import("win32").foundation;
 usingnamespace @import("win32").system.system_services;
 usingnamespace @import("win32").ui.windows_and_messaging;
 usingnamespace @import("win32").graphics.gdi;
@@ -13,6 +14,10 @@ usingnamespace @import("win32").system.com;
 usingnamespace @import("win32").ui.display_devices;
 
 usingnamespace @import("basewin.zig");
+
+// TRUE/FALSE constants removed? https://github.com/microsoft/win32metadata/issues/530
+const TRUE = 1;
+const FALSE = 0;
 
 fn SafeRelease(ppT: anytype) void {
     if (ppT.*) |t| {
@@ -64,13 +69,13 @@ fn MainWindowCreateGraphicsResources(self: *MainWindow) HRESULT
     if (self.pRenderTarget == null)
     {
         var rc: RECT = undefined;
-        _ = GetClientRect(self.base.m_hwnd, &rc);
+        _ = GetClientRect(self.base.m_hwnd.?, &rc);
 
         const size = D2D_SIZE_U{ .width = @intCast(u32, rc.right), .height = @intCast(u32, rc.bottom) };
 
         hr = self.pFactory.?.ID2D1Factory_CreateHwndRenderTarget(
             &D2D1.RenderTargetProperties(),
-            &D2D1.HwndRenderTargetProperties(self.base.m_hwnd, size),
+            &D2D1.HwndRenderTargetProperties(self.base.m_hwnd.?, size),
             // TODO: figure out how to cast a COM object to a base type
             @ptrCast(**ID2D1HwndRenderTarget, &self.pRenderTarget));
 
@@ -101,7 +106,7 @@ fn MainWindowOnPaint(self: *MainWindow) void
     if (SUCCEEDED(hr))
     {
         var ps : PAINTSTRUCT = undefined;
-        _ = BeginPaint(self.base.m_hwnd, &ps);
+        _ = BeginPaint(self.base.m_hwnd.?, &ps);
 
         self.pRenderTarget.?.ID2D1RenderTarget_BeginDraw();
 
@@ -115,7 +120,7 @@ fn MainWindowOnPaint(self: *MainWindow) void
         {
             self.DiscardGraphicsResources();
         }
-        _ = EndPaint(self.base.m_hwnd, &ps);
+        _ = EndPaint(self.base.m_hwnd.?, &ps);
     }
 }
 
@@ -124,17 +129,17 @@ fn MainWindowResize(self: *MainWindow) void
     if (self.pRenderTarget) |renderTarget|
     {
         var rc: RECT = undefined;
-        _ = GetClientRect(self.base.m_hwnd, &rc);
+        _ = GetClientRect(self.base.m_hwnd.?, &rc);
 
         const size = D2D_SIZE_U{ .width = @intCast(u32, rc.right), .height = @intCast(u32, rc.bottom) };
 
         _ = renderTarget.ID2D1HwndRenderTarget_Resize(&size);
         self.CalculateLayout();
-        _ = InvalidateRect(self.base.m_hwnd, null, FALSE);
+        _ = InvalidateRect(self.base.m_hwnd.?, null, FALSE);
     }
 }
 
-pub export fn wWinMain(hInstance: HINSTANCE, _: HINSTANCE, __: [*:0]u16, nCmdShow: u32) callconv(WINAPI) c_int
+pub export fn wWinMain(hInstance: HINSTANCE, _: ?HINSTANCE, __: [*:0]u16, nCmdShow: u32) callconv(WINAPI) c_int
 {
     var win = MainWindow { };
 
@@ -188,7 +193,7 @@ fn MainWindowHandleMessage(self: *MainWindow, uMsg: u32, wParam: WPARAM, lParam:
     },
     else => {},
     }
-    return DefWindowProc(self.base.m_hwnd, uMsg, wParam, lParam);
+    return DefWindowProc(self.base.m_hwnd.?, uMsg, wParam, lParam);
 }
 
 // TODO: tthis D2D1 namespace is referenced in the C++ example but it doesn't exist in win32metadata

@@ -2,16 +2,21 @@
 
 const WINAPI = @import("std").os.windows.WINAPI;
 usingnamespace @import("win32").zig;
+usingnamespace @import("win32").foundation;
 usingnamespace @import("win32").system.system_services;
+usingnamespace @import("win32").system.library_loader;
 usingnamespace @import("win32").ui.windows_and_messaging;
 
 const windowlongptr = @import("win32").windowlongptr;
+
+// TRUE/FALSE constants removed? https://github.com/microsoft/win32metadata/issues/530
+const TRUE = 1;
+const FALSE = 0;
 
 // NOTE: can't do usingnamespace for menu_and_resources because it has conflicts with windows_and_messaging
 //       I think this particular one is a problem with win32metadata.
 //       NOTE: should Zig allow symbol conflicts so long as they are not referenced?
 const mnr = @import("win32").ui.menus_and_resources;
-const HMENU = mnr.HMENU;
 
 pub fn BaseWindow(comptime DERIVED_TYPE: type) type { return struct {
 
@@ -48,8 +53,8 @@ pub fn BaseWindow(comptime DERIVED_TYPE: type) type { return struct {
             y: i32 = CW_USEDEFAULT,
             nWidth: i32 = CW_USEDEFAULT,
             nHeight: i32 = CW_USEDEFAULT,
-            hWndParent: HWND = null,
-            hMenu: HMENU = null,
+            hWndParent: ?HWND = null,
+            hMenu: ?HMENU = null,
         },
     ) BOOL {
         const wc = WNDCLASS {
@@ -79,7 +84,7 @@ pub fn BaseWindow(comptime DERIVED_TYPE: type) type { return struct {
         return if (self.m_hwnd != null) TRUE else FALSE;
     }
 
-    pub fn Window(self: @This()) HWND { return self.m_hwnd; }
+    pub fn Window(self: @This()) ?HWND { return self.m_hwnd; }
 
-    m_hwnd: HWND = null,
+    m_hwnd: ?HWND = null,
 };}
