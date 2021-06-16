@@ -15,10 +15,6 @@ usingnamespace @import("win32").ui.display_devices;
 
 usingnamespace @import("basewin.zig");
 
-// TRUE/FALSE constants removed? https://github.com/microsoft/win32metadata/issues/530
-const TRUE = 1;
-const FALSE = 0;
-
 fn SafeRelease(ppT: anytype) void {
     if (ppT.*) |t| {
         _ = t.IUnknown_Release();

@@ -9,10 +9,6 @@ usingnamespace @import("win32").ui.windows_and_messaging;
 
 const windowlongptr = @import("win32").windowlongptr;
 
-// TRUE/FALSE constants removed? https://github.com/microsoft/win32metadata/issues/530
-const TRUE = 1;
-const FALSE = 0;
-
 // NOTE: can't do usingnamespace for menu_and_resources because it has conflicts with windows_and_messaging
 //       I think this particular one is a problem with win32metadata.
 //       NOTE: should Zig allow symbol conflicts so long as they are not referenced?
