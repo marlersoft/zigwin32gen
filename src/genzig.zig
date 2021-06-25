@@ -448,6 +448,7 @@ fn allocMapValues(alloc: *std.mem.Allocator, comptime T: type, map: anytype) ![]
 }
 
 fn moduleLessThan(context: void, lhs: *Module, rhs: *Module) bool {
+    _ = context;
     return std.ascii.lessThanIgnoreCase(lhs.name.slice, rhs.name.slice);
 }
 
@@ -532,7 +533,6 @@ fn readAndGenerateApiFile(root_module: *Module, out_dir: std.fs.Dir, json_basena
     var depth: u2 = 0;
 
     {
-        var first = true;
         var it = std.mem.tokenize(zig_name, ".");
         while (it.next()) |name_part| {
             if (module != root_module) {
@@ -697,7 +697,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.ValueTree) !
 fn typeIsVoid(type_obj: json.ObjectMap, sdk_file: *SdkFile) !bool {
     const kind = (try jsonObjGetRequired(type_obj, "Kind", sdk_file)).String;
     if (std.mem.eql(u8, kind, "Native")) {
-        const Name = (try jsonObjGetRequired(type_obj, "Name", sdk_file)).String;
+        const name = (try jsonObjGetRequired(type_obj, "Name", sdk_file)).String;
         return std.mem.eql(u8, name, "void");
     }
     return false;
@@ -836,6 +836,7 @@ fn generateTypeRefRec(sdk_file: *SdkFile, writer: *CodeWriter, self: TypeRefForm
         const target_kind = target_kind_map.get(target_kind_str) orelse
             jsonPanicMsg("unknown TargetKind '{s}'", .{target_kind_str});
         const parents = (try jsonObjGetRequired(self.type_ref, "Parents", sdk_file)).Array;
+        _ = parents; // ignored for now
 
         if (self.options.reason == .var_decl) {
             if (self.options.optional) {
@@ -868,7 +869,6 @@ fn generateTypeRefRec(sdk_file: *SdkFile, writer: *CodeWriter, self: TypeRefForm
             // if we deviated from the options we set for PSTR/PWSTR, then generate the native zig
             // type directly instead of referencing the PSTR/PWSTR type
             if (self.options.is_const or self.options.not_null_term) {
-                const base = @as([]const u8, if (special == .pstr) "u8" else "u16");
                 // can't put these expressions in the print argument tuple because of https://github.com/ziglang/zig/issues/8036
                 const base_type = if (special == .pstr) "u8" else "u16";
                 const sentinel_suffix = if (self.options.not_null_term) "" else ":0";
@@ -918,7 +918,9 @@ fn generateTypeRefRec(sdk_file: *SdkFile, writer: *CodeWriter, self: TypeRefForm
         const null_null_term = (try jsonObjGetRequired(self.type_ref, "NullNullTerm", sdk_file)).Bool;
         const count_const = (try jsonObjGetRequired(self.type_ref, "CountConst", sdk_file)).Integer;
         const count_param_index = (try jsonObjGetRequired(self.type_ref, "CountParamIndex", sdk_file)).Integer;
+        _ = count_param_index; // ignored for now
         const type_ref_kind = (try jsonObjGetRequired(self.type_ref, "Kind", sdk_file)).String;
+        _ = type_ref_kind; // ignored for now
         // TODO: can Zig use count_param_index?
         const child = (try jsonObjGetRequired(self.type_ref, "Child", sdk_file)).Object;
         var child_options = self.options;
@@ -981,6 +983,8 @@ const ConstValueFormatter = struct {
         options: std.fmt.FormatOptions,
         writer: anytype,
     ) std.os.WriteError!void {
+        _ = fmt;
+        _ = options;
         if (self.value_type == .String) {
             try writer.print("{}", .{fmtJson(self.value)});
             return;
@@ -1071,8 +1075,8 @@ fn generateConstant(sdk_file: *SdkFile, writer: *CodeWriter, constant_obj: json.
     const value_type_str = (try jsonObjGetRequired(constant_obj, "ValueType", sdk_file)).String;
     const value_node = try jsonObjGetRequired(constant_obj, "Value", sdk_file);
 
-    // TODO: handle Attrs
     const attrs_node = (try jsonObjGetRequired(constant_obj, "Attrs", sdk_file)).Array;
+    _ = attrs_node; // TODO: handle Attrs
 
     const name_pool = try global_symbol_pool.add(name_tmp);
     try sdk_file.const_exports.append(name_pool);
@@ -1405,6 +1409,7 @@ fn generateStructOrUnion(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json
 fn generateStructOrUnionDef(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap, arches: ArchFlags, kind: ContainerKind) anyerror!void {
 
     const struct_size = (try jsonObjGetRequired(type_obj, "Size", sdk_file)).Integer;
+    _ = struct_size; // ignored for now
     const struct_packing_size = (try jsonObjGetRequired(type_obj, "PackingSize", sdk_file)).Integer;
     const struct_fields = (try jsonObjGetRequired(type_obj, "Fields", sdk_file)).Array;
     const struct_nested_types = (try jsonObjGetRequired(type_obj, "NestedTypes", sdk_file)).Array;
@@ -1421,13 +1426,11 @@ fn generateStructOrUnionDef(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: j
 
     for (struct_nested_types.items) |*nested_type_node_ptr| {
         const nested_type_obj = nested_type_node_ptr.Object;
-        const nested_type_name = (try jsonObjGetRequired(nested_type_obj, "Name", sdk_file)).String;
-
         const nested_kind = (try jsonObjGetRequired(nested_type_obj, "Kind", sdk_file)).String;
-        const tmp_name = (try jsonObjGetRequired(nested_type_obj, "Name", sdk_file)).String;
+        const nested_tmp_name = (try jsonObjGetRequired(nested_type_obj, "Name", sdk_file)).String;
         const architectures = (try jsonObjGetRequired(nested_type_obj, "Architectures", sdk_file)).Array;
-        const pool_name = try global_symbol_pool.add(tmp_name);
-        if (getAnonKind(tmp_name)) |_| {
+        const pool_name = try global_symbol_pool.add(nested_tmp_name);
+        if (getAnonKind(nested_tmp_name)) |_| {
             if (architectures.items.len > 0) // we don't handle architectures in this case
                jsonPanicMsg("not impl", .{});
             try anon_types.types.put(pool_name, nested_type_obj);
@@ -1701,6 +1704,7 @@ fn generateEnum(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMa
     }
     setShortNames(values);
 
+    try generatePlatformComment(writer, platform_node);
     try writer.linef("pub const {} = extern enum({s}) {{", .{pool_name, integer_base});
     if (values.len == 0) {
         // zig doesn't allow empty enums
@@ -1826,7 +1830,7 @@ fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap
     // Generate wrapper methods for every entry in the vtable
     try writer.line("    pub fn MethodMixin(comptime T: type) type { return struct {");
     if (!skip) {
-        if (com_optional_iface) |iface| {
+        if (com_optional_iface) |_| {
             // For now we're putting this inside a sub-struct to avoid name conflicts
             try writer.write("        pub usingnamespace ", .{.nl=false});
             try generateTypeRef(sdk_file, writer, iface_formatter);
@@ -1856,7 +1860,7 @@ fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap
                 // NOTE: don't need to call addTypeRefs because it was already called in generateFunction above
                 const param_type_formatter = fmtTypeRef(param_type, arches, param_options);
                 if (param_options.optional_bytes_param_index) |bytes_param_index| {
-                    // NOTE: can't print this because we are currently inline
+                    _ = bytes_param_index; // NOTE: can't print this because we are currently inline
                     //try writer.linef("// TODO: what to do with BytesParamIndex {}?", .{bytes_param_index});
                 }
                 try writer.writef(", {s}: ", .{std.zig.fmtId(param_name)}, .{.start=.mid,.nl=false});
@@ -1896,7 +1900,7 @@ fn processParamAttrs(attrs: json.Array, reason: TypeRefFormatter.Reason, sdk_fil
                 } else if (std.mem.eql(u8, kind, "FreeWith")) {
                     try jsonObjEnforceKnownFieldsOnly(attr_obj, &[_][]const u8 {"Kind", "Func"}, sdk_file);
                     const func = (try jsonObjGetRequired(attr_obj, "Func", sdk_file)).String;
-                    // TODO: what to do with this?
+                    _ = func; // TODO: what to do with this?
                 } else jsonPanicMsg("unknown param attr Kind '{s}'", .{kind});
             },
             .String => |attr_str| {
@@ -1999,6 +2003,7 @@ fn generateFunction(sdk_file: *SdkFile, writer: *CodeWriter, function_obj: json.
     const platform_node = try jsonObjGetRequired(function_obj, "Platform", sdk_file);
     const arches = ArchFlags.initJson((try jsonObjGetRequired(function_obj, "Architectures", sdk_file)).Array.items);
     const set_last_error = (try jsonObjGetRequired(function_obj, "SetLastError", sdk_file)).Bool;
+    _ = set_last_error; // ignored for now
     const dll_import = if (func_kind == .fixed) (try jsonObjGetRequired(function_obj, "DllImport", sdk_file)).String else "";
     const return_type = (try jsonObjGetRequired(function_obj, "ReturnType", sdk_file)).Object;
     const return_attrs = (try jsonObjGetRequired(function_obj, "ReturnAttrs", sdk_file)).Array;
@@ -2151,6 +2156,8 @@ pub fn SliceFormatter(comptime T: type, comptime spec: []const u8) type { return
         options: std.fmt.FormatOptions,
         writer: anytype,
     ) !void {
+        _ = fmt;
+        _ = options;
         var first : bool = true;
         for (self.slice) |e| {
             if (first) {
@@ -2231,6 +2238,8 @@ const JsonFormatter = struct {
         options: std.fmt.FormatOptions,
         writer: anytype,
     ) !void {
+        _ = fmt;
+        _ = options;
         try std.json.stringify(self.value, .{}, writer);
     }
 };

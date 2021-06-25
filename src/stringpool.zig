@@ -2,8 +2,6 @@
 const std = @import("std");
 const StringHashMap = std.hash_map.StringHashMap;
 
-const zog = @import("./zog.zig");
-
 /// Takes an allocator and manages a set of strings.
 /// Every string in the pool is owned by the pool.
 pub const StringPool = struct {
@@ -18,6 +16,8 @@ pub const StringPool = struct {
             options: std.fmt.FormatOptions,
             writer: anytype,
         ) std.os.WriteError!void {
+            _ = fmt;
+            _ = options;
             return writer.writeAll(self.slice);
         }
     };
@@ -30,6 +30,15 @@ pub const StringPool = struct {
             .map = StringHashMap(Val).init(allocator),
         };
     }
+
+    pub fn deinit(self: *StringPool) void {
+        var it = self.map.iterator();
+        while (it.next()) |entry| {
+            self.allocator.free(entry.value_ptr.slice);
+        }
+        self.map.deinit();
+    }
+
     /// If the pool already contains this a string that matches the contents
     /// of the given string, return the existing string from this pool.
     /// Otherwise, create a copy of this string, add it to the pool and return
@@ -58,9 +67,11 @@ pub const StringPool = struct {
 
     const HashContext = struct {
         pub fn hash(self: HashContext, s: Val) u64 {
+            _ = self;
             return std.hash_map.hashString(s.slice);
         }
         pub fn eql(self: HashContext, a: Val, b: Val) bool {
+            _ = self;
             return std.hash_map.eqlString(a.slice, b.slice);
         }
     };
@@ -73,11 +84,12 @@ pub const StringPool = struct {
 test "stringpool"
 {
     var pool = StringPool.init(std.testing.allocator);
+    defer pool.deinit();
     const s = try pool.add("hello");
     {
         var buf : [5]u8 = undefined;
-        zog.mem.copy(buf[0..], "hello");
+        std.mem.copy(u8, buf[0..], "hello");
         const s2 = try pool.add(buf[0..]);
-        std.testing.expect(s.ptr == s2.ptr);
+        try std.testing.expect(s.slice.ptr == s2.slice.ptr);
     }
 }
