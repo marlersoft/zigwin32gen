@@ -23,12 +23,12 @@ pub fn BaseWindow(comptime DERIVED_TYPE: type) type { return struct {
         {
             const pCreate = @intToPtr(*CREATESTRUCT, @bitCast(usize, lParam));
             pThis = @ptrCast(*DERIVED_TYPE, @alignCast(@alignOf(DERIVED_TYPE), pCreate.lpCreateParams));
-            _ = windowlongptr.SetWindowLongPtr(hwnd, ._USERDATA, @bitCast(isize, @ptrToInt(pThis)));
+            _ = windowlongptr.SetWindowLongPtr(hwnd, GWL_USERDATA, @bitCast(isize, @ptrToInt(pThis)));
             pThis.?.base.m_hwnd = hwnd;
         }
         else
         {
-            pThis = @intToPtr(?*DERIVED_TYPE, @bitCast(usize, windowlongptr.GetWindowLongPtr(hwnd, ._USERDATA)));
+            pThis = @intToPtr(?*DERIVED_TYPE, @bitCast(usize, windowlongptr.GetWindowLongPtr(hwnd, GWL_USERDATA)));
         }
         if (pThis) |this|
         {

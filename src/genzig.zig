@@ -1622,6 +1622,7 @@ const EnumValue = struct {
     short_name: []const u8,
     value: json.Value,
     no_alias: bool,
+    conflict_index: ?usize,
     pub fn valueIsZero(self: EnumValue) bool {
         return switch (self.value) {
             .Integer => |i| i == 0,
@@ -1699,19 +1700,35 @@ fn generateEnum(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMa
             .short_name = "",
             .value = try jsonObjGetRequired(value_obj, "Value", sdk_file),
             .no_alias = false,
+            .conflict_index = null,
         };
         values_initialized_len += 1;
     }
     setShortNames(values);
 
+    // find conflicts
+    for (values) |val, i| {
+        for (values[0..i]) |other_val, j| {
+            if (jsonEql(val.value, other_val.value)) {
+                values[i].conflict_index = j;
+                break;
+            }
+        }
+    }
+
     try generatePlatformComment(writer, platform_node);
-    try writer.linef("pub const {} = extern enum({s}) {{", .{pool_name, integer_base});
+    try writer.linef("pub const {} = enum({s}) {{", .{pool_name, integer_base});
     if (values.len == 0) {
         // zig doesn't allow empty enums
         try writer.line("    _");
     } else {
         for (values) |val| {
-            try writer.linef("    {s} = {},", .{std.zig.fmtId(val.short_name), fmtJson(val.value)});
+            if (val.conflict_index) |conflict_index| {
+                try writer.linef("    // {s} = {}, this enum value conflicts with {s}", .{
+                    std.zig.fmtId(val.short_name), fmtJson(val.value), std.zig.fmtId(values[conflict_index].short_name)});
+            } else {
+                try writer.linef("    {s} = {},", .{std.zig.fmtId(val.short_name), fmtJson(val.value)});
+            }
         }
         if (flags) {
             try writer.linef("    _,", .{});
@@ -1722,14 +1739,18 @@ fn generateEnum(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMa
     if (flags) {
         try writer.line("    pub fn initFlags(o: struct {");
         for (values) |val| {
-            try writer.linef("        {}: u1 = 0,", .{std.zig.fmtId(val.short_name)});
+            if (val.conflict_index == null) {
+                try writer.linef("        {}: u1 = 0,", .{std.zig.fmtId(val.short_name)});
+            }
         }
         try writer.linef("    }}) {s} {{", .{pool_name});
         try writer.linef("        return @intToEnum({s},", .{pool_name});
         var prefix: []const u8 = " ";
         for (values) |val| {
-            try writer.linef("            {s} (if (o.{s} == 1) @enumToInt({s}.{1s}) else 0)", .{prefix, std.zig.fmtId(val.short_name), pool_name});
-            prefix = "|";
+            if (val.conflict_index == null) {
+                try writer.linef("            {s} (if (o.{s} == 1) @enumToInt({s}.{1s}) else 0)", .{prefix, std.zig.fmtId(val.short_name), pool_name});
+                prefix = "|";
+            }
         }
         try writer.line("        );");
         try writer.line("    }");
@@ -1761,7 +1782,8 @@ fn generateEnum(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMa
         alias_count += 1;
         try enum_alias_conflicts.put(val.pool_name, pool_name);
         try sdk_file.const_exports.append(val.pool_name);
-        try writer.linef("pub const {} = {}.{};", .{val.pool_name, pool_name, std.zig.fmtId(val.short_name)});
+        const target_short_name = if (val.conflict_index) |i| values[i].short_name else val.short_name;
+        try writer.linef("pub const {} = {}.{};", .{val.pool_name, pool_name, std.zig.fmtId(target_short_name)});
     }
 }
 
@@ -2254,6 +2276,20 @@ pub fn fmtJson(value: anytype) JsonFormatter {
         return .{ .value = .{ .Array = json.Array  { .items = value, .capacity = value.len, .allocator = undefined } } };
     }
     return .{ .value = value };
+}
+// TODO: this should probably be in std.json
+pub fn jsonEql(a: json.Value, b: json.Value) bool {
+    switch (a) {
+        .Integer => |a_val| switch (b) {
+            .Integer => |b_val| return a_val == b_val,
+            else => return false,
+        },
+        .NumberString => |a_val| switch (b) {
+            .NumberString => |b_val| return std.mem.eql(u8, a_val, b_val),
+            else => return false,
+        },
+        else => @panic("not impl"),
+    }
 }
 
 
