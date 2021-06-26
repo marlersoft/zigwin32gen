@@ -70,6 +70,7 @@ pub fn getDefaultDevice() !void {
         var propValue: PROPVARIANT = undefined;
         // The following line fails with a stack trace (pasted below)
         const status = properties.IPropertyStore_GetValue(&propKey, &propValue);
+        _ = status;
     }
 
     // log("post device: {s}", .{device.IMMDevice_GetId()});
@@ -78,6 +79,7 @@ pub fn getDefaultDevice() !void {
 pub fn main() !u8 {
     const config_value = COINIT.initFlags(.{.APARTMENTTHREADED = 1, .DISABLE_OLE1DDE = 1});
     {
+        _ = config_value;
         const status = CoInitialize(null); // CoInitializeEx(null, @intToEnum(COINIT, config_value));
         if (FAILED(status)) {
             log("CoInitialize FAILED: {d}", .{status});

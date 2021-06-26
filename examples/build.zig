@@ -7,7 +7,8 @@ pub fn build(b: *Builder) !void {
     const target = b.standardTargetOptions(.{});
     if (std.builtin.os.tag != .windows) {
         if (target.os_tag == null or target.os_tag.? != .windows) {
-            std.log.err("build with -Dtarget=i386-windows or -Dtarget=x86_64-windows\n", .{});
+            std.log.err("target is not windows", .{});
+            std.log.info("try building with one of -Dtarget=native-windows, -Dtarget=i386-windows or -Dtarget=x86_64-windows\n", .{});
             std.os.exit(1);
         }
     }
@@ -29,7 +30,7 @@ fn makeExe(b: *Builder, target: CrossTarget, mode: Mode, root: []const u8) !void
     exe.install();
     exe.addPackage(.{
         .name = "win32",
-        .path = "../zigwin32/win32.zig",
+        .path = .{ .path = "../zigwin32/win32.zig" },
     });
 
     //const run_cmd = exe.run();

@@ -13,8 +13,11 @@ usingnamespace win32.system.com;
 usingnamespace win32.graphics.gdi;
 usingnamespace win32.ui.shell;
 
-pub export fn wWinMain(hInstance: HINSTANCE, _: ?HINSTANCE, pCmdLine: [*:0]u16, nCmdShow: u32) callconv(WINAPI) c_int
+pub export fn wWinMain(__: HINSTANCE, _: ?HINSTANCE, ___: [*:0]u16, ____: u32) callconv(WINAPI) c_int
 {
+    _ = __;
+    _ = ___;
+    _ = ____;
     var hr = CoInitializeEx(null, COINIT.initFlags(.{.APARTMENTTHREADED = 1, .DISABLE_OLE1DDE = 1}));
     if (SUCCEEDED(hr))
     {

@@ -11,6 +11,7 @@ usingnamespace @import("win32").graphics.gdi;
 
 pub export fn wWinMain(hInstance: HINSTANCE, _: ?HINSTANCE, pCmdLine: [*:0]u16, nCmdShow: u32) callconv(WINAPI) c_int
 {
+    _ = pCmdLine;
 
     // Register the window class.
     const CLASS_NAME = L("Sample Window Class");

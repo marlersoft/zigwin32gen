@@ -50,6 +50,7 @@ fn MainWindowCalculateLayout(self: *MainWindow) void {
         // TODO: this call is causing a segfault when we return from this function!!!
         //       I believe it is caused by this issue: https://github.com/ziglang/zig/issues/1481
         //       Zig unable to handle a return type of extern struct { x: f32, y: f32 } for WINAPI
+        _ = pRenderTarget;
         //const size: D2D_SIZE_F = pRenderTarget.ID2D1RenderTarget_GetSize();
         const size = D2D_SIZE_F { .width = 300, .height = 300 };
         const x: f32 = size.width / 2;
@@ -135,8 +136,11 @@ fn MainWindowResize(self: *MainWindow) void
     }
 }
 
-pub export fn wWinMain(hInstance: HINSTANCE, _: ?HINSTANCE, __: [*:0]u16, nCmdShow: u32) callconv(WINAPI) c_int
+pub export fn wWinMain(_: HINSTANCE, __: ?HINSTANCE, ___: [*:0]u16, nCmdShow: u32) callconv(WINAPI) c_int
 {
+    _ = __;
+    _ = ___;
+
     var win = MainWindow { };
 
     if (TRUE != win.base.Create(L("Circle"), WS_OVERLAPPEDWINDOW, .{}))

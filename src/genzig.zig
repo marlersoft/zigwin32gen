@@ -1787,6 +1787,9 @@ fn generateEnum(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMa
     }
 }
 
+
+
+
 fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap, arches: ArchFlags, com_pool_name: StringPool.Val) !void {
     try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Kind", "Name", "Platform", "Architectures", "Guid", "Interface", "Methods"}, sdk_file);
     const platform_node = try jsonObjGetRequired(type_obj, "Platform", sdk_file);
@@ -1885,7 +1888,7 @@ fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap
                     _ = bytes_param_index; // NOTE: can't print this because we are currently inline
                     //try writer.linef("// TODO: what to do with BytesParamIndex {}?", .{bytes_param_index});
                 }
-                try writer.writef(", {s}: ", .{std.zig.fmtId(param_name)}, .{.start=.mid,.nl=false});
+                try writer.writef(", {s}: ", .{fmtParamId(param_name)}, .{.start=.mid,.nl=false});
                 try generateTypeRef(sdk_file, writer, param_type_formatter);
             }
             // NOTE: don't need to call addTypeRefs because it was already called in generateFunction above
@@ -1899,7 +1902,7 @@ fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap
             for (params.items) |*param_node_ptr| {
                 const param_obj = param_node_ptr.Object;
                 const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).String;
-                try writer.writef(", {s}", .{std.zig.fmtId(param_name)}, .{.start=.mid,.nl=false});
+                try writer.writef(", {s}", .{fmtParamId(param_name)}, .{.start=.mid,.nl=false});
             }
             try writer.write(");", .{.start=.any});
             try writer.line("        }");
@@ -2292,6 +2295,43 @@ pub fn jsonEql(a: json.Value, b: json.Value) bool {
     }
 }
 
+// TODO: would be nice to have isBuiltinId in the std lib
+const builtin_ids = std.ComptimeStringMap(Nothing, .{
+    .{ "type", .{} },
+});
+pub fn isBuiltinId(s: []const u8) bool {
+    if (builtin_ids.get(s)) |_| return true;
+    if (s.len >= 2 and (s[0] == 'i' or s[0] == 'u')) {
+        if (blk: {
+            for (s[1..]) |e| {
+                if (e > '9' or e < '0') break :blk false;
+            }
+            break :blk true;
+        }) return true;
+    }
+    return false;
+}
+
+pub const FmtParamId = struct {
+    s: []const u8,
+    pub fn format(
+        self: @This(),
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = fmt;
+        _ = options;
+        if (isBuiltinId(self.s)) {
+            try writer.print("{s}_", .{self.s});
+        } else {
+            try writer.print("{}", .{std.zig.fmtId(self.s)});
+        }
+    }
+};
+pub fn fmtParamId(s: []const u8) FmtParamId {
+    return FmtParamId { .s = s };
+}
 
 fn cleanDir(dir: std.fs.Dir, sub_path: []const u8) !void {
     try dir.deleteTree(sub_path);
