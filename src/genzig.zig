@@ -170,6 +170,7 @@ const SdkFile = struct {
     func_exports: StringPool.HashMap(Nothing),
     // this field is only needed to workaround: https://github.com/ziglang/zig/issues/4476
     tmp_func_ptr_workaround_list: ArrayList(StringPool.Val),
+    param_names_to_avoid_map_get_fn: *const fn(s: []const u8) ?Nothing,
 
     pub fn getWin32DirImportPrefix(self: SdkFile) []const u8 {
         return import_prefix_table[self.depth];
@@ -571,12 +572,17 @@ fn readAndGenerateApiFile(root_module: *Module, out_dir: std.fs.Dir, json_basena
         .type_exports = StringPool.HashMap(Nothing).init(allocator),
         .func_exports = StringPool.HashMap(Nothing).init(allocator),
         .tmp_func_ptr_workaround_list = ArrayList(StringPool.Val).init(allocator),
+        .param_names_to_avoid_map_get_fn = getParamNamesToAvoidMapGetFn(json_name),
     };
 
     const generate_start_millis = std.time.milliTimestamp();
     try generateFile(module_dir, module, json_tree);
     global_times.generate_time_millis += std.time.milliTimestamp() - generate_start_millis;
 }
+
+pub fn EmptyComptimeStringMap(comptime V: type) type { return struct {
+    pub fn get(str: []const u8) ?V { _ = str; return null; }
+};}
 
 fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.ValueTree) !void {
     const sdk_file = &module.file.?;
@@ -1888,7 +1894,7 @@ fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap
                     _ = bytes_param_index; // NOTE: can't print this because we are currently inline
                     //try writer.linef("// TODO: what to do with BytesParamIndex {}?", .{bytes_param_index});
                 }
-                try writer.writef(", {s}: ", .{fmtParamId(param_name)}, .{.start=.mid,.nl=false});
+                try writer.writef(", {s}: ", .{fmtParamId(param_name, sdk_file.param_names_to_avoid_map_get_fn)}, .{.start=.mid,.nl=false});
                 try generateTypeRef(sdk_file, writer, param_type_formatter);
             }
             // NOTE: don't need to call addTypeRefs because it was already called in generateFunction above
@@ -1902,7 +1908,7 @@ fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap
             for (params.items) |*param_node_ptr| {
                 const param_obj = param_node_ptr.Object;
                 const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).String;
-                try writer.writef(", {s}", .{fmtParamId(param_name)}, .{.start=.mid,.nl=false});
+                try writer.writef(", {s}", .{fmtParamId(param_name, sdk_file.param_names_to_avoid_map_get_fn)}, .{.start=.mid,.nl=false});
             }
             try writer.write(");", .{.start=.any});
             try writer.line("        }");
@@ -2312,8 +2318,34 @@ pub fn isBuiltinId(s: []const u8) bool {
     return false;
 }
 
+// NOTE: this data could be generated automatically by doing a first pass
+fn getParamNamesToAvoidMapGetFn(json_name: []const u8) *const fn(s: []const u8) ?Nothing {
+    if (std.mem.eql(u8, json_name, "System.Mmc")) return &std.ComptimeStringMap(Nothing, .{
+        .{ "Node", .{} },
+        .{ "Frame", .{} },
+        .{ "Column", .{} },
+        .{ "Columns", .{} },
+        .{ "ScopeNamespace", .{} },
+        .{ "SnapIn", .{} },
+        .{ "Extension", .{} },
+        .{ "View", .{} },
+        .{ "Document", .{} },
+    }).get;
+    if (std.mem.eql(u8, json_name, "UI.TabletPC")) return &std.ComptimeStringMap(Nothing, .{
+        .{ "EventMask", .{} },
+        .{ "InkDisplayMode", .{} },
+    }).get;
+    if (std.mem.eql(u8, json_name, "Graphics.DirectShow")) return &std.ComptimeStringMap(Nothing, .{
+        .{ "Quality", .{} },
+        .{ "ScanModulationTypes", .{} },
+        .{ "AnalogVideoStandard", .{} },
+    }).get;
+    return &EmptyComptimeStringMap(Nothing).get;
+}
+
 pub const FmtParamId = struct {
     s: []const u8,
+    avoid_lookup: *const fn(s: []const u8) ?Nothing,
     pub fn format(
         self: @This(),
         comptime fmt: []const u8,
@@ -2322,15 +2354,17 @@ pub const FmtParamId = struct {
     ) !void {
         _ = fmt;
         _ = options;
-        if (isBuiltinId(self.s)) {
+        if (self.avoid_lookup.*(self.s)) |_| {
+            try writer.print("_param_{s}", .{self.s});
+        } else if (isBuiltinId(self.s)) {
             try writer.print("{s}_", .{self.s});
         } else {
             try writer.print("{}", .{std.zig.fmtId(self.s)});
         }
     }
 };
-pub fn fmtParamId(s: []const u8) FmtParamId {
-    return FmtParamId { .s = s };
+pub fn fmtParamId(s: []const u8, avoid_lookup: *const fn(s: []const u8) ?Nothing) FmtParamId {
+    return FmtParamId { .s = s, .avoid_lookup = avoid_lookup };
 }
 
 fn cleanDir(dir: std.fs.Dir, sub_path: []const u8) !void {
