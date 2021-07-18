@@ -7,6 +7,14 @@ const path_sep = std.fs.path.sep_str;
 
 const cameltosnake = @import("cameltosnake.zig");
 
+const common = @import("common.zig");
+const Nothing = common.Nothing;
+const jsonPanic = common.jsonPanic;
+const jsonPanicMsg = common.jsonPanicMsg;
+const jsonEnforce = common.jsonEnforce;
+const jsonEnforceMsg = common.jsonEnforceMsg;
+const fmtJson = common.fmtJson;
+
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const allocator = &arena.allocator;
 
@@ -124,8 +132,6 @@ const target_kind_map = std.ComptimeStringMap(TargetKind, .{
     .{ "Com", TargetKind.Com },
 });
 
-const Nothing = struct {};
-
 const Module = struct {
     optional_parent: ?*Module,
     name: StringPool.Val,
@@ -227,24 +233,8 @@ fn main2() !u8 {
     global_symbol_none = try global_symbol_pool.add("none");
     global_symbol_None = try global_symbol_pool.add("None");
 
-    const win32json_dir_name = "deps" ++ path_sep ++ "win32json";
-    const win32json_branch = "10.2.118-preview";
-    var win32json_dir = std.fs.cwd().openDir(win32json_dir_name, .{}) catch |e| switch (e) {
-        error.FileNotFound => {
-            std.debug.warn("Error: repository '{s}' does not exist, clone it with:\n", .{win32json_dir_name});
-            std.debug.warn("    git clone https://github.com/marlersoft/win32json " ++
-                "{s}" ++ path_sep ++ win32json_dir_name ++
-                " -b " ++ win32json_branch ++ "\n", .{
-                try getcwd(allocator)
-            });
-            return error.AlreadyReported;
-        },
-        else => return e,
-    };
+    var win32json_dir = try common.openWin32JsonDir(std.fs.cwd());
     defer win32json_dir.close();
-
-    var api_dir = try win32json_dir.openDir("api", .{.iterate = true}) ;
-    defer api_dir.close();
 
     const cwd = std.fs.cwd();
 
@@ -253,7 +243,7 @@ fn main2() !u8 {
         error.FileNotFound => {
             std.debug.warn("Error: repository '{s}' does not exist, clone it with:\n", .{zigwin32_dir_name});
             std.debug.warn("    git clone https://github.com/marlersoft/zigwin32 {s}" ++ path_sep ++ zigwin32_dir_name ++ "\n", .{
-                try getcwd(allocator)
+                try common.getcwd(allocator)
             });
             return error.AlreadyReported;
         },
@@ -279,6 +269,9 @@ fn main2() !u8 {
     const root_module = try Module.alloc(null, try global_symbol_pool.add("win32"));
 
     {
+        var api_dir = try win32json_dir.openDir("api", .{.iterate = true}) ;
+        defer api_dir.close();
+
         var api_list = std.ArrayList([]const u8).init(allocator);
         defer {
             for (api_list.items) |api_name| {
@@ -286,10 +279,10 @@ fn main2() !u8 {
             }
             api_list.deinit();
         }
-        try readApiList(api_dir, &api_list);
+        try common.readApiList(api_dir, &api_list);
 
         // sort the list of APIs so our api order is not dependent on the file-system ordering
-        std.sort.sort([]const u8, api_list.items, Nothing {}, asciiLessThanIgnoreCase);
+        std.sort.sort([]const u8, api_list.items, Nothing {}, common.asciiLessThanIgnoreCase);
 
         std.debug.warn("-----------------------------------------------------------------------\n", .{});
         std.debug.warn("loading {} api json files...\n", .{api_list.items.len});
@@ -420,21 +413,6 @@ fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !vo
     }
 }
 
-fn asciiLessThanIgnoreCase(_: Nothing, lhs: []const u8, rhs: []const u8) bool {
-    return std.ascii.lessThanIgnoreCase(lhs, rhs);
-}
-
-fn readApiList(api_dir: std.fs.Dir, api_list: *std.ArrayList([]const u8)) !void {
-    var dir_it = api_dir.iterate();
-    while (try dir_it.next()) |entry| {
-        if (!std.mem.endsWith(u8, entry.name, ".json")) {
-            std.debug.warn("Error: expected all files to end in '.json' but got '{s}'\n", .{entry.name});
-            return error.AlreadyReported;
-        }
-        try api_list.append(try allocator.dupe(u8, entry.name));
-    }
-}
-
 fn allocMapValues(alloc: *std.mem.Allocator, comptime T: type, map: anytype) ![]T {
     var values = try alloc.alloc(T, map.count());
     errdefer alloc.free(values);
@@ -506,20 +484,22 @@ fn readAndGenerateApiFile(root_module: *Module, out_dir: std.fs.Dir, json_basena
 
     const read_start_millis = std.time.milliTimestamp();
     const content = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
-    global_times.read_time_millis += std.time.milliTimestamp() - read_start_millis;
+    const read_end_millis = std.time.milliTimestamp();
+    global_times.read_time_millis += read_end_millis - read_start_millis;
     defer allocator.free(content);
     std.debug.warn("  read {} bytes\n", .{content.len});
 
     // Parsing the JSON is VERY VERY SLOW!!!!!!
-    var parser = json.Parser.init(allocator, false); // false is copy_strings
-    defer parser.deinit();
-    const parse_start_millis = std.time.milliTimestamp();
+    var json_tree = blk: {
+        var parser = json.Parser.init(allocator, false); // false is copy_strings
+        defer parser.deinit();
 
-    const start = if (std.mem.startsWith(u8, content, "\xEF\xBB\xBF")) 3 else @as(usize, 0);
-    const json_content = content[start..];
-    var json_tree = try parser.parse(json_content);
+        const start = if (std.mem.startsWith(u8, content, "\xEF\xBB\xBF")) 3 else @as(usize, 0);
+        const json_content = content[start..];
+        break :blk try parser.parse(json_content);
+    };
     defer json_tree.deinit();
-    global_times.parse_time_millis += std.time.milliTimestamp() - parse_start_millis;
+    global_times.parse_time_millis += std.time.milliTimestamp() - read_end_millis;
 
 
     const json_basename_copy = try std.mem.dupe(allocator, u8, json_basename);
@@ -2179,71 +2159,13 @@ const ArchFlags = struct {
     }
 };
 
-pub fn SliceFormatter(comptime T: type, comptime spec: []const u8) type { return struct {
-    slice: []const T,
-    pub fn format(
-        self: @This(),
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        _ = fmt;
-        _ = options;
-        var first : bool = true;
-        for (self.slice) |e| {
-            if (first) {
-                first = false;
-            } else {
-                try writer.writeAll(", ");
-            }
-            try std.fmt.format(writer, "{" ++ spec ++ "}", .{e});
-        }
-    }
-};}
-pub fn formatSliceT(comptime T: type, comptime spec: []const u8, slice: []const T) SliceFormatter(T, spec) {
-    return .{ .slice = slice };
-}
-// TODO: implement this
-//pub fn formatSlice(slice: anytype) SliceFormatter(T) {
-//    return .{ .slice = slice };
-//}
 
-fn jsonPanic() noreturn {
-    @panic("an assumption about the json format was violated");
-}
-fn jsonPanicMsg(comptime msg: []const u8, args: anytype) noreturn {
-    std.debug.panic("an assumption about the json format was violated: " ++ msg, args);
-}
-
-fn jsonEnforce(cond: bool) void {
-    if (!cond) {
-        jsonPanic();
-    }
-}
-fn jsonEnforceMsg(cond: bool, comptime msg: []const u8, args: anytype) void {
-    if (!cond) {
-        jsonPanicMsg(msg, args);
-    }
-}
-
-fn jsonObjEnforceKnownFieldsOnly(map: json.ObjectMap, known_fields: []const []const u8, file_thing: anytype) !void {
+pub fn jsonObjEnforceKnownFieldsOnly(map: std.json.ObjectMap, known_fields: []const []const u8, file_thing: anytype) !void {
     if (@TypeOf(file_thing) == *SdkFile or @TypeOf(file_thing) == *const SdkFile)
-        return jsonObjEnforceKnownFieldsOnlyImpl(map, known_fields, file_thing.json_basename);
+        return common.jsonObjEnforceKnownFieldsOnly(map, known_fields, file_thing.json_basename);
     if (@TypeOf(file_thing) == []const u8)
-        return jsonObjEnforceKnownFieldsOnlyImpl(map, known_fields, file_thing);
+        return common.jsonObjEnforceKnownFieldsOnly(map, known_fields, file_thing);
     @compileError("unhandled file_thing type: " ++ @typeName(@TypeOf(file_thing)));
-}
-
-fn jsonObjEnforceKnownFieldsOnlyImpl(map: json.ObjectMap, known_fields: []const []const u8, file_for_error: []const u8) !void {
-    var it = map.iterator();
-    fieldLoop: while (it.next()) |kv| {
-        for (known_fields) |known_field| {
-            if (std.mem.eql(u8, known_field, kv.key_ptr.*))
-                continue :fieldLoop;
-        }
-        std.debug.warn("{s}: Error: JSON object has unknown field '{s}', expected one of: {}\n", .{file_for_error, kv.key_ptr.*, formatSliceT([]const u8, "s", known_fields)});
-        jsonPanic();
-    }
 }
 
 fn jsonObjGetRequired(map: json.ObjectMap, field: []const u8, file_thing: anytype) !json.Value {
@@ -2261,31 +2183,6 @@ fn jsonObjGetRequiredImpl(map: json.ObjectMap, field: []const u8, file_for_error
     };
 }
 
-const JsonFormatter = struct {
-    value: json.Value,
-    pub fn format(
-        self: JsonFormatter,
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        _ = fmt;
-        _ = options;
-        try std.json.stringify(self.value, .{}, writer);
-    }
-};
-pub fn fmtJson(value: anytype) JsonFormatter {
-    if (@TypeOf(value) == json.ObjectMap) {
-        return .{ .value = .{ .Object = value } };
-    }
-    if (@TypeOf(value) == json.Array) {
-        return .{ .value = .{ .Array = value } };
-    }
-    if (@TypeOf(value) == []json.Value) {
-        return .{ .value = .{ .Array = json.Array  { .items = value, .capacity = value.len, .allocator = undefined } } };
-    }
-    return .{ .value = value };
-}
 // TODO: this should probably be in std.json
 pub fn jsonEql(a: json.Value, b: json.Value) bool {
     switch (a) {
@@ -2387,14 +2284,6 @@ fn cleanDir(dir: std.fs.Dir, sub_path: []const u8) !void {
         break;
     }
 
-}
-
-fn getcwd(a: *std.mem.Allocator) ![]u8 {
-    var path_buf : [std.fs.MAX_PATH_BYTES]u8 = undefined;
-    const path = try std.os.getcwd(&path_buf);
-    const path_allocated = try a.alloc(u8, path.len);
-    std.mem.copy(u8, path_allocated, path);
-    return path_allocated;
 }
 
 fn withoutCrLen(s: []const u8) usize {
