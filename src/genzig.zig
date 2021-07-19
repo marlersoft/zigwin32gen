@@ -250,6 +250,9 @@ fn main2() !u8 {
         else => return e,
     };
 
+    const pass1 = try readPass1();
+    _ = pass1;
+
     var out_dir = try cwd.openDir(zigwin32_dir_name, .{});
     defer out_dir.close();
     out_dir.deleteFile("win32.zig") catch |e| switch (e) {
@@ -319,6 +322,25 @@ fn main2() !u8 {
     }
     print_time_summary = true;
     return 0;
+}
+
+fn readPass1() !std.json.ObjectMap {
+    const content = blk: {
+        const file = try std.fs.cwd().openFile("pass1.json", .{});
+        defer file.close();
+        break :blk try file.readToEndAlloc(allocator, std.math.maxInt(usize));
+    };
+
+    var json_tree = blk: {
+        var parser = json.Parser.init(allocator, false); // false is copy_strings
+        defer parser.deinit();
+
+        const start = if (std.mem.startsWith(u8, content, "\xEF\xBB\xBF")) 3 else @as(usize, 0);
+        const json_content = content[start..];
+        std.log.info("parsing pass1.json...", .{});
+        break :blk try parser.parse(json_content);
+    };
+    return json_tree.root.Object;
 }
 
 fn gatherSdkFiles(sdk_files: *ArrayList(*SdkFile), module: *Module) anyerror!void {
