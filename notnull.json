@@ -27,4 +27,12 @@
             "D2D1CreateFactory": [0, 0, 0, 0, 3]
         }
     }
+    ,"Networking.WinSock": {
+        "Functions": {
+            "socket": [1]
+            ,"accept": [1]
+            ,"WSASocketA": [1]
+            ,"WSASocketW": [1]
+        }
+    }
 }
