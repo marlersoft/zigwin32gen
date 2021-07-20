@@ -1,0 +1,30 @@
+{
+    "System.Console": {
+        "Functions": {
+            "GetStdHandle": [1]
+        }
+    }
+    ,"System.Com": {
+        "Functions": {
+            "CoCreateInstance": [0, 0, 0, 0, 1]
+        }
+    }
+    ,"UI.WindowsAndMessaging": {
+        "Functions": {
+            "WNDPROC": [0, 1]
+            ,"DLGPROC": [0, 1]
+            ,"TIMERPROC": [0, 1]
+            ,"WNDENUMPROC": [0, 1]
+            ,"SENDASYNCPROC": [0, 1]
+            ,"PROPENUMPROCA": [0, 1]
+            ,"PROPENUMPROCW": [0, 1]
+            ,"PROPENUMPROCEXA": [0, 1]
+            ,"PROPENUMPROCEXW": [0, 1]
+        }
+    }
+    ,"Graphics.Direct2D": {
+        "Functions": {
+            "D2D1CreateFactory": [0, 0, 0, 0, 3]
+        }
+    }
+}

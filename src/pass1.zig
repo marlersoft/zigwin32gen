@@ -87,14 +87,8 @@ fn pass1OnJson(out: std.fs.File.Writer, filename: []const u8, root_obj: json.Obj
         const name = (try jsonObjGetRequired(type_obj, "Name", filename)).String;
         //const arches = ArchFlags.initJson((try jsonObjGetRequired(type_obj, "Architectures", filename)).Array.items);
 
-
-        // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        // TODO: ComCLASSID should probably go in the constants section?
-        // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         if (std.mem.eql(u8, kind, "ComClassID")) {
-            return;
+            continue;
         }
 
         if (std.mem.eql(u8, kind, "NativeTypedef")) {

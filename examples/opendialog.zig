@@ -21,35 +21,35 @@ pub export fn wWinMain(__: HINSTANCE, _: ?HINSTANCE, ___: [*:0]u16, ____: u32) c
     var hr = CoInitializeEx(null, COINIT.initFlags(.{.APARTMENTTHREADED = 1, .DISABLE_OLE1DDE = 1}));
     if (SUCCEEDED(hr))
     {
-        var pFileOpen : *IFileOpenDialog = undefined;
+        var pFileOpen : ?*IFileOpenDialog = undefined;
 
         // Create the FileOpenDialog object.
-        hr = CoCreateInstance(CLSID_FileOpenDialog, null, .ALL, IID_IFileOpenDialog, @ptrCast(**c_void, &pFileOpen));
+        hr = CoCreateInstance(CLSID_FileOpenDialog, null, .ALL, IID_IFileOpenDialog, @ptrCast(*?*c_void, &pFileOpen));
         if (SUCCEEDED(hr))
         {
             // Show the Open dialog box.
-            hr = pFileOpen.IModalWindow_Show(null);
+            hr = pFileOpen.?.IModalWindow_Show(null);
 
             // Get the file name from the dialog box.
             if (SUCCEEDED(hr))
             {
-                var pItem: *IShellItem = undefined;
-                hr = pFileOpen.IFileDialog_GetResult(&pItem);
+                var pItem: ?*IShellItem = undefined;
+                hr = pFileOpen.?.IFileDialog_GetResult(&pItem);
                 if (SUCCEEDED(hr))
                 {
-                    var pszFilePath : [*:0]u16 = undefined;
-                    hr = pItem.IShellItem_GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath);
+                    var pszFilePath : ?[*:0]u16 = undefined;
+                    hr = pItem.?.IShellItem_GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath);
 
                     // Display the file name to the user.
                     if (SUCCEEDED(hr))
                     {
-                        _ = MessageBoxW(null, pszFilePath, L("File Path"), MB_OK);
-                        CoTaskMemFree(pszFilePath);
+                        _ = MessageBoxW(null, pszFilePath.?, L("File Path"), MB_OK);
+                        CoTaskMemFree(pszFilePath.?);
                     }
-                    _ = pItem.IUnknown_Release();
+                    _ = pItem.?.IUnknown_Release();
                 }
             }
-            _ = pFileOpen.IUnknown_Release();
+            _ = pFileOpen.?.IUnknown_Release();
         }
         CoUninitialize();
     }

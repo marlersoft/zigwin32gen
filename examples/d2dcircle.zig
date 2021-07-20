@@ -74,13 +74,13 @@ fn MainWindowCreateGraphicsResources(self: *MainWindow) HRESULT
             &D2D1.RenderTargetProperties(),
             &D2D1.HwndRenderTargetProperties(self.base.m_hwnd.?, size),
             // TODO: figure out how to cast a COM object to a base type
-            @ptrCast(**ID2D1HwndRenderTarget, &self.pRenderTarget));
+            @ptrCast(*?*ID2D1HwndRenderTarget, &self.pRenderTarget));
 
         if (SUCCEEDED(hr))
         {
             const color = D2D1.ColorF(.{ .r = 1, .g = 1, .b = 0});
             // TODO: how do I do this ptrCast better by using COM base type?
-            hr = self.pRenderTarget.?.ID2D1RenderTarget_CreateSolidColorBrush(&color, null, @ptrCast(**ID2D1SolidColorBrush, &self.pBrush));
+            hr = self.pRenderTarget.?.ID2D1RenderTarget_CreateSolidColorBrush(&color, null, @ptrCast(*?*ID2D1SolidColorBrush, &self.pBrush));
 
             if (SUCCEEDED(hr))
             {

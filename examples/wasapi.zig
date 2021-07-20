@@ -12,32 +12,32 @@ usingnamespace win32.system.system_services;
 usingnamespace win32.zig;
 
 pub fn getDefaultDevice() !void {
-    var enumerator: *IMMDeviceEnumerator = undefined;
+    var enumerator: ?*IMMDeviceEnumerator = undefined;
 
     {
-        const status = CoCreateInstance(CLSID_MMDeviceEnumerator, null, CLSCTX_ALL, IID_IMMDeviceEnumerator, @ptrCast(**c_void, &enumerator));
+        const status = CoCreateInstance(CLSID_MMDeviceEnumerator, null, CLSCTX_ALL, IID_IMMDeviceEnumerator, @ptrCast(*?*c_void, &enumerator));
         if (FAILED(status)) {
             log("CoCreateInstance FAILED: {d}", .{status});
             return error.Fail;
         }
     }
-    defer _ = enumerator.IUnknown_Release();
+    defer _ = enumerator.?.IUnknown_Release();
 
-    log("pre enumerator: {s}", .{enumerator});
+    log("pre enumerator: {s}", .{enumerator.?});
 
-    var device: *IMMDevice = undefined;
+    var device: ?*IMMDevice = undefined;
     {
-        const status = enumerator.IMMDeviceEnumerator_GetDefaultAudioEndpoint(EDataFlow.eCapture, ERole.eCommunications, &device);
+        const status = enumerator.?.IMMDeviceEnumerator_GetDefaultAudioEndpoint(EDataFlow.eCapture, ERole.eCommunications, &device);
         if (FAILED(status)) {
             log("DEVICE STATUS: {d}", .{status});
             return error.Fail;
         }
     }
-    defer _ = device.IUnknown_Release(); // No such method
+    defer _ = device.?.IUnknown_Release(); // No such method
     
-    var properties: *IPropertyStore = undefined;
+    var properties: ?*IPropertyStore = undefined;
     {
-        const status = device.IMMDevice_OpenPropertyStore(STGM_READ, &properties);
+        const status = device.?.IMMDevice_OpenPropertyStore(STGM_READ, &properties);
         if (FAILED(status)) {
             log("DEVICE PROPS: {d}", .{status});
             return error.Fail;
@@ -46,7 +46,7 @@ pub fn getDefaultDevice() !void {
     
     var count: u32 = 0;
     {
-        const status = properties.IPropertyStore_GetCount(&count);
+        const status = properties.?.IPropertyStore_GetCount(&count);
         if (FAILED(status)) {
             log("GetCount failed: {d}", .{status});
             return error.Fail;
@@ -59,7 +59,7 @@ pub fn getDefaultDevice() !void {
 
         log("index: {d}", .{index});
         {
-            const status = properties.IPropertyStore_GetAt(index, &propKey);
+            const status = properties.?.IPropertyStore_GetAt(index, &propKey);
             if (FAILED(status)) {
                 log("Failed to getAt {x}", .{status});
                 return error.Fail;
@@ -69,11 +69,11 @@ pub fn getDefaultDevice() !void {
 
         var propValue: PROPVARIANT = undefined;
         // The following line fails with a stack trace (pasted below)
-        const status = properties.IPropertyStore_GetValue(&propKey, &propValue);
+        const status = properties.?.IPropertyStore_GetValue(&propKey, &propValue);
         _ = status;
     }
 
-    // log("post device: {s}", .{device.IMMDevice_GetId()});
+    // log("post device: {s}", .{device.?.IMMDevice_GetId()});
 }
 
 pub fn main() !u8 {

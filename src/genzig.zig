@@ -25,6 +25,9 @@ var global_symbol_pool = StringPool.init(allocator);
 var global_symbol_none : StringPool.Val = undefined;
 var global_symbol_None : StringPool.Val = undefined;
 
+var global_pass1: json.ObjectMap = undefined;
+var global_notnull: json.ObjectMap = undefined;
+
 const ValueType = enum {
     Byte,
     UInt16,
@@ -63,6 +66,17 @@ fn valueTypeToZigType(t: ValueType) []const u8 {
         .PropertyKey => @panic("cannot call valueTypeToZigType for ValueType.PropertyKey"),
     };
 }
+
+const Pass1TypeKindCategory = enum { default, ptr, com };
+const pass1_type_kind_info = std.ComptimeStringMap(Pass1TypeKindCategory, .{
+    .{ "Integral", .default },
+    .{ "Enum", .default },
+    .{ "Struct", .default },
+    .{ "Union", .default },
+    .{ "Com", .com },
+    .{ "Pointer", .ptr },
+    .{ "FunctionPointer", .ptr },
+});
 
 const NativeType = enum {
     Boolean,
@@ -164,6 +178,25 @@ const ApiImport = struct {
     api: StringPool.Val,
 };
 
+// TODO: this is defined in std, maybe it should be pub?
+var failAllocator = std.mem.Allocator{
+    .allocFn = failAllocatorAlloc,
+    .resizeFn = std.mem.Allocator.noResize,
+};
+fn failAllocatorAlloc(self: *std.mem.Allocator, n: usize, alignment: u29, len_align: u29, ra: usize) std.mem.Allocator.Error![]u8 {
+    _ = self;
+    _ = n;
+    _ = alignment;
+    _ = len_align;
+    _ = ra;
+    return error.OutOfMemory;
+}
+const empty_json_object_map = json.ObjectMap {
+    .ctx = .{ },
+    .allocator = &failAllocator,
+    .unmanaged = .{ },
+};
+
 const SdkFile = struct {
     json_basename: []const u8,
     json_name: []const u8,
@@ -177,6 +210,8 @@ const SdkFile = struct {
     // this field is only needed to workaround: https://github.com/ziglang/zig/issues/4476
     tmp_func_ptr_workaround_list: ArrayList(StringPool.Val),
     param_names_to_avoid_map_get_fn: *const fn(s: []const u8) ?Nothing,
+    not_null_funcs: json.ObjectMap,
+    not_null_funcs_applied: StringPool.HashMap(Nothing),
 
     pub fn getWin32DirImportPrefix(self: SdkFile) []const u8 {
         return import_prefix_table[self.depth];
@@ -203,6 +238,8 @@ const SdkFile = struct {
         }
     }
 };
+
+const notnull_filename: []const u8 = "notnull.json";
 
 const Times = struct {
     parse_time_millis : i64 = 0,
@@ -250,8 +287,8 @@ fn main2() !u8 {
         else => return e,
     };
 
-    const pass1 = try readPass1();
-    _ = pass1;
+    global_pass1 = try readJson("pass1.json");
+    global_notnull = try readJson(notnull_filename);
 
     var out_dir = try cwd.openDir(zigwin32_dir_name, .{});
     defer out_dir.close();
@@ -324,9 +361,10 @@ fn main2() !u8 {
     return 0;
 }
 
-fn readPass1() !std.json.ObjectMap {
+
+fn readJson(filename: []const u8) !std.json.ObjectMap {
     const content = blk: {
-        const file = try std.fs.cwd().openFile("pass1.json", .{});
+        const file = try std.fs.cwd().openFile(filename, .{});
         defer file.close();
         break :blk try file.readToEndAlloc(allocator, std.math.maxInt(usize));
     };
@@ -337,7 +375,7 @@ fn readPass1() !std.json.ObjectMap {
 
         const start = if (std.mem.startsWith(u8, content, "\xEF\xBB\xBF")) 3 else @as(usize, 0);
         const json_content = content[start..];
-        std.log.info("parsing pass1.json...", .{});
+        std.log.info("parsing '{s}'...", .{filename});
         break :blk try parser.parse(json_content);
     };
     return json_tree.root.Object;
@@ -563,6 +601,14 @@ fn readAndGenerateApiFile(root_module: *Module, out_dir: std.fs.Dir, json_basena
     if (module.file) |_| {
         jsonPanicMsg("qualified name '{s}' already has an sdk file?", .{zig_name});
     }
+
+    var not_null_funcs = empty_json_object_map;
+    if (global_notnull.get(json_name)) |*api_node| {
+        const api_obj = api_node.Object;
+        try jsonObjEnforceKnownFieldsOnly(api_obj, &[_][]const u8 {"Functions"}, notnull_filename);
+        not_null_funcs = (try jsonObjGetRequired(api_obj, "Functions", notnull_filename)).Object;
+    }
+
     module.file = SdkFile {
         .json_basename = json_basename_copy,
         .json_name = json_name,
@@ -575,6 +621,8 @@ fn readAndGenerateApiFile(root_module: *Module, out_dir: std.fs.Dir, json_basena
         .func_exports = StringPool.HashMap(Nothing).init(allocator),
         .tmp_func_ptr_workaround_list = ArrayList(StringPool.Val).init(allocator),
         .param_names_to_avoid_map_get_fn = getParamNamesToAvoidMapGetFn(json_name),
+        .not_null_funcs = not_null_funcs,
+        .not_null_funcs_applied = StringPool.HashMap(Nothing).init(allocator),
     };
 
     const generate_start_millis = std.time.milliTimestamp();
@@ -700,6 +748,23 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.ValueTree) !
         \\}
         \\
     ));
+
+    // check that all notnull stuff was applied
+    {
+        var it = sdk_file.not_null_funcs.iterator();
+        var error_count : u32 = 0;
+        while (it.next()) |api| {
+            const pool_name = try global_symbol_pool.add(api.key_ptr.*);
+            if (sdk_file.not_null_funcs_applied.get(pool_name)) |_| { } else {
+                std.log.err("notnull.json api '{s}' function '{s}' was not applied", .{sdk_file.json_name, pool_name});
+                error_count += 1;
+            }
+        }
+        sdk_file.not_null_funcs_applied.deinit();
+        if (error_count > 0) {
+            return error.AlreadyReported;
+        }
+    }
 }
 
 fn typeIsVoid(type_obj: json.ObjectMap, sdk_file: *SdkFile) !bool {
@@ -715,9 +780,9 @@ fn typeIsVoid(type_obj: json.ObjectMap, sdk_file: *SdkFile) !bool {
 // for the type.   These 2 operations are orthogonal, however, combining them helps ensure
 // that generating a type reference is not done without also adding that reference to the api
 // being generated.
-fn addTypeRefs(sdk_file: *SdkFile, arches: ArchFlags, type_ref: json.ObjectMap, options: TypeRefFormatter.Options) anyerror!TypeRefFormatter {
+fn addTypeRefs(sdk_file: *SdkFile, arches: ArchFlags, type_ref: json.ObjectMap, options: TypeRefFormatter.Options, nested_context: ?*const NestedContext) anyerror!TypeRefFormatter {
     try addTypeRefsNoFormatter(sdk_file, arches, type_ref);
-    return fmtTypeRef(type_ref, arches, options);
+    return fmtTypeRef(type_ref, arches, options, nested_context);
 }
 
 fn addTypeRefsNoFormatter(sdk_file: *SdkFile, arches: ArchFlags, type_ref: json.ObjectMap) anyerror!void {
@@ -766,6 +831,26 @@ pub fn getAnonKind(s: []const u8) ?ContainerKind {
     return null;
 }
 
+// Provides access to nested types accessible from the current scope
+const NestedContext = struct {
+    nested_types: json.Array,
+    parent: ?*const NestedContext,
+
+    pub fn contains(self: NestedContext, name: []const u8) bool {
+        std.debug.assert(self.nested_types.items.len > 0);
+        for (self.nested_types.items) |*nested_type_node_ptr| {
+            const nested_type_obj = nested_type_node_ptr.Object;
+            const nested_name = (nested_type_obj.get("Name") orelse jsonPanic()).String;
+            if (std.mem.eql(u8, nested_name, name))
+                return true;
+        }
+        if (self.parent) |p| return p.contains(name);
+        return false;
+    }
+};
+
+const NullModifier = u3;
+
 // we need to know if the type is the top-level type or a child type of something like a pointer
 // so we can generate the correct `void` type.  Top level void types become void, but pointers
 // to void types must become pointers to the `c_void` type.
@@ -792,14 +877,17 @@ const TypeRefFormatter = struct {
         do_not_release: bool = false,
         optional_bytes_param_index: ?i16 = null,
         anon_types: ?*const AnonTypes,
+
+        null_modifier: NullModifier,
     };
 
     type_ref: json.ObjectMap,
     arches: ArchFlags,
     options: Options,
+    nested_context: ?*const NestedContext,
 };
-pub fn fmtTypeRef(type_ref: json.ObjectMap, arches: ArchFlags, options: TypeRefFormatter.Options) TypeRefFormatter {
-    return .{ .type_ref = type_ref, .arches = arches, .options = options };
+pub fn fmtTypeRef(type_ref: json.ObjectMap, arches: ArchFlags, options: TypeRefFormatter.Options, nested_context: ?*const NestedContext) TypeRefFormatter {
+    return .{ .type_ref = type_ref, .arches = arches, .options = options, .nested_context = nested_context };
 }
 
 fn generateTypeRef(sdk_file: *SdkFile, writer: *CodeWriter, self: TypeRefFormatter) !void {
@@ -828,6 +916,7 @@ fn generateTypeRefRec(sdk_file: *SdkFile, writer: *CodeWriter, self: TypeRefForm
     } else if (std.mem.eql(u8, kind, "ApiRef")) {
         try jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"Kind", "Name", "TargetKind", "Api", "Parents"}, sdk_file);
         const name = (try jsonObjGetRequired(self.type_ref, "Name", sdk_file)).String;
+        const api = (try jsonObjGetRequired(self.type_ref, "Api", sdk_file)).String;
 
         if (getAnonKind(name)) |anon_kind| {
             const anon_types = self.options.anon_types orelse
@@ -835,30 +924,46 @@ fn generateTypeRefRec(sdk_file: *SdkFile, writer: *CodeWriter, self: TypeRefForm
             const name_pool = try global_symbol_pool.add(name);
             const type_obj = anon_types.types.get(name_pool) orelse
                 jsonPanicMsg("missing anonymous type '{s}'!", .{name});
-            try generateStructOrUnionDef(sdk_file, writer, type_obj, self.arches, anon_kind);
+            try generateStructOrUnionDef(sdk_file, writer, type_obj, self.arches, anon_kind, self.nested_context);
             try writer.write("}", .{.nl=false});
             return;
         }
 
-        const target_kind_str = (try jsonObjGetRequired(self.type_ref, "TargetKind", sdk_file)).String;
-        const target_kind = target_kind_map.get(target_kind_str) orelse
-            jsonPanicMsg("unknown TargetKind '{s}'", .{target_kind_str});
         const parents = (try jsonObjGetRequired(self.type_ref, "Parents", sdk_file)).Array;
-        _ = parents; // ignored for now
+
+        const type_kind_category = blk: {
+            const pass1_api_map = (global_pass1.get(api) orelse
+                jsonPanicMsg("type '{s}' is from API '{s}' that is missing from pass1 data", .{name, api})).Object;
+            const pass1_type_obj = (pass1_api_map.get(name) orelse {
+                if (parents.items.len == 0) {
+                    const in_nested_context = if (self.nested_context) |c| c.contains(name) else false;
+                    if (!in_nested_context) {
+                        jsonPanicMsg("type '{s}' from API '{s}' is missing from pass1 data, has no parents and is not in the current nested context!", .{name, api});
+                    }
+                }
+                // this means its a nested type which are always structs/unions
+                break :blk Pass1TypeKindCategory.default;
+            }).Object;
+            try jsonObjEnforceKnownFieldsOnly(pass1_type_obj, &[_][]const u8 {"Kind"}, sdk_file);
+            const type_kind = (try jsonObjGetRequired(pass1_type_obj, "Kind", sdk_file)).String;
+            break :blk pass1_type_kind_info.get(type_kind) orelse
+                jsonPanicMsg("unknown pass1 type kind '{s}'", .{type_kind});
+        };
 
         if (self.options.reason == .var_decl) {
-            if (self.options.optional) {
-                // workaround https://github.com/microsoft/win32metadata/issues/519
-                if (std.mem.eql(u8, name, "LPARAM") or std.mem.eql(u8, name, "WPARAM")) {
-                } else {
-                try writer.write("?", .{.start=.any,.nl=false});
-                }
-            }
-            switch (target_kind) {
-                .Com => {
+            switch (type_kind_category) {
+                .default => {},
+                .ptr => {
+                    if (self.options.null_modifier & 1 == 0) {
+                        try writer.write("?", .{.start=.any,.nl=false});
+                    }
+                },
+                .com => {
+                    if (self.options.null_modifier & 1 == 0) {
+                        try writer.write("?", .{.start=.any,.nl=false});
+                    }
                     try writer.write("*", .{.start=.any,.nl=false});
                 },
-                .FunctionPointer, .Default => {},
             }
         }
 
@@ -897,16 +1002,16 @@ fn generateTypeRefRec(sdk_file: *SdkFile, writer: *CodeWriter, self: TypeRefForm
         try jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"Kind", "Child"}, sdk_file);
         const child = (try jsonObjGetRequired(self.type_ref, "Child", sdk_file)).Object;
         var child_options = self.options;
-        if (self.options.optional) {
-            child_options.optional = false;
+        if (self.options.reason == .var_decl and self.options.null_modifier & 1 == 0) {
             try writer.write("?", .{.start=.any,.nl=false});
         }
+        child_options.null_modifier = self.options.null_modifier >> 1;
         try writer.write("*", .{.start=.any,.nl=false});
         if (self.options.is_const) {
             child_options.is_const = false; // TODO: is this right?
             try writer.write("const ", .{.start=.any,.nl=false});
         }
-        try generateTypeRefRec(sdk_file, writer, fmtTypeRef(child, self.arches, child_options), .child);
+        try generateTypeRefRec(sdk_file, writer, fmtTypeRef(child, self.arches, child_options, self.nested_context), .child);
     } else if (std.mem.eql(u8, kind, "Array")) {
         try jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"Kind", "Shape", "Child"}, sdk_file);
         const child = (try jsonObjGetRequired(self.type_ref, "Child", sdk_file)).Object;
@@ -920,7 +1025,7 @@ fn generateTypeRefRec(sdk_file: *SdkFile, writer: *CodeWriter, self: TypeRefForm
             else => jsonPanic(),
         }};
         try writer.writef("[{}]", .{shape_size}, .{.start=.any,.nl=false});
-        try generateTypeRefRec(sdk_file, writer, fmtTypeRef(child, self.arches, self.options), .child);
+        try generateTypeRefRec(sdk_file, writer, fmtTypeRef(child, self.arches, self.options, self.nested_context), .child);
     } else if (std.mem.eql(u8, kind, "LPArray")) {
         try jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"Kind", "NullNullTerm", "CountConst", "CountParamIndex", "Child"}, sdk_file);
         const null_null_term = (try jsonObjGetRequired(self.type_ref, "NullNullTerm", sdk_file)).Bool;
@@ -951,7 +1056,7 @@ fn generateTypeRefRec(sdk_file: *SdkFile, writer: *CodeWriter, self: TypeRefForm
             }
             if (count_const <= 0 and self.options.is_const)
                 try writer.write("const ", .{.start=.any,.nl=false});
-            try generateTypeRefRec(sdk_file, writer, fmtTypeRef(child, self.arches, child_options), .array);
+            try generateTypeRefRec(sdk_file, writer, fmtTypeRef(child, self.arches, child_options, self.nested_context), .array);
         }
     } else if (std.mem.eql(u8, kind, "MissingClrType")) {
         try jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"Kind", "Name", "Namespace"}, sdk_file);
@@ -1099,7 +1204,7 @@ fn generateConstant(sdk_file: *SdkFile, writer: *CodeWriter, constant_obj: json.
         return;
     }
     const zig_type_formatter = try addTypeRefs(sdk_file, ArchFlags.all, type_ref, .{
-        .reason = .direct_type_access, .is_const = true, .in = false, .out = false, .anon_types = null });
+        .reason = .direct_type_access, .is_const = true, .in = false, .out = false, .anon_types = null, .null_modifier = 0 }, null);
 
     const kind = (jsonObjGetRequired(type_ref, "Kind", sdk_file) catch unreachable).String;
     if (std.mem.eql(u8, kind, "Native")) {
@@ -1328,16 +1433,16 @@ fn generateType(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMa
 
         // TODO: set is_const, in and out properly
         const zig_type_formatter = try addTypeRefs(sdk_file, arches, def_type, .{
-            .reason = .direct_type_access, .is_const = false, .in = false, .out = false, .anon_types = null });
+            .reason = .direct_type_access, .is_const = false, .in = false, .out = false, .anon_types = null, .null_modifier = 0 }, null);
         try writer.writef("pub const {s} = ", .{tmp_name}, .{.nl=false});
         try generateTypeRef(sdk_file, writer, zig_type_formatter);
         try writer.write(";", .{.start=.mid});
     } else if (std.mem.eql(u8, kind, "Enum")) {
         try generateEnum(sdk_file, writer, type_obj, pool_name, enum_alias_conflicts);
     } else if (std.mem.eql(u8, kind, "Union")) {
-        try generateStructOrUnion(sdk_file, writer, type_obj, arches, pool_name, .Union);
+        try generateStructOrUnion(sdk_file, writer, type_obj, arches, pool_name, .Union, null);
     } else if (std.mem.eql(u8, kind, "Struct")) {
-        try generateStructOrUnion(sdk_file, writer, type_obj, arches, pool_name, .Struct);
+        try generateStructOrUnion(sdk_file, writer, type_obj, arches, pool_name, .Struct, null);
     } else if (std.mem.eql(u8, kind, "FunctionPointer")) {
         if (func_ptr_dependency_loop_problems.get(tmp_name)) |_| {
             try writer.line("// TODO: this function pointer causes dependency loop problems, so it's stubbed out");
@@ -1403,18 +1508,18 @@ const AnonTypes = struct {
     }
 };
 
-fn generateStructOrUnion(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap, arches: ArchFlags, pool_name: StringPool.Val, kind: ContainerKind) !void {
+fn generateStructOrUnion(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap, arches: ArchFlags, pool_name: StringPool.Val, kind: ContainerKind, nested_context: ?*const NestedContext) !void {
     std.debug.assert(getAnonKind(pool_name.slice) == null);
     try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Kind", "Name", "Platform", "Architectures",
         "Size", "PackingSize", "Fields", "Comment", "NestedTypes"}, sdk_file);
     const platform_node = try jsonObjGetRequired(type_obj, "Platform", sdk_file);
     try generatePlatformComment(writer, platform_node);
     try writer.writef("pub const {} = ", .{pool_name}, .{.nl=false});
-    try generateStructOrUnionDef(sdk_file, writer, type_obj, arches, kind);
+    try generateStructOrUnionDef(sdk_file, writer, type_obj, arches, kind, nested_context);
     try writer.line("};");
 }
 
-fn generateStructOrUnionDef(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap, arches: ArchFlags, kind: ContainerKind) anyerror!void {
+fn generateStructOrUnionDef(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap, arches: ArchFlags, kind: ContainerKind, nested_context: ?*const NestedContext) anyerror!void {
 
     const struct_size = (try jsonObjGetRequired(type_obj, "Size", sdk_file)).Integer;
     _ = struct_size; // ignored for now
@@ -1432,6 +1537,12 @@ fn generateStructOrUnionDef(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: j
     var anon_types = AnonTypes.init();
     defer anon_types.deinit();
 
+    const this_nested_context_data = NestedContext {
+        .nested_types = struct_nested_types,
+        .parent = nested_context,
+    };
+    const this_nested_context = if (struct_nested_types.items.len > 0) &this_nested_context_data else nested_context;
+
     for (struct_nested_types.items) |*nested_type_node_ptr| {
         const nested_type_obj = nested_type_node_ptr.Object;
         const nested_kind = (try jsonObjGetRequired(nested_type_obj, "Kind", sdk_file)).String;
@@ -1444,9 +1555,9 @@ fn generateStructOrUnionDef(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: j
             try anon_types.types.put(pool_name, nested_type_obj);
         } else {
             if (std.mem.eql(u8, nested_kind, "Union")) {
-                try generateStructOrUnion(sdk_file, writer, nested_type_obj, arches, pool_name, .Union);
+                try generateStructOrUnion(sdk_file, writer, nested_type_obj, arches, pool_name, .Union, this_nested_context);
             } else if (std.mem.eql(u8, nested_kind, "Struct")) {
-                try generateStructOrUnion(sdk_file, writer, nested_type_obj, arches, pool_name, .Struct);
+                try generateStructOrUnion(sdk_file, writer, nested_type_obj, arches, pool_name, .Struct, this_nested_context);
             } else jsonPanicMsg("not impl", .{});
         }
     }
@@ -1466,7 +1577,12 @@ fn generateStructOrUnionDef(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: j
             const field_name = (try jsonObjGetRequired(field_obj, "Name", sdk_file)).String;
             const field_type = (try jsonObjGetRequired(field_obj, "Type", sdk_file)).Object;
             const field_attrs = (try jsonObjGetRequired(field_obj, "Attrs", sdk_file)).Array;
-            var field_options = TypeRefFormatter.Options { .reason = .var_decl, .anon_types = &anon_types };
+            // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            // TODO: implement null_modifier
+            // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            var field_options = TypeRefFormatter.Options { .reason = .var_decl, .anon_types = &anon_types, .null_modifier = 0 };
             for (field_attrs.items) |*attr_node_ptr| {
                 const attr_str = attr_node_ptr.String;
                 if (std.mem.eql(u8, attr_str, "Const")) {
@@ -1483,7 +1599,7 @@ fn generateStructOrUnionDef(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: j
                     jsonPanicMsg("unhandled custom field attribute {s}", .{attr_str});
                 }
             }
-            const field_type_formatter = try addTypeRefs(sdk_file, arches, field_type, field_options);
+            const field_type_formatter = try addTypeRefs(sdk_file, arches, field_type, field_options, this_nested_context);
             try writer.writef("{}: ", .{std.zig.fmtId(field_name)}, .{.nl=false});
             try generateTypeRef(sdk_file, writer, field_type_formatter);
             if (struct_packing_size > 1 and kind == .Struct) {
@@ -1835,7 +1951,7 @@ fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap
         try writer.line("        _: *opaque{}, // just a placeholder because this COM type is skipped");
     } else {
         if (com_optional_iface) |iface| {
-            iface_formatter = try addTypeRefs(sdk_file, arches, iface, .{ .reason = .direct_type_access, .anon_types = null });
+            iface_formatter = try addTypeRefs(sdk_file, arches, iface, .{ .reason = .direct_type_access, .anon_types = null, .null_modifier = 0 }, null);
             try writer.write("        base: ", .{.nl=false});
             try generateTypeRef(sdk_file, writer, iface_formatter);
             try writer.write(".VTable,", .{.start=.mid});
@@ -1889,9 +2005,15 @@ fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap
                 try jsonObjEnforceKnownFieldsOnly(param_obj, &[_][]const u8 {"Name", "Type", "Attrs"}, sdk_file);
                 const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).String;
                 const param_type = (try jsonObjGetRequired(param_obj, "Type", sdk_file)).Object;
-                const param_options = processParamAttrs((try jsonObjGetRequired(param_obj, "Attrs", sdk_file)).Array, .var_decl, sdk_file);
+                // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                // TODO: set null_modifier properly
+                // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+                const null_modifier = 0;
+                const param_options = processParamAttrs((try jsonObjGetRequired(param_obj, "Attrs", sdk_file)).Array, .var_decl, null_modifier, sdk_file);
                 // NOTE: don't need to call addTypeRefs because it was already called in generateFunction above
-                const param_type_formatter = fmtTypeRef(param_type, arches, param_options);
+                const param_type_formatter = fmtTypeRef(param_type, arches, param_options, null);
                 if (param_options.optional_bytes_param_index) |bytes_param_index| {
                     _ = bytes_param_index; // NOTE: can't print this because we are currently inline
                     //try writer.linef("// TODO: what to do with BytesParamIndex {}?", .{bytes_param_index});
@@ -1901,8 +2023,13 @@ fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap
             }
             // NOTE: don't need to call addTypeRefs because it was already called in generateFunction above
             // TODO: set is_const, in and out properly
+            // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            // TODO: set null_modifier properly
+            // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             const return_type_formatter = fmtTypeRef(return_type, arches, .{
-                .reason = .var_decl, .is_const = false, .in = false, .out = false, .anon_types = null });
+                .reason = .var_decl, .is_const = false, .in = false, .out = false, .anon_types = null, .null_modifier = 0 }, null);
             try writer.write(") callconv(.Inline) ", .{.start=.mid,.nl=false});
             try generateTypeRef(sdk_file, writer, return_type_formatter);
             try writer.write(" {", .{.start=.mid});
@@ -1921,8 +2048,8 @@ fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap
     try writer.line("};");
 }
 
-fn processParamAttrs(attrs: json.Array, reason: TypeRefFormatter.Reason, sdk_file: *const SdkFile) TypeRefFormatter.Options {
-    var opts = TypeRefFormatter.Options { .reason = reason, .anon_types = null };
+fn processParamAttrs(attrs: json.Array, reason: TypeRefFormatter.Reason, null_modifier: NullModifier, sdk_file: *const SdkFile) TypeRefFormatter.Options {
+    var opts = TypeRefFormatter.Options { .reason = reason, .anon_types = null, .null_modifier = null_modifier };
     for (attrs.items) |*attr_node_ptr| {
         switch (attr_node_ptr.*) {
             .Object => |attr_obj| {
@@ -2023,6 +2150,12 @@ fn generateArchSuffix(writer: *CodeWriter) void {
     writer.line("}, else => struct { } };") catch @panic("here");
 }
 
+const ParamModifierSet = struct {
+    const max_params = 30;
+    ret: NullModifier = 0,
+    params: [max_params]NullModifier = [_]NullModifier { 0 } ** max_params,
+};
+
 fn generateFunction(sdk_file: *SdkFile, writer: *CodeWriter, function_obj: json.ObjectMap, func_kind: FuncPtrKind, suffix: ?u8, optional_self_type: ?[]const u8) !void {
     const prefix = if (func_kind == .com) "        " else "";
     switch (func_kind) {
@@ -2043,10 +2176,24 @@ fn generateFunction(sdk_file: *SdkFile, writer: *CodeWriter, function_obj: json.
     const attrs = (try jsonObjGetRequired(function_obj, "Attrs", sdk_file)).Array;
     const params = (try jsonObjGetRequired(function_obj, "Params", sdk_file)).Array;
 
-    if (func_kind == .fixed) {
-        try sdk_file.func_exports.put(try global_symbol_pool.add(func_name_tmp), .{});
-    }
+    var notnull_set = ParamModifierSet { };
 
+    if (func_kind == .fixed or func_kind == .ptr) {
+        const pool_name = try global_symbol_pool.add(func_name_tmp);
+        if (func_kind == .fixed) {
+            try sdk_file.func_exports.put(pool_name, .{});
+        }
+        if (sdk_file.not_null_funcs.get(pool_name.slice)) |notnull_node| {
+            try sdk_file.not_null_funcs_applied.put(pool_name, .{});
+            jsonEnforce(notnull_node.Array.items.len > 0);
+            notnull_set.ret = @intCast(NullModifier, notnull_node.Array.items[0].Integer);
+            for (notnull_node.Array.items[1..]) |item, i| {
+                jsonEnforce(i < notnull_set.params.len); // if we hit this, increase max param count
+                jsonEnforce(i < params.items.len);
+                notnull_set.params[i] = @intCast(NullModifier, item.Integer);
+            }
+        }
+    }
 
     if (arches.flags != ArchFlags.all.flags) {
         // is COM supposed to support arch specific methods?
@@ -2095,13 +2242,15 @@ fn generateFunction(sdk_file: *SdkFile, writer: *CodeWriter, function_obj: json.
     if (optional_self_type) |self_type| {
         try writer.linef("{s}    self: *const {s},", .{prefix, self_type});
     }
-    for (params.items) |*param_node_ptr| {
+
+    for (params.items) |*param_node_ptr, i| {
         const param_obj = param_node_ptr.Object;
         try jsonObjEnforceKnownFieldsOnly(param_obj, &[_][]const u8 {"Name", "Type", "Attrs"}, sdk_file);
         const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).String;
         const param_type = (try jsonObjGetRequired(param_obj, "Type", sdk_file)).Object;
-        const param_options = processParamAttrs((try jsonObjGetRequired(param_obj, "Attrs", sdk_file)).Array, .var_decl, sdk_file);
-        const param_type_formatter = try addTypeRefs(sdk_file, arches, param_type, param_options);
+        const null_modifier = notnull_set.params[i];
+        const param_options = processParamAttrs((try jsonObjGetRequired(param_obj, "Attrs", sdk_file)).Array, .var_decl, null_modifier, sdk_file);
+        const param_type_formatter = try addTypeRefs(sdk_file, arches, param_type, param_options, null);
         if (param_options.optional_bytes_param_index) |bytes_param_index| {
             try writer.linef("{s}    // TODO: what to do with BytesParamIndex {}?", .{prefix, bytes_param_index});
         }
@@ -2115,8 +2264,8 @@ fn generateFunction(sdk_file: *SdkFile, writer: *CodeWriter, function_obj: json.
         try writer.write("noreturn", .{.start=.mid,.nl=false});
     } else {
         // TODO: set is_const, in and out properly
-        const return_opts = processParamAttrs(return_attrs, .var_decl, sdk_file);
-        const return_type_formatter = try addTypeRefs(sdk_file, arches, return_type, return_opts);
+        const return_opts = processParamAttrs(return_attrs, .var_decl, notnull_set.ret, sdk_file);
+        const return_type_formatter = try addTypeRefs(sdk_file, arches, return_type, return_opts, null);
         try generateTypeRef(sdk_file, writer, return_type_formatter);
     }
     const term = if (func_kind == .com) "," else ";";
