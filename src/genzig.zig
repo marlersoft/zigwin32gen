@@ -1620,6 +1620,7 @@ const non_exhaustive_enums = std.ComptimeStringMap(Nothing, .{
     .{ "CLSCTX", .{} },
     // SEND_FLAGS is missing the value 0
     .{ "SEND_FLAGS", .{} },
+    .{ "WINDOW_LONG_PTR_INDEX", .{} },
 });
 
 fn shortEnumValueName(enum_type_name: []const u8, full_value_name: []const u8) []const u8 {
