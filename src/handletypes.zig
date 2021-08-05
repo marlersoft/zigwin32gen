@@ -2,7 +2,7 @@
 const std = @import("std");
 pub const std_handle_types = std.ComptimeStringMap([]const u8, .{
     .{ "HANDLE", "os.windows.HANDLE" },
-    .{ "SOCKET", "os.socket_t" },
+    .{ "SOCKET", "os.windows.ws2_32.SOCKET" },
 });
 pub const handle_types = list: {
     @setEvalBranchQuota(3000);
