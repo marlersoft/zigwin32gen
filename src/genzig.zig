@@ -574,7 +574,7 @@ fn readAndGenerateApiFile(root_module: *Module, out_dir: std.fs.Dir, json_basena
     var depth: u2 = 0;
 
     {
-        var it = std.mem.tokenize(zig_name, ".");
+        var it = std.mem.tokenize(u8, zig_name, ".");
         while (it.next()) |name_part| {
             if (module != root_module) {
                 depth += 1;
