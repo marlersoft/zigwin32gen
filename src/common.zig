@@ -14,7 +14,7 @@ pub fn getcwd(a: *std.mem.Allocator) ![]u8 {
 
 pub fn openWin32JsonDir(repo_root: std.fs.Dir) !std.fs.Dir {
     const win32json_dir_name = "deps" ++ path_sep ++ "win32json";
-    const win32json_branch = "10.2.118-preview";
+    const win32json_branch = "10.2.163-preview";
     return repo_root.openDir(win32json_dir_name, .{}) catch |e| switch (e) {
         error.FileNotFound => {
             std.debug.warn("Error: repository '{s}' does not exist, clone it with:\n", .{win32json_dir_name});

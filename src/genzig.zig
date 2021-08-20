@@ -875,6 +875,8 @@ const TypeRefFormatter = struct {
         com_out_ptr: bool = false,
         // TODO: don't know what to do with this yet
         do_not_release: bool = false,
+        // TODO: don't know what to do with this yet
+        reserved: bool = false,
         optional_bytes_param_index: ?i16 = null,
         anon_types: ?*const AnonTypes,
 
@@ -2083,6 +2085,8 @@ fn processParamAttrs(attrs: json.Array, reason: TypeRefFormatter.Reason, null_mo
                     opts.com_out_ptr = true;
                 } else if (std.mem.eql(u8, attr_str, "DoNotRelease")) {
                     opts.do_not_release = true;
+                } else if (std.mem.eql(u8, attr_str, "Reserved")) {
+                    opts.reserved = true;
                 } else {
                     jsonPanicMsg("unhandled custom param attribute '{s}'", .{attr_str});
                 }
@@ -2403,6 +2407,9 @@ fn getParamNamesToAvoidMapGetFn(json_name: []const u8) *const fn(s: []const u8) 
     if (std.mem.eql(u8, json_name, "UI.TabletPC")) return &std.ComptimeStringMap(Nothing, .{
         .{ "EventMask", .{} },
         .{ "InkDisplayMode", .{} },
+    }).get;
+    if (std.mem.eql(u8, json_name, "UI.Shell")) return &std.ComptimeStringMap(Nothing, .{
+        .{ "Folder", .{} },
     }).get;
     if (std.mem.eql(u8, json_name, "Graphics.DirectShow")) return &std.ComptimeStringMap(Nothing, .{
         .{ "Quality", .{} },
