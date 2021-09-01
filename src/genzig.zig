@@ -1350,6 +1350,9 @@ fn generateType(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMa
     if (types_that_conflict_with_consts.get(tmp_name)) |_| {
         try writer.line("// WARNING: this type symbol conflicts with a const!");
         try writer.linef("pub const {s}_CONFLICT_ = usize;", .{tmp_name});
+    } else if (types_that_conflict_with_something.get(tmp_name)) |_| {
+        try writer.line("// WARNING: this type symbol conflicts with something!");
+        try writer.linef("pub const {s}_CONFLICT_ = usize;", .{tmp_name});
     } else if (types_to_skip.get(tmp_name)) |_| {
         try writer.line("// TODO: not generating this type because it is causing some sort of error");
         try writer.linef("pub const {s} = usize;", .{tmp_name});
@@ -1482,6 +1485,19 @@ const types_that_conflict_with_consts = std.ComptimeStringMap(Nothing, .{
     .{ "AE_NETLOGON", .{} },
     .{ "AE_NETLOGOFF", .{} },
     .{ "AE_LOCKOUT", .{} },
+});
+const types_that_conflict_with_something = std.ComptimeStringMap(Nothing, .{
+    // https://github.com/microsoft/win32metadata/issues/632
+    // There's something weird going on with these types.  The types are empty
+    // but they are also defined as nested types inside the other types that use them.
+    // The reason they must be skipped right now is they are causing name conflict errors
+    // becuase they are duplicated.
+    .{ "DHCP_SUBNET_ELEMENT_UNION", .{} },
+    .{ "DHCP_OPTION_ELEMENT_UNION", .{} },
+    .{ "DHCP_OPTION_SCOPE_UNION6", .{} },
+    .{ "DHCP_CLIENT_SEARCH_UNION", .{} },
+    .{ "DHCP_SUBNET_ELEMENT_UNION_V4", .{} },
+    .{ "DHCP_SUBNET_ELEMENT_UNION_V6", .{} },
 });
 
 const com_types_to_skip = std.ComptimeStringMap(Nothing, .{
@@ -2395,6 +2411,7 @@ pub fn isBuiltinId(s: []const u8) bool {
 fn getParamNamesToAvoidMapGetFn(json_name: []const u8) *const fn(s: []const u8) ?Nothing {
     if (std.mem.eql(u8, json_name, "System.Mmc")) return &std.ComptimeStringMap(Nothing, .{
         .{ "Node", .{} },
+        .{ "Nodes", .{} },
         .{ "Frame", .{} },
         .{ "Column", .{} },
         .{ "Columns", .{} },
@@ -2403,10 +2420,19 @@ fn getParamNamesToAvoidMapGetFn(json_name: []const u8) *const fn(s: []const u8) 
         .{ "Extension", .{} },
         .{ "View", .{} },
         .{ "Document", .{} },
+        .{ "MenuItem", .{} },
+        .{ "Views", .{} },
+        .{ "SnapIns", .{} },
+        .{ "Property", .{} },
+        .{ "Properties", .{} },
+        .{ "Extensions", .{} },
+        .{ "ContextMenu", .{} },
+        .{ "Guid", .{} },
     }).get;
     if (std.mem.eql(u8, json_name, "UI.TabletPC")) return &std.ComptimeStringMap(Nothing, .{
         .{ "EventMask", .{} },
         .{ "InkDisplayMode", .{} },
+        .{ "Guid", .{} },
     }).get;
     if (std.mem.eql(u8, json_name, "UI.Shell")) return &std.ComptimeStringMap(Nothing, .{
         .{ "Folder", .{} },
@@ -2415,6 +2441,17 @@ fn getParamNamesToAvoidMapGetFn(json_name: []const u8) *const fn(s: []const u8) 
         .{ "Quality", .{} },
         .{ "ScanModulationTypes", .{} },
         .{ "AnalogVideoStandard", .{} },
+        .{ "Guid", .{} },
+    }).get;
+    if (std.mem.eql(u8, json_name, "Media.Speech")) return &std.ComptimeStringMap(Nothing, .{
+        .{ "Guid", .{} },
+    }).get;
+    if (std.mem.eql(u8, json_name, "Media.MediaFoundation")) return &std.ComptimeStringMap(Nothing, .{
+        .{ "Guid", .{} },
+    }).get;
+    if (std.mem.eql(u8, json_name, "System.Diagnostics.Debug")) return &std.ComptimeStringMap(Nothing, .{
+        .{ "Guid", .{} },
+        .{ "Symbol", .{} },
     }).get;
     return &EmptyComptimeStringMap(Nothing).get;
 }
