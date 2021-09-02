@@ -1361,7 +1361,7 @@ fn generateType(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMa
     } else {
         const def_prefix = try std.fmt.allocPrint(allocator, "pub const {s} = ", .{std.zig.fmtId(tmp_name)});
         defer allocator.free(def_prefix);
-        try generateTypeDefinition(sdk_file, writer, type_obj, enum_alias_conflicts, arches, kind, pool_name, def_prefix);
+        try generateTypeDefinition(sdk_file, writer, type_obj, enum_alias_conflicts, arches, kind, pool_name, def_prefix, ";");
     }
 }
 
@@ -1374,6 +1374,7 @@ fn generateTypeDefinition(
     kind: []const u8,
     pool_name: StringPool.Val,
     def_prefix: []const u8,
+    def_suffix: []const u8,
 ) !void {
 
     if (std.mem.eql(u8, kind, "NativeTypedef")) {
@@ -1415,11 +1416,11 @@ fn generateTypeDefinition(
             switch (native_type) {
                 .Byte => {
                     jsonEnforce(special == .pstr);
-                    try writer.linef("{s}[*:0]u8;", .{def_prefix});
+                    try writer.linef("{s}[*:0]u8{s}", .{def_prefix, def_suffix});
                 },
                 .Char => {
                     jsonEnforce(special == .pwstr);
-                    try writer.linef("{s}[*:0]u16;", .{def_prefix});
+                    try writer.linef("{s}[*:0]u16{s}", .{def_prefix, def_suffix});
                 },
                 else => jsonPanic(),
             }
@@ -1433,8 +1434,8 @@ fn generateTypeDefinition(
                     try writer.linef("//TODO: type '{s}' is \"AlsoUsableFor\" '{s}' which means this type is implicitly", .{pool_name, also_usable_for});
                     try writer.linef("//      convertible to '{s}' but not the other way around.  I don't know how to do this", .{also_usable_for});
                     try writer.line("//      in Zig so for now I'm just defining it as an alias");
-                    try writer.linef("{s}{s};", .{def_prefix, also_usable_for});
-                    //try writer.linef("{s}extern struct {{ base: {s} }};", .{def_prefix, also_usable_for});
+                    try writer.linef("{s}{s}{s}", .{def_prefix, also_usable_for, def_suffix});
+                    //try writer.linef("{s}extern struct {{ base: {s} }}{s}", .{def_prefix, also_usable_for, def_suffix});
                 } else std.debug.panic("AlsoUsableFor type '{s}' is missing from alsoUsableForApiMap", .{also_usable_for});
                 return;
             },
@@ -1445,12 +1446,12 @@ fn generateTypeDefinition(
         // NOTE: for now, I'm just hardcoding a few types to redirect to the ones defined in 'std'
         //       this allows apps to use values of these types interchangeably with bindings in std
         if (@import("handletypes.zig").std_handle_types.get(pool_name.slice)) |std_sym| {
-            try writer.linef("{s}@import(\"std\").{s};", .{def_prefix, std_sym});
+            try writer.linef("{s}@import(\"std\").{s}{s}", .{def_prefix, std_sym, def_suffix});
             return;
         }
         // workaround https://github.com/microsoft/win32metadata/issues/395
         if (@import("handletypes.zig").handle_types.get(pool_name.slice)) |_| {
-            try writer.linef("{s}*opaque{{}};", .{def_prefix});
+            try writer.linef("{s}*opaque{{}}{s}", .{def_prefix, def_suffix});
             return;
         }
 
@@ -1459,20 +1460,20 @@ fn generateTypeDefinition(
             .reason = .direct_type_access, .is_const = false, .in = false, .out = false, .anon_types = null, .null_modifier = 0 }, null);
         try writer.writef("{s}", .{def_prefix}, .{.nl=false});
         try generateTypeRef(sdk_file, writer, zig_type_formatter);
-        try writer.write(";", .{.start=.mid});
+        try writer.writef("{s}", .{def_suffix}, .{.start=.mid});
     } else if (std.mem.eql(u8, kind, "Enum")) {
-        try generateEnum(sdk_file, writer, type_obj, pool_name, enum_alias_conflicts, def_prefix);
+        try generateEnum(sdk_file, writer, type_obj, pool_name, enum_alias_conflicts, def_prefix, def_suffix);
     } else if (std.mem.eql(u8, kind, "Union")) {
-        try generateStructOrUnion(sdk_file, writer, type_obj, arches, pool_name, def_prefix, .Union, null);
+        try generateStructOrUnion(sdk_file, writer, type_obj, arches, pool_name, def_prefix, def_suffix, .Union, null);
     } else if (std.mem.eql(u8, kind, "Struct")) {
-        try generateStructOrUnion(sdk_file, writer, type_obj, arches, pool_name, def_prefix, .Struct, null);
+        try generateStructOrUnion(sdk_file, writer, type_obj, arches, pool_name, def_prefix, def_suffix, .Struct, null);
     } else if (std.mem.eql(u8, kind, "FunctionPointer")) {
         if (func_ptr_dependency_loop_problems.get(pool_name.slice)) |_| {
             try writer.line("// TODO: this function pointer causes dependency loop problems, so it's stubbed out");
-            try writer.linef("{s}fn() callconv(@import(\"std\").os.windows.WINAPI) void;", .{def_prefix});
+            try writer.linef("{s}fn() callconv(@import(\"std\").os.windows.WINAPI) void{s}", .{def_prefix, def_suffix});
             return;
         }
-        try generateFunction(sdk_file, writer, type_obj, .{ .ptr = .{ .def_prefix = def_prefix } }, null, null);
+        try generateFunction(sdk_file, writer, type_obj, .{ .ptr = .{ .def_prefix = def_prefix, .def_suffix = def_suffix } }, null, null);
         try sdk_file.tmp_func_ptr_workaround_list.append(pool_name);
     } else if (std.mem.eql(u8, kind, "Com")) {
         try generateCom(sdk_file, writer, type_obj, arches, pool_name, def_prefix);
@@ -1544,11 +1545,11 @@ const AnonTypes = struct {
     }
 };
 
-fn generateStructOrUnion(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap, arches: ArchFlags, pool_name: StringPool.Val, def_prefix: []const u8, kind: ContainerKind, nested_context: ?*const NestedContext) !void {
+fn generateStructOrUnion(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap, arches: ArchFlags, pool_name: StringPool.Val, def_prefix: []const u8, def_suffix: []const u8, kind: ContainerKind, nested_context: ?*const NestedContext) !void {
     std.debug.assert(getAnonKind(pool_name.slice) == null);
     try writer.writef("{s}", .{def_prefix}, .{.nl=false});
     try generateStructOrUnionDef(sdk_file, writer, type_obj, arches, kind, nested_context);
-    try writer.line("};");
+    try writer.linef("}}{s}", .{def_suffix});
 }
 
 fn generateStructOrUnionDef(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap, arches: ArchFlags, kind: ContainerKind, nested_context: ?*const NestedContext) anyerror!void {
@@ -1845,6 +1846,7 @@ fn generateEnum(
     pool_name: StringPool.Val,
     enum_alias_conflicts: *StringPool.HashMap(StringPool.Val),
     def_prefix: []const u8,
+    def_suffix: []const u8,
 ) !void {
     try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Platform", "Architectures", "Kind", "Flags", "Scoped", "Values", "IntegerBase"}, sdk_file);
     const flags = (try jsonObjGetRequired(type_obj, "Flags", sdk_file)).Bool;
@@ -1924,7 +1926,12 @@ fn generateEnum(
         try writer.line("        );");
         try writer.line("    }");
     }
-    try writer.line("};");
+    try writer.linef("}}{s}", .{def_suffix});
+
+    if (std.mem.eql(u8, def_suffix, ",")) {
+        @panic("can't generate arch-specific enum aliases right now");
+    }
+    std.debug.assert(std.mem.eql(u8, def_suffix, ";"));
 
     if (scoped) {
         try writer.linef("// NOTE: not creating aliases because this enum is 'Scoped'", .{});
@@ -2175,7 +2182,7 @@ const noreturn_funcs = std.ComptimeStringMap(Nothing, .{
 });
 
 const FuncPtrKind = union(enum) {
-    ptr: struct { def_prefix: []const u8 },
+    ptr: struct { def_prefix: []const u8, def_suffix: []const u8 },
     fixed: void,
     com: void,
 };
@@ -2320,7 +2327,11 @@ fn generateFunction(sdk_file: *SdkFile, writer: *CodeWriter, function_obj: json.
         const return_type_formatter = try addTypeRefs(sdk_file, arches, return_type, return_opts, null);
         try generateTypeRef(sdk_file, writer, return_type_formatter);
     }
-    const term = if (func_kind == .com) "," else ";";
+    const term = switch (func_kind) {
+        .fixed => ";",
+        .ptr => |ptr_data| ptr_data.def_suffix,
+        .com => ",",
+    };
     try writer.writef("{s}", .{term}, .{.start=.mid});
 }
 
