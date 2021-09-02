@@ -634,6 +634,10 @@ pub fn EmptyComptimeStringMap(comptime V: type) type { return struct {
     pub fn get(str: []const u8) ?V { _ = str; return null; }
 };}
 
+fn ArchSpecificMap(comptime T: type) type {
+    return std.ArrayHashMap(StringPool.Val, ArchSpecificObjects(T), StringPool.ArrayHashContext, false);
+}
+
 fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.ValueTree) !void {
     const sdk_file = &module.file.?;
 
@@ -662,11 +666,33 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.ValueTree) !
     try writer.linef("// Section: Types ({})", .{types_array.items.len});
     try writer.line("//--------------------------------------------------------------------------------");
     {
+        var arch_specific_types = ArchSpecificMap(json.ObjectMap).init(allocator);
+        defer arch_specific_types.deinit();
         var enum_alias_conflicts = StringPool.HashMap(StringPool.Val).init(allocator);
         defer enum_alias_conflicts.deinit();
         for (types_array.items) |*type_node_ptr| {
-            try generateType(sdk_file, writer, type_node_ptr.Object, &enum_alias_conflicts);
+            try generateType(sdk_file, writer, &arch_specific_types, type_node_ptr.Object, &enum_alias_conflicts);
             try writer.line("");
+        }
+        var it = arch_specific_types.iterator();
+        while (it.next()) |entry| {
+            const name = entry.key_ptr.*;
+            try writer.linef("pub const {s} = switch(@import(\"{s}zig.zig\").arch) {{", .{name, import_prefix_table[sdk_file.depth]});
+            var combined_arches: u8 = 0;
+            for (entry.value_ptr.getItemsConst()) |object| {
+                combined_arches |= object.arches.flags;
+                var buf: [40]u8 = undefined;
+                const def_prefix = buf[0 .. try object.arches.formatCase(&buf)];
+                const kind = (try jsonObjGetRequired(object.obj, "Kind", sdk_file)).String;
+                writer.depth += 1;
+                defer writer.depth -= 1;
+                try generateTypeDefinition(sdk_file, writer, object.obj, &enum_alias_conflicts, object.arches, kind, name, def_prefix, ",");
+            }
+            if (combined_arches != ArchFlags.all.flags) {
+                //try writer.line("    else => @compileError(\"unsupported on this arch\"),");
+                try writer.line("    else => usize, // NOTE: this should be a @compileError but can't because of https://github.com/ziglang/zig/issues/9682");
+            }
+            try writer.line("};");
         }
     }
     try writer.line("");
@@ -691,32 +717,64 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.ValueTree) !
         try writer.linef("const Guid = @import(\"{s}zig.zig\").Guid;", .{sdk_file.getWin32DirImportPrefix()});
     }
     {
-        // TODO: the generated code would probalby be cleaner if I combine symbols
-        //       that belong to the same arch set
-        var it = sdk_file.top_level_api_imports.iterator();
-        while (it.next()) |import| {
-            const name = import.key_ptr.*;
-            const api_upper = import.value_ptr.api;
-            const arches = import.value_ptr.arches;
+        var arch_specific_imports = ArchSpecificMap(StringPool.Val).init(allocator);
+        defer arch_specific_imports.deinit();
 
-            // TODO: should I cache this mapping from api ref to api import path?
-            const api_path = try cameltosnake.camelToSnakeAlloc(allocator, api_upper.slice);
-            defer allocator.free(api_path);
-            for (api_path) |c, i| {
-                if (c == '.')
-                    api_path[i] = '/';
+        const NamedApiImport = struct {
+            name: StringPool.Val,
+            import: ApiImport,
+            pub fn asciiLessThanIgnoreCase(_: Nothing, lhs: @This(), rhs: @This()) bool {
+                return std.ascii.lessThanIgnoreCase(lhs.name.slice, rhs.name.slice);
             }
-            var vis: []const u8 = "";
-            if (arches.flags != ArchFlags.all.flags) {
-                try generateArchPrefix(writer, sdk_file.depth, arches, "");
-                writer.depth += 1;
-                vis = "pub ";
+        };
+        var sorted_imports = std.ArrayList(NamedApiImport).init(allocator);
+        defer sorted_imports.deinit();
+        {
+            var it = sdk_file.top_level_api_imports.iterator();
+            while (it.next()) |entry| {
+                try sorted_imports.append(.{ .name = entry.key_ptr.*, .import = entry.value_ptr.* });
             }
-            try writer.linef("{s}const {s} = @import(\"{s}{s}.zig\").{1s};",
-                .{vis, name, sdk_file.getWin32DirImportPrefix(), api_path});
+        }
+        std.sort.sort(NamedApiImport, sorted_imports.items, Nothing {}, NamedApiImport.asciiLessThanIgnoreCase);
+
+        // print the arch-agnostic imports first
+        for (sorted_imports.items) |import| {
+            const api_upper = import.import.api;
+            const arches = import.import.arches;
+
             if (arches.flags != ArchFlags.all.flags) {
-                writer.depth -= 1;
-                generateArchSuffix(writer);
+                try addArchSpecific(StringPool.Val, &arch_specific_imports, import.name, arches, api_upper);
+            } else {
+                // TODO: should I cache this mapping from api ref to api import path?
+                const api_path = try allocApiImportPathFromRef(api_upper.slice);
+                defer allocator.free(api_path);
+                try writer.linef("const {s} = @import(\"{s}{s}.zig\").{0s};",
+                    .{import.name, sdk_file.getWin32DirImportPrefix(), api_path});
+            }
+        }
+        if (arch_specific_imports.count() > 0) {
+            try writer.linef("// {} arch-specific imports", .{arch_specific_imports.count()});
+            var arch_imports_it = arch_specific_imports.iterator();
+            while (arch_imports_it.next()) |arch_import_node| {
+                const name = arch_import_node.key_ptr.*;
+                try writer.linef("const {s} = switch(@import(\"{s}zig.zig\").arch) {{", .{name, import_prefix_table[sdk_file.depth]});
+                var combined_arches: u8 = 0;
+                for (arch_import_node.value_ptr.getItemsConst()) |object| {
+                    combined_arches |= object.arches.flags;
+                    var buf: [40]u8 = undefined;
+                    const def_prefix = buf[0 .. try object.arches.formatCase(&buf)];
+                    const api_upper = object.obj;
+                    // TODO: should I cache this mapping from api ref to api import path?
+                    const api_path = try allocApiImportPathFromRef(api_upper.slice);
+                    defer allocator.free(api_path);
+                    try writer.linef("    {s}@import(\"{s}{s}.zig\").{s},",
+                        .{def_prefix, sdk_file.getWin32DirImportPrefix(), api_path, name});
+                }
+                if (combined_arches != ArchFlags.all.flags) {
+                    //try writer.line("    else => @compileError(\"unsupported on this arch\"),");
+                    try writer.line("    else => usize, // NOTE: this should be a @compileError but can't because of https://github.com/ziglang/zig/issues/9682");
+                }
+                try writer.line("};");
             }
         }
     }
@@ -774,6 +832,16 @@ fn typeIsVoid(type_obj: json.ObjectMap, sdk_file: *SdkFile) !bool {
         return std.mem.eql(u8, name, "void");
     }
     return false;
+}
+
+// TODO: should I cache this mapping from api ref to api import path?
+fn allocApiImportPathFromRef(api_ref: []const u8) ![]u8 {
+    const api_path = try cameltosnake.camelToSnakeAlloc(allocator, api_ref);
+    for (api_path) |c, i| {
+        if (c == '.')
+            api_path[i] = '/';
+    }
+    return api_path;
 }
 
 // convenient function that combines both adding type refs and creating a formatter
@@ -897,6 +965,7 @@ fn generateTypeRef(sdk_file: *SdkFile, writer: *CodeWriter, self: TypeRefFormatt
 }
 fn generateTypeRefRec(sdk_file: *SdkFile, writer: *CodeWriter, self: TypeRefFormatter, depth_context: DepthContext) anyerror!void {
     const kind = (try jsonObjGetRequired(self.type_ref, "Kind", sdk_file)).String;
+
     if (std.mem.eql(u8, kind, "Native")) {
         try jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8 {"Kind", "Name"}, sdk_file);
         const name = (try jsonObjGetRequired(self.type_ref, "Name", sdk_file)).String;
@@ -1314,7 +1383,26 @@ const CodeWriter = struct {
     }
 };
 
-fn generateType(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap, enum_alias_conflicts: *StringPool.HashMap(StringPool.Val)) !void {
+pub fn addArchSpecific(comptime T: type, arch_specific: *ArchSpecificMap(T), pool_name: StringPool.Val, arches: ArchFlags, obj: T) !void {
+    std.debug.assert(arches.flags != ArchFlags.all.flags);
+    _ = obj;
+    if (arch_specific.getPtr(pool_name)) |object| {
+        object.add(.{ .arches = arches, .obj = obj });
+    } else {
+        var objects = ArchSpecificObjects(T) { };
+        objects.object_array[0] = .{ .arches = arches, .obj = obj };
+        objects.object_count = 1;
+        try arch_specific.put(pool_name, objects);
+    }
+}
+
+fn generateType(
+    sdk_file: *SdkFile,
+    writer: *CodeWriter,
+    arch_specific: *ArchSpecificMap(json.ObjectMap),
+    type_obj: json.ObjectMap,
+    enum_alias_conflicts: *StringPool.HashMap(StringPool.Val),
+) !void {
     const arches = ArchFlags.initJson((try jsonObjGetRequired(type_obj, "Architectures", sdk_file)).Array.items);
     {
         const platform_node = try jsonObjGetRequired(type_obj, "Platform", sdk_file);
@@ -1336,18 +1424,13 @@ fn generateType(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMa
     }
 
     const pool_name = try global_symbol_pool.add(tmp_name);
-    //
-    // TODO: add 'ArchFlags' to type_exports?
-    //
+
+    // TODO: should I be adding this to type_exports if it's arch specific?
+    //       type_exports may need to have an ArchFlags for each symbol
     if (arches.flags == ArchFlags.all.flags) {
         std.debug.assert(sdk_file.type_exports.get(pool_name) == null);
-        try sdk_file.type_exports.put(pool_name, .{});
-    } else {
-        try generateArchPrefix(writer, sdk_file.depth, arches, "pub ");
     }
-    defer {
-        if (arches.flags != ArchFlags.all.flags) generateArchSuffix(writer);
-    }
+    try sdk_file.type_exports.put(pool_name, .{});
 
     if (types_that_conflict_with_consts.get(tmp_name)) |_| {
         try writer.line("// WARNING: this type symbol conflicts with a const!");
@@ -1355,9 +1438,11 @@ fn generateType(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMa
     } else if (types_that_conflict_with_something.get(tmp_name)) |_| {
         try writer.line("// WARNING: this type symbol conflicts with something!");
         try writer.linef("pub const {s}_CONFLICT_ = usize;", .{tmp_name});
-    } else if (types_to_skip.get(tmp_name)) |_| {
-        try writer.line("// TODO: not generating this type because it is causing some sort of error");
+    } else if (types_to_skip.get(tmp_name)) |msg| {
+        try writer.linef("// TODO: not generating this type because {s}", .{msg});
         try writer.linef("pub const {s} = usize;", .{tmp_name});
+    } else if (arches.flags != ArchFlags.all.flags) {
+        try addArchSpecific(json.ObjectMap, arch_specific, pool_name, arches, type_obj);
     } else {
         const def_prefix = try std.fmt.allocPrint(allocator, "pub const {s} = ", .{std.zig.fmtId(tmp_name)});
         defer allocator.free(def_prefix);
@@ -1482,9 +1567,8 @@ fn generateTypeDefinition(
     }
 }
 
-const types_to_skip = std.ComptimeStringMap(Nothing, .{
-    // error: array of 'win32.ui.shell.FILEDESCRIPTORA' not allowed in packed struct due to padding bits
-    .{ "FILEGROUPDESCRIPTORA", .{} },
+const types_to_skip = std.ComptimeStringMap([]const u8, .{
+    .{ "FILEGROUPDESCRIPTORA", "array of 'win32.ui.shell.FILEDESCRIPTORA' not allowed in packed struct due to padding bits" },
 });
 const types_that_conflict_with_consts = std.ComptimeStringMap(Nothing, .{
     // This symbol conflicts with a constant with the exact same name
@@ -2181,8 +2265,12 @@ const noreturn_funcs = std.ComptimeStringMap(Nothing, .{
     .{ "ExitProcess", .{} },
 });
 
+const ArchCaseContext = enum { outside_arch_case, inside_arch_case };
 const FuncPtrKind = union(enum) {
-    ptr: struct { def_prefix: []const u8, def_suffix: []const u8 },
+    ptr: struct {
+        def_prefix: []const u8,
+        def_suffix: []const u8
+    },
     fixed: void,
     com: void,
 };
@@ -2190,15 +2278,10 @@ const FuncPtrKind = union(enum) {
 fn generateArchPrefix(writer: *CodeWriter, module_depth: u2, arches: ArchFlags, prefix: []const u8) !void {
     std.debug.assert(arches.flags != ArchFlags.all.flags);
     try writer.linef("{s}usingnamespace switch (@import(\"{s}zig.zig\").arch) {{", .{prefix, import_prefix_table[module_depth]});
-    var case_prefix: []const u8 = "";
-    inline for (std.meta.fields(Arch)) |arch_field| {
-        const arch = @field(Arch, arch_field.name);
-        if ((arches.flags & getFlag(arch).flags) != 0) {
-            try writer.writef("{s}.{s}", .{case_prefix, @tagName(arch)}, .{.start=.any, .nl=false});
-            case_prefix = ", ";
-        }
-    }
-    try writer.write(" => struct {", .{.start = .any});
+
+    var buf: [40]u8 = undefined;
+    const case_prefix = buf[0 .. try arches.formatCase(&buf)];
+    try writer.linef("{s}struct {{", .{case_prefix});
     try writer.line("");
 }
 fn generateArchSuffix(writer: *CodeWriter) void {
@@ -2234,13 +2317,13 @@ fn generateFunction(sdk_file: *SdkFile, writer: *CodeWriter, function_obj: json.
 
     var notnull_set = ParamModifierSet { };
 
+    const func_name_pool = try global_symbol_pool.add(func_name_tmp);
     if (func_kind == .fixed or func_kind == .ptr) {
-        const pool_name = try global_symbol_pool.add(func_name_tmp);
         if (func_kind == .fixed) {
-            try sdk_file.func_exports.put(pool_name, .{});
+            try sdk_file.func_exports.put(func_name_pool, .{});
         }
-        if (sdk_file.not_null_funcs.get(pool_name.slice)) |notnull_node| {
-            try sdk_file.not_null_funcs_applied.put(pool_name, .{});
+        if (sdk_file.not_null_funcs.get(func_name_pool.slice)) |notnull_node| {
+            try sdk_file.not_null_funcs_applied.put(func_name_pool, .{});
             jsonEnforce(notnull_node.Array.items.len > 0);
             notnull_set.ret = @intCast(NullModifier, notnull_node.Array.items[0].Integer);
             for (notnull_node.Array.items[1..]) |item, i| {
@@ -2251,13 +2334,12 @@ fn generateFunction(sdk_file: *SdkFile, writer: *CodeWriter, function_obj: json.
         }
     }
 
-    if (arches.flags != ArchFlags.all.flags) {
-        // is COM supposed to support arch specific methods?
-        std.debug.assert(func_kind != .com);
+    if (func_kind != .ptr and arches.flags != ArchFlags.all.flags) {
+        std.debug.assert(func_kind != .com); // I don't think COM is supposed to support arch specific methods
         try generateArchPrefix(writer, sdk_file.depth, arches, "pub ");
     }
     defer {
-        if (arches.flags != ArchFlags.all.flags) generateArchSuffix(writer);
+        if (func_kind != .ptr and arches.flags != ArchFlags.all.flags) generateArchSuffix(writer);
     }
 
     for (attrs.items) |attr_node| {
@@ -2336,15 +2418,16 @@ fn generateFunction(sdk_file: *SdkFile, writer: *CodeWriter, function_obj: json.
 }
 
 fn generateUnicodeAliases(sdk_file: *SdkFile, writer: *CodeWriter, unicode_aliases: []json.Value) !void {
+    try writer.line    ("const thismodule = @This();");
     try writer.linef   ("pub usingnamespace switch (@import(\"{s}zig.zig\").unicode_mode) {{", .{sdk_file.getWin32DirImportPrefix()});
     try writer.line    ("    .ansi => struct {");
     for (unicode_aliases) |*alias_node_ptr| {
-        try writer.linef("        pub const {s} = {0s}A;", .{alias_node_ptr.String});
+        try writer.linef("        pub const {s} = thismodule.{0s}A;", .{alias_node_ptr.String});
     }
     try writer.line("    },");
     try writer.line("    .wide => struct {");
     for (unicode_aliases) |*alias_node_ptr| {
-        try writer.linef("        pub const {s} = {0s}W;", .{alias_node_ptr.String});
+        try writer.linef("        pub const {s} = thismodule.{0s}W;", .{alias_node_ptr.String});
     }
     try writer.line("    },");
     try writer.line("    .unspecified => if (@import(\"builtin\").is_test) struct {");
@@ -2391,8 +2474,46 @@ const ArchFlags = struct {
         }
         return result;
     }
+
+    pub fn formatCase(self: ArchFlags, buf: []u8) !usize {
+        var fbs = std.io.fixedBufferStream(buf);
+        const arch_writer = fbs.writer();
+        var case_prefix: []const u8 = "";
+        inline for (std.meta.fields(Arch)) |arch_field| {
+            const arch = @field(Arch, arch_field.name);
+            if ((self.flags & getFlag(arch).flags) != 0) {
+                try arch_writer.print("{s}.{s}", .{case_prefix, @tagName(arch)});
+                case_prefix = ", ";
+            }
+        }
+        try arch_writer.writeAll(" => ");
+        return fbs.pos;
+    }
 };
 
+fn ArchSpecificObject(comptime T: type) type {
+    return struct {
+        arches: ArchFlags,
+        obj: T,
+    };
+}
+fn ArchSpecificObjects(comptime T: type) type {
+    return struct {
+        object_array: [@typeInfo(Arch).Enum.fields.len]ArchSpecificObject(T) = undefined,
+        object_count: u8 = 0,
+        pub fn getItems(self: *@This()) []ArchSpecificObject(T) {
+            return self.object_array[0..self.object_count];
+        }
+        pub fn getItemsConst(self: *const @This()) []const ArchSpecificObject(T) {
+            return self.object_array[0..self.object_count];
+        }
+        pub fn add(self: *@This(), obj: ArchSpecificObject(T)) void {
+            std.debug.assert(self.object_count < self.object_array.len);
+            self.object_array[self.object_count] = obj;
+            self.object_count += 1;
+        }
+    };
+}
 
 pub fn jsonObjEnforceKnownFieldsOnly(map: std.json.ObjectMap, known_fields: []const []const u8, file_thing: anytype) !void {
     if (@TypeOf(file_thing) == *SdkFile or @TypeOf(file_thing) == *const SdkFile)
