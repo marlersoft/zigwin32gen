@@ -3,11 +3,18 @@ pub const UNICODE = true;
 
 const WINAPI = @import("std").os.windows.WINAPI;
 
-usingnamespace @import("win32").zig;
-usingnamespace @import("win32").foundation;
-usingnamespace @import("win32").system.system_services;
-usingnamespace @import("win32").ui.windows_and_messaging;
-usingnamespace @import("win32").graphics.gdi;
+const win32 = struct {
+    usingnamespace @import("win32").zig;
+    usingnamespace @import("win32").foundation;
+    usingnamespace @import("win32").system.system_services;
+    usingnamespace @import("win32").ui.windows_and_messaging;
+    usingnamespace @import("win32").graphics.gdi;
+};
+const L = win32.L;
+const HINSTANCE = win32.HINSTANCE;
+const CW_USEDEFAULT = win32.CW_USEDEFAULT;
+const MSG = win32.MSG;
+const HWND = win32.HWND;
 
 pub export fn wWinMain(hInstance: HINSTANCE, _: ?HINSTANCE, pCmdLine: [*:0]u16, nCmdShow: u32) callconv(WINAPI) c_int
 {
@@ -16,8 +23,8 @@ pub export fn wWinMain(hInstance: HINSTANCE, _: ?HINSTANCE, pCmdLine: [*:0]u16, 
     // Register the window class.
     const CLASS_NAME = L("Sample Window Class");
 
-    const wc = WNDCLASS {
-        .style = @intToEnum(WNDCLASS_STYLES, 0),
+    const wc = win32.WNDCLASS {
+        .style = @intToEnum(win32.WNDCLASS_STYLES, 0),
         .lpfnWndProc = WindowProc,
         .cbClsExtra = 0,
         .cbWndExtra = 0,
@@ -30,15 +37,15 @@ pub export fn wWinMain(hInstance: HINSTANCE, _: ?HINSTANCE, pCmdLine: [*:0]u16, 
         .lpszClassName = CLASS_NAME,
     };
 
-    _ = RegisterClass(&wc);
+    _ = win32.RegisterClass(&wc);
 
     // Create the window.
 
-    const hwnd = CreateWindowEx(
-        @intToEnum(WINDOW_EX_STYLE, 0), // Optional window styles.
+    const hwnd = win32.CreateWindowEx(
+        @intToEnum(win32.WINDOW_EX_STYLE, 0), // Optional window styles.
         CLASS_NAME,                     // Window class
         L("Learn to Program Windows"),  // Window text
-        WS_OVERLAPPEDWINDOW,            // Window style
+        win32.WS_OVERLAPPEDWINDOW,      // Window style
 
         // Size and position
         CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
@@ -53,40 +60,40 @@ pub export fn wWinMain(hInstance: HINSTANCE, _: ?HINSTANCE, pCmdLine: [*:0]u16, 
         return 0;
     }
 
-    _ = ShowWindow(hwnd, @intToEnum(SHOW_WINDOW_CMD, nCmdShow));
+    _ = win32.ShowWindow(hwnd, @intToEnum(win32.SHOW_WINDOW_CMD, nCmdShow));
 
     // Run the message loop.
     var msg : MSG = undefined;
-    while (GetMessage(&msg, null, 0, 0) != 0)
+    while (win32.GetMessage(&msg, null, 0, 0) != 0)
     {
-        _ = TranslateMessage(&msg);
-        _ = DispatchMessage(&msg);
+        _ = win32.TranslateMessage(&msg);
+        _ = win32.DispatchMessage(&msg);
     }
 
     return 0;
 }
 
-fn WindowProc(hwnd: HWND , uMsg: u32, wParam: WPARAM, lParam: LPARAM) callconv(WINAPI) LRESULT
+fn WindowProc(hwnd: HWND , uMsg: u32, wParam: win32.WPARAM, lParam: win32.LPARAM) callconv(WINAPI) win32.LRESULT
 {
     switch (uMsg)
     {
-        WM_DESTROY =>
+        win32.WM_DESTROY =>
         {
-            PostQuitMessage(0);
+            win32.PostQuitMessage(0);
             return 0;
         },
-        WM_PAINT =>
+        win32.WM_PAINT =>
         {
-            var ps: PAINTSTRUCT = undefined;
-            const hdc = BeginPaint(hwnd, &ps);
+            var ps: win32.PAINTSTRUCT = undefined;
+            const hdc = win32.BeginPaint(hwnd, &ps);
 
             // All painting occurs here, between BeginPaint and EndPaint.
-            _ = FillRect(hdc, &ps.rcPaint, @intToPtr(HBRUSH, @as(usize, @enumToInt(COLOR_WINDOW)+1)));
-            _ = EndPaint(hwnd, &ps);
+            _ = win32.FillRect(hdc, &ps.rcPaint, @intToPtr(win32.HBRUSH, @as(usize, @enumToInt(win32.COLOR_WINDOW)+1)));
+            _ = win32.EndPaint(hwnd, &ps);
             return 0;
         },
         else => {},
     }
 
-    return DefWindowProc(hwnd, uMsg, wParam, lParam);
+    return win32.DefWindowProc(hwnd, uMsg, wParam, lParam);
 }
