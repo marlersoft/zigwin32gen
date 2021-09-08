@@ -197,6 +197,10 @@ const empty_json_object_map = json.ObjectMap {
     .unmanaged = .{ },
 };
 
+fn StringPoolArrayHashMap(comptime T: type) type {
+    return std.ArrayHashMap(StringPool.Val, T, StringPool.ArrayHashContext, false);
+}
+
 const SdkFile = struct {
     json_basename: []const u8,
     json_name: []const u8,
@@ -205,8 +209,10 @@ const SdkFile = struct {
     const_exports: ArrayList(StringPool.Val),
     uses_guid: bool,
     top_level_api_imports: StringPool.HashMap(ApiImport),
-    type_exports: StringPool.HashMap(Nothing),
-    func_exports: StringPool.HashMap(Nothing),
+    // maintin insertion order so they appear in the same order in everything.zig
+    type_exports: StringPoolArrayHashMap(Nothing),
+    // maintin insertion order so they appear in the same order in everything.zig
+    func_exports: StringPoolArrayHashMap(Nothing),
     // this field is only needed to workaround: https://github.com/ziglang/zig/issues/4476
     tmp_func_ptr_workaround_list: ArrayList(StringPool.Val),
     param_names_to_avoid_map_get_fn: *const fn(s: []const u8) ?Nothing,
@@ -617,8 +623,8 @@ fn readAndGenerateApiFile(root_module: *Module, out_dir: std.fs.Dir, json_basena
         .const_exports = ArrayList(StringPool.Val).init(allocator),
         .uses_guid = false,
         .top_level_api_imports = StringPool.HashMap(ApiImport).init(allocator),
-        .type_exports = StringPool.HashMap(Nothing).init(allocator),
-        .func_exports = StringPool.HashMap(Nothing).init(allocator),
+        .type_exports = StringPoolArrayHashMap(Nothing).init(allocator),
+        .func_exports = StringPoolArrayHashMap(Nothing).init(allocator),
         .tmp_func_ptr_workaround_list = ArrayList(StringPool.Val).init(allocator),
         .param_names_to_avoid_map_get_fn = getParamNamesToAvoidMapGetFn(json_name),
         .not_null_funcs = not_null_funcs,
@@ -635,7 +641,7 @@ pub fn EmptyComptimeStringMap(comptime V: type) type { return struct {
 };}
 
 fn ArchSpecificMap(comptime T: type) type {
-    return std.ArrayHashMap(StringPool.Val, ArchSpecificObjects(T), StringPool.ArrayHashContext, false);
+    return StringPoolArrayHashMap(ArchSpecificObjects(T));
 }
 
 fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.ValueTree) !void {
