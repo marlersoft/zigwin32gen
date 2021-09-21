@@ -559,10 +559,7 @@ fn readAndGenerateApiFile(root_module: *Module, out_dir: std.fs.Dir, json_basena
     var json_tree = blk: {
         var parser = json.Parser.init(allocator, false); // false is copy_strings
         defer parser.deinit();
-
-        const start = if (std.mem.startsWith(u8, content, "\xEF\xBB\xBF")) 3 else @as(usize, 0);
-        const json_content = content[start..];
-        break :blk try parser.parse(json_content);
+        break :blk try parser.parse(content);
     };
     defer json_tree.deinit();
     global_times.parse_time_millis += std.time.milliTimestamp() - read_end_millis;
