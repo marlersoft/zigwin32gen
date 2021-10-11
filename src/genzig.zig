@@ -800,7 +800,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.ValueTree) !
         \\    );
         \\
         \\    // reference all the pub declarations
-        \\    if (!@import("std").builtin.is_test) return;
+        \\    if (!@import("builtin").is_test) return;
         \\    inline for (@import("std").meta.declarations(@This())) |decl| {
         \\        if (decl.is_pub) {
         \\            _ = decl;
@@ -1169,7 +1169,7 @@ const ConstValueFormatter = struct {
         comptime fmt: []const u8,
         options: std.fmt.FormatOptions,
         writer: anytype,
-    ) std.os.WriteError!void {
+    ) !void {
         _ = fmt;
         _ = options;
         if (self.value_type == .String) {

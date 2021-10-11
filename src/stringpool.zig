@@ -15,7 +15,7 @@ pub const StringPool = struct {
             comptime fmt: []const u8,
             options: std.fmt.FormatOptions,
             writer: anytype,
-        ) std.os.WriteError!void {
+        ) !void {
             _ = fmt;
             _ = options;
             return writer.writeAll(self.slice);
