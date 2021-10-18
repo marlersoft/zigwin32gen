@@ -12,23 +12,6 @@ pub fn getcwd(a: *std.mem.Allocator) ![]u8 {
     return path_allocated;
 }
 
-pub fn openWin32JsonDir(repo_root: std.fs.Dir) !std.fs.Dir {
-    const win32json_dir_name = "deps" ++ path_sep ++ "win32json";
-    const win32json_branch = "10.3.16-preview";
-    return repo_root.openDir(win32json_dir_name, .{}) catch |e| switch (e) {
-        error.FileNotFound => {
-            std.debug.warn("Error: repository '{s}' does not exist, clone it with:\n", .{win32json_dir_name});
-            std.debug.warn("    git clone https://github.com/marlersoft/win32json " ++
-                "{s}" ++ path_sep ++ win32json_dir_name ++
-                " -b " ++ win32json_branch ++ "\n", .{
-                try getcwd(std.heap.page_allocator)
-            });
-            return error.AlreadyReported;
-        },
-        else => return e,
-    };
-}
-
 pub fn readApiList(api_dir: std.fs.Dir, api_list: *std.ArrayList([]const u8)) !void {
     var dir_it = api_dir.iterate();
     while (try dir_it.next()) |entry| {

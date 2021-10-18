@@ -276,7 +276,19 @@ fn main2() !u8 {
     global_symbol_none = try global_symbol_pool.add("none");
     global_symbol_None = try global_symbol_pool.add("None");
 
-    var win32json_dir = try common.openWin32JsonDir(std.fs.cwd());
+
+    const all_args = try std.process.argsAlloc(allocator);
+    // don't care about freeing args
+
+    const cmd_args = all_args[1..];
+    if (cmd_args.len != 1) {
+        std.log.err("expected 1 argument (path to the win32json repository) but got {}", .{cmd_args.len});
+        return 1;
+    }
+    const win32json_path = cmd_args[0];
+
+
+    var win32json_dir = try std.fs.cwd().openDir(win32json_path, .{});
     defer win32json_dir.close();
 
     const cwd = std.fs.cwd();

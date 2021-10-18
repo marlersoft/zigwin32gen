@@ -17,8 +17,23 @@ pub fn main() !u8 {
     };
 }
 fn main2() !u8 {
-    var win32json_dir = try common.openWin32JsonDir(std.fs.cwd());
+    const all_args = try std.process.argsAlloc(allocator);
+    // don't care about freeing args
+
+    const cmd_args = all_args[1..];
+    if (cmd_args.len != 1) {
+        std.log.err("expected 1 argument (path to the win32json repository) but got {}", .{cmd_args.len});
+        return 1;
+    }
+    const win32json_path = cmd_args[0];
+
+    var win32json_dir = try std.fs.cwd().openDir(win32json_path, .{});
     defer win32json_dir.close();
+
+    if (try alreadyDone(win32json_dir)) {
+        std.log.info("pass1 is already done", .{});
+        return 0;
+    }
 
     var api_dir = try win32json_dir.openDir("api", .{.iterate = true}) ;
     defer api_dir.close();
@@ -54,6 +69,37 @@ fn main2() !u8 {
 
     try out.writeAll("}\n");
     return 0;
+}
+
+fn alreadyDone(win32json_dir: std.fs.Dir) !bool {
+    const pass1_file = std.fs.cwd().openFile("pass1.json", .{}) catch |err| switch (err) {
+        error.FileNotFound => return false,
+        else => return err,
+    };
+    defer pass1_file.close();
+
+    const dest_stat = try pass1_file.stat();
+
+    var api_dir = try win32json_dir.openDir("api", .{.iterate = true}) ;
+    defer api_dir.close();
+
+    var dir_it = api_dir.iterate();
+    while (try dir_it.next()) |entry| {
+        if (!std.mem.endsWith(u8, entry.name, ".json")) {
+            std.debug.warn("Error: expected all files to end in '.json' but got '{s}'\n", .{entry.name});
+            return error.AlreadyReported;
+        }
+        const file = try api_dir.openFile(entry.name, .{});
+        defer file.close();
+        const stat = try file.stat();
+        if (stat.mtime >= dest_stat.mtime) {
+            std.log.info("file '{s}' is newer than pass1.json", .{entry.name});
+            return false;
+        }
+        //std.log.info("'{s}' time {} is older than {}", .{entry.name, stat.mtime, dest_stat.mtime});
+    }
+
+    return true;
 }
 
 fn pass1OnFile(out: std.fs.File.Writer, filename: []const u8, file: std.fs.File) !void {

@@ -1,6 +1,6 @@
 zig-cache/
 zig-out/
 /out/
-/deps/
+/dep/
 /zigwin32/
 /pass1.json
