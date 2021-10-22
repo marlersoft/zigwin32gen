@@ -89,6 +89,10 @@ pub const StringPool = struct {
     pub fn HashMap(comptime V: type) type {
         return std.HashMap(Val, V, HashContext, std.hash_map.DefaultMaxLoadPercentage);
     }
+
+    pub fn HashMapUnmanaged(comptime V: type) type {
+        return std.HashMapUnmanaged(Val, V, HashContext, std.hash_map.DefaultMaxLoadPercentage);
+    }
 };
 
 test "stringpool"

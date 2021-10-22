@@ -35,4 +35,67 @@ pub fn build(b: *Builder) !void {
 
         b.getInstallStep().dependOn(&run_genzig.step);
     }
+
+    const run_getsymbols = blk: {
+        const getsymbols_exe = b.addExecutable("getsymbols", "src/getsymbols.zig");
+        getsymbols_exe.setBuildMode(mode);
+
+        const run = getsymbols_exe.run();
+        run.step.dependOn(&win32json_repo.step);
+        run.addArg(win32json_repo.getPath(&run.step));
+        b.step("getsymbols", "Get the symbols from win32json").dependOn(&run.step);
+        break :blk run;
+    };
+
+    const cpp_sdk_repo = GitRepoStep.create(b, .{
+        .url = "https://github.com/marlersoft/microsoft_windows_sdk_cpp",
+        .branch = "10.0.220000.196",
+        .sha = "16b53593a29860fea1706e7a862b2145c0f1b6ee",
+    });
+
+    {
+        const arocc_repo = GitRepoStep.create(b, .{
+            .url = "https://github.com/Vexu/arocc",
+            .branch = null,
+            .sha = "361274f0e4b5a4b1f1cab029077ac968914fa255",
+        });
+
+        const exe = b.addExecutable("scrapecpp", "src/scrapecpp.zig");
+        exe.setBuildMode(mode);
+
+        exe.step.dependOn(&arocc_repo.step);
+        const arocc_lib = try std.fs.path.join(b.allocator, &[_][]const u8 {
+            arocc_repo.getPath(&exe.step),
+            "src", "lib.zig",
+        });
+        exe.addPackagePath("arocc", arocc_lib);
+
+        const run = exe.run();
+        const use_getsymbols = if (b.option(bool, "getsymbols", "Get symbols from win32json as seperate step")) |o| o else false;
+        if (use_getsymbols) {
+            run.addArg("loadsymbols");
+            run.step.dependOn(&run_getsymbols.step);
+        } else {
+            run.addArg("parsesymbols");
+            run.step.dependOn(&win32json_repo.step);
+            run.addArg(win32json_repo.getPath(&run_pass1.step));
+        }
+        run.step.dependOn(&cpp_sdk_repo.step);
+        run.addArg(cpp_sdk_repo.getPath(&run.step));
+        b.step("scrape", "Scrape the Windows SDK Cpp headers").dependOn(&run.step);
+    }
+
+    {
+        const genc_exe = b.addExecutable("genc", "src/genc.zig");
+        genc_exe.setBuildMode(mode);
+        const run_genc = genc_exe.run();
+        // NOTE: not sure if this will use pass1 yet
+        //run_genc.step.dependOn(&run_pass1.step);
+        run_genc.step.dependOn(&win32json_repo.step);
+        run_genc.addArg(win32json_repo.getPath(&run_genc.step));
+
+        b.step("genc", "Generate Zig bindings").dependOn(&run_genc.step);
+
+        b.getInstallStep().dependOn(&run_genc.step);
+    }
 }

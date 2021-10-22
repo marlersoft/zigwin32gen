@@ -3,4 +3,5 @@ zig-out/
 /out/
 /dep/
 /zigwin32/
+/cwin32/
 /pass1.json
