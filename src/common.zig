@@ -116,3 +116,18 @@ pub fn fmtJson(value: anytype) JsonFormatter {
     }
     return .{ .value = value };
 }
+
+// TODO: this should be in std, maybe  method on HashMap?
+pub fn allocMapValues(alloc: *std.mem.Allocator, comptime T: type, map: anytype) ![]T {
+    var values = try alloc.alloc(T, map.count());
+    errdefer alloc.free(values);
+    {
+        var i: usize = 0;
+        var it = map.iterator();
+        while (it.next()) |entry| : (i += 1) {
+            values[i] = entry.value_ptr.*;
+        }
+        std.debug.assert(i == map.count());
+    }
+    return values;
+}

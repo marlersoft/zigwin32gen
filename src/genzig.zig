@@ -398,7 +398,7 @@ fn gatherSdkFiles(sdk_files: *ArrayList(*SdkFile), module: *Module) anyerror!voi
     if (module.file) |_| {
         try sdk_files.append(&module.file.?);
     }
-    const children = try allocMapValues(allocator, *Module, module.children);
+    const children = try common.allocMapValues(allocator, *Module, module.children);
     defer allocator.free(children);
     std.sort.sort(*Module, children, {}, moduleLessThan); // sort so the order is predictable
     for (children) |child| {
@@ -486,19 +486,6 @@ fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !vo
     }
 }
 
-fn allocMapValues(alloc: *std.mem.Allocator, comptime T: type, map: anytype) ![]T {
-    var values = try alloc.alloc(T, map.count());
-    errdefer alloc.free(values);
-    {
-        var i: usize = 0;
-        var it = map.iterator(); while (it.next()) |entry| : (i += 1) {
-            values[i] = entry.value_ptr.*;
-        }
-        std.debug.assert(i == map.count());
-    }
-    return values;
-}
-
 fn moduleLessThan(context: void, lhs: *Module, rhs: *Module) bool {
     _ = context;
     return std.ascii.lessThanIgnoreCase(lhs.name.slice, rhs.name.slice);
@@ -521,7 +508,7 @@ fn generateContainerModules(dir: std.fs.Dir, module: *Module) anyerror!void {
     const writer = file.writer();
 
 
-    const children = try allocMapValues(allocator, *Module, module.children);
+    const children = try common.allocMapValues(allocator, *Module, module.children);
     defer allocator.free(children);
 
     std.sort.sort(*Module, children, {}, moduleLessThan);
