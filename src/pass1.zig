@@ -2,6 +2,7 @@ const std = @import("std");
 const json = std.json;
 
 const common = @import("common.zig");
+const fatal = common.fatal;
 const Nothing = common.Nothing;
 const jsonPanicMsg = common.jsonPanicMsg;
 const jsonObjEnforceKnownFieldsOnly = common.jsonObjEnforceKnownFieldsOnly;
@@ -11,12 +12,6 @@ var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const allocator = &arena.allocator;
 
 pub fn main() !u8 {
-    return main2() catch |e| switch (e) {
-        error.AlreadyReported => return 0xff,
-        else => return e,
-    };
-}
-fn main2() !u8 {
     const all_args = try std.process.argsAlloc(allocator);
     // don't care about freeing args
 
@@ -85,10 +80,9 @@ fn alreadyDone(win32json_dir: std.fs.Dir) !bool {
 
     var dir_it = api_dir.iterate();
     while (try dir_it.next()) |entry| {
-        if (!std.mem.endsWith(u8, entry.name, ".json")) {
-            std.debug.warn("Error: expected all files to end in '.json' but got '{s}'\n", .{entry.name});
-            return error.AlreadyReported;
-        }
+        if (!std.mem.endsWith(u8, entry.name, ".json"))
+            fatal("expected all files to end in '.json' but got '{s}'", .{entry.name});
+
         const file = try api_dir.openFile(entry.name, .{});
         defer file.close();
         const stat = try file.stat();

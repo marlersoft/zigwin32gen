@@ -8,6 +8,7 @@ const path_sep = std.fs.path.sep_str;
 const cameltosnake = @import("cameltosnake.zig");
 
 const common = @import("common.zig");
+const fatal = common.fatal;
 const Nothing = common.Nothing;
 const jsonPanic = common.jsonPanic;
 const jsonPanicMsg = common.jsonPanicMsg;
@@ -255,12 +256,6 @@ const Times = struct {
 var global_times = Times {};
 
 pub fn main() !u8 {
-    return main2() catch |e| switch (e) {
-        error.AlreadyReported => return 0xff,
-        else => return e,
-    };
-}
-fn main2() !u8 {
     const main_start_millis = std.time.milliTimestamp();
     var print_time_summary = false;
     defer {
@@ -296,11 +291,11 @@ fn main2() !u8 {
     const zigwin32_dir_name = "zigwin32";
     cwd.access(zigwin32_dir_name, .{}) catch |e| switch (e) {
         error.FileNotFound => {
-            std.debug.warn("Error: repository '{s}' does not exist, clone it with:\n", .{zigwin32_dir_name});
+            std.debug.warn("error: repository '{s}' does not exist, clone it with:\n", .{zigwin32_dir_name});
             std.debug.warn("    git clone https://github.com/marlersoft/zigwin32 {s}" ++ path_sep ++ zigwin32_dir_name ++ "\n", .{
                 try common.getcwd(allocator)
             });
-            return error.AlreadyReported;
+            std.os.exit(0xff);
         },
         else => return e,
     };
@@ -835,7 +830,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.ValueTree) !
         }
         sdk_file.not_null_funcs_applied.deinit();
         if (error_count > 0) {
-            return error.AlreadyReported;
+            std.os.exit(0xff);
         }
     }
 }
@@ -1280,10 +1275,8 @@ fn generateConstant(sdk_file: *SdkFile, writer: *CodeWriter, constant_obj: json.
     const name_pool = try global_symbol_pool.add(name_tmp);
     try sdk_file.const_exports.append(name_pool);
 
-    const value_type = global_value_type_map.get(value_type_str) orelse {
-        std.log.err("unknown ValueType '{s}'", .{value_type_str});
-        return error.AlreadyReported;
-    };
+    const value_type = global_value_type_map.get(value_type_str) orelse
+        fatal("unknown ValueType '{s}'", .{value_type_str});
 
     if (constants_to_skip.get(name_pool.slice)) |_| {
         try writer.linef("// skipped '{}'", .{name_pool});
@@ -1953,10 +1946,8 @@ fn generateEnum(
     const json_values = (try jsonObjGetRequired(type_obj, "Values", sdk_file)).Array;
     const integer_base = switch (try jsonObjGetRequired(type_obj, "IntegerBase", sdk_file)) {
         .Null => "i32",
-        .String => |s| nativeTypeToZigType(global_native_type_map.get(s) orelse {
-            std.log.err("enum '{}' has an unknown IntegerBase '{s}'", .{pool_name, s});
-            return error.AlreadyReported;
-        }),
+        .String => |s| nativeTypeToZigType(global_native_type_map.get(s) orelse
+            fatal("enum '{}' has an unknown IntegerBase '{s}'", .{pool_name, s})),
         else => jsonPanic(),
     };
     const values = try allocator.alloc(EnumValue, json_values.items.len);
@@ -2049,7 +2040,7 @@ fn generateEnum(
             std.debug.print("       add one of the following lines to the suppress_enum_aliases list:\n", .{});
             std.debug.print("    .{{ \"{}\", .{{}} }},\n", .{existing});
             std.debug.print("    .{{ \"{}\", .{{}} }},\n", .{pool_name});
-            return error.AlreadyReported;
+            std.os.exit(0xff);
         }
         if (val.no_alias) {
             continue;
@@ -2663,15 +2654,14 @@ fn cleanDir(dir: std.fs.Dir, sub_path: []const u8) !void {
     const MAX_ATTEMPTS = 30;
     var attempt : u32 = 1;
     while (true) : (attempt += 1) {
-        if (attempt > MAX_ATTEMPTS) {
-            std.debug.warn("Error: failed to delete '{s}' after {} attempts\n", .{sub_path, MAX_ATTEMPTS});
-            return error.AlreadyReported;
-        }
+        if (attempt > MAX_ATTEMPTS)
+            fatal("failed to delete '{s}' after {} attempts", .{sub_path, MAX_ATTEMPTS});
+
         // ERROR: windows.OpenFile is not handling error.Unexpected NTSTATUS=0xc0000056
         dir.makeDir(sub_path) catch |e| switch (e) {
             else => {
                 std.debug.warn("[DEBUG] makedir failed with {}\n", .{e});
-                //return error.AlreadyReported;
+                //std.os.exit(0xff);
                 continue;
             },
         };

@@ -4,6 +4,11 @@ const path_sep = std.fs.path.sep_str;
 
 pub const Nothing = struct {};
 
+pub fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
+    std.log.err(fmt, args);
+    std.os.exit(0xff);
+}
+
 pub fn getcwd(a: *std.mem.Allocator) ![]u8 {
     var path_buf : [std.fs.MAX_PATH_BYTES]u8 = undefined;
     const path = try std.os.getcwd(&path_buf);
