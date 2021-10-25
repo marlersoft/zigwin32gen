@@ -9,6 +9,40 @@ pub fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.os.exit(0xff);
 }
 
+const Time = i128;
+
+pub fn getModifyTime(dir: std.fs.Dir, path: []const u8) !?Time {
+    const pass1_file = dir.openFile(path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return null,
+        else => return err,
+    };
+    defer pass1_file.close();
+    return (try pass1_file.stat()).mtime;
+}
+
+pub fn win32jsonIsNewerThan(win32json_dir: std.fs.Dir, time: Time) !bool {
+    var api_dir = try win32json_dir.openDir("api", .{.iterate = true}) ;
+    defer api_dir.close();
+
+    var dir_it = api_dir.iterate();
+    while (try dir_it.next()) |entry| {
+        if (!std.mem.endsWith(u8, entry.name, ".json"))
+            fatal("expected all files to end in '.json' but got '{s}'", .{entry.name});
+
+        // TODO: should be able to get stat without opening file
+        const file = try api_dir.openFile(entry.name, .{});
+        defer file.close();
+        const stat = try file.stat();
+        if (stat.mtime > time) {
+            std.log.info("file '{s}' is newer than pass1.json", .{entry.name});
+            return true;
+        }
+        //std.log.info("'{s}' time {} is older than {}", .{entry.name, stat.mtime, mtime});
+    }
+
+    return false;
+}
+
 pub fn getcwd(a: *std.mem.Allocator) ![]u8 {
     var path_buf : [std.fs.MAX_PATH_BYTES]u8 = undefined;
     const path = try std.os.getcwd(&path_buf);
