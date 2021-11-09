@@ -2593,7 +2593,7 @@ fn getParamNamesToAvoidMapGetFn(json_name: []const u8) *const fn(s: []const u8) 
     if (std.mem.eql(u8, json_name, "UI.Shell")) return &std.ComptimeStringMap(Nothing, .{
         .{ "Folder", .{} },
     }).get;
-    if (std.mem.eql(u8, json_name, "Graphics.DirectShow")) return &std.ComptimeStringMap(Nothing, .{
+    if (std.mem.eql(u8, json_name, "Media.DirectShow")) return &std.ComptimeStringMap(Nothing, .{
         .{ "Quality", .{} },
         .{ "ScanModulationTypes", .{} },
         .{ "AnalogVideoStandard", .{} },

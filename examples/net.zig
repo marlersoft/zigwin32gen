@@ -2,7 +2,7 @@
 const std = @import("std");
 
 const win32 = struct {
-    usingnamespace @import("win32").system.diagnostics.debug;
+    usingnamespace @import("win32").foundation;
     usingnamespace @import("win32").networking.win_sock;
     usingnamespace @import("win32").network_management.ip_helper;
 };

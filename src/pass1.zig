@@ -53,7 +53,7 @@ pub fn main() !u8 {
     // sort so our data is always in the same order
     std.sort.sort([]const u8, api_list.items, Nothing {}, common.asciiLessThanIgnoreCase);
 
-    const out_file = try std.fs.cwd().createFile("pass1.json", .{});
+    const out_file = try std.fs.cwd().createFile("pass1.json.generating", .{});
     defer out_file.close();
     const out = out_file.writer();
 
@@ -71,6 +71,7 @@ pub fn main() !u8 {
     }
 
     try out.writeAll("}\n");
+    try std.fs.cwd().rename("pass1.json.generating", "pass1.json");
     return 0;
 }
 
@@ -131,6 +132,7 @@ fn pass1OnJson(out: std.fs.File.Writer, filename: []const u8, root_obj: json.Obj
 const native_integral_types = std.ComptimeStringMap(Nothing, .{
     .{ "Byte", .{} },
     .{ "Int32", .{} }, .{ "UInt32", .{} },
+    .{ "UInt64", .{} },
     .{ "IntPtr", .{} }, .{ "UIntPtr", .{} },
 });
 

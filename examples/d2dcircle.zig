@@ -9,10 +9,10 @@ const win32 = struct {
     usingnamespace @import("win32").ui.windows_and_messaging;
     usingnamespace @import("win32").graphics.gdi;
     usingnamespace @import("win32").graphics.direct2d;
+    usingnamespace @import("win32").graphics.direct2d.common;
     usingnamespace @import("win32").graphics.direct3d9;
-    usingnamespace @import("win32").graphics.dxgi;
+    usingnamespace @import("win32").graphics.dxgi.common;
     usingnamespace @import("win32").system.com;
-    usingnamespace @import("win32").ui.display_devices;
 };
 const L = win32.L;
 const FAILED = win32.FAILED;
