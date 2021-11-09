@@ -111,5 +111,7 @@ pub const handle_types = list: {
         .{ "PSID", .{} },
         .{ "AUTHZ_AUDIT_EVENT_HANDLE", .{} },
         .{ "HeapHandle", .{} },
+        .{ "HDPA", .{} },
+        .{ "HDSA", .{} },
     });
 };
