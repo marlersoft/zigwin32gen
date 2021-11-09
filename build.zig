@@ -2,8 +2,10 @@ const std = @import("std");
 const Builder = std.build.Builder;
 const Step = std.build.Step;
 const GitRepoStep = @import("GitRepoStep.zig");
+const patchstep = @import("patchstep.zig");
 
 pub fn build(b: *Builder) !void {
+    patchstep.init(b.allocator);
     const mode = b.standardReleaseOptions();
 
     const win32json_repo = GitRepoStep.create(b, .{
@@ -17,6 +19,7 @@ pub fn build(b: *Builder) !void {
         pass1_exe.setBuildMode(mode);
 
         const run_pass1 = pass1_exe.run();
+        patchstep.patch(&run_pass1.step, runStepMake);
         run_pass1.step.dependOn(&win32json_repo.step);
         run_pass1.addArg(win32json_repo.getPath(&run_pass1.step));
 
@@ -28,6 +31,7 @@ pub fn build(b: *Builder) !void {
         const genzig_exe = b.addExecutable("genzig", "src/genzig.zig");
         genzig_exe.setBuildMode(mode);
         const run_genzig = genzig_exe.run();
+        patchstep.patch(&run_genzig.step, runStepMake);
         run_genzig.step.dependOn(&run_pass1.step);
         run_genzig.addArg(win32json_repo.getPath(&run_genzig.step));
 
@@ -35,4 +39,12 @@ pub fn build(b: *Builder) !void {
 
         b.getInstallStep().dependOn(&run_genzig.step);
     }
+}
+
+fn runStepMake(step: *std.build.Step, original_make_fn: patchstep.MakeFn) anyerror!void {
+    original_make_fn(step) catch |err| switch (err) {
+        // just exit if subprocess failed with error exit code
+        error.UnexpectedExitCode => std.os.exit(0xff),
+        else => |e| return e,
+    };
 }
