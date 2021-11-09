@@ -1,3 +1,4 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const Builder = std.build.Builder;
 const CrossTarget = std.zig.CrossTarget;
@@ -5,7 +6,7 @@ const Mode = std.builtin.Mode;
 
 pub fn build(b: *Builder) !void {
     const target = b.standardTargetOptions(.{});
-    if (std.builtin.os.tag != .windows) {
+    if (builtin.os.tag != .windows) {
         if (target.os_tag == null or target.os_tag.? != .windows) {
             std.log.err("target is not windows", .{});
             std.log.info("try building with one of -Dtarget=native-windows, -Dtarget=i386-windows or -Dtarget=x86_64-windows\n", .{});
