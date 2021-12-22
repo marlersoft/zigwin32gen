@@ -43,7 +43,7 @@ pub fn win32jsonIsNewerThan(win32json_dir: std.fs.Dir, time: Time) !bool {
     return false;
 }
 
-pub fn getcwd(a: *std.mem.Allocator) ![]u8 {
+pub fn getcwd(a: std.mem.Allocator) ![]u8 {
     var path_buf : [std.fs.MAX_PATH_BYTES]u8 = undefined;
     const path = try std.os.getcwd(&path_buf);
     const path_allocated = try a.alloc(u8, path.len);
@@ -55,7 +55,7 @@ pub fn readApiList(api_dir: std.fs.Dir, api_list: *std.ArrayList([]const u8)) !v
     var dir_it = api_dir.iterate();
     while (try dir_it.next()) |entry| {
         if (!std.mem.endsWith(u8, entry.name, ".json")) {
-            std.debug.warn("Error: expected all files to end in '.json' but got '{s}'\n", .{entry.name});
+            std.log.err("expected all files to end in '.json' but got '{s}'\n", .{entry.name});
             return error.AlreadyReported;
         }
         try api_list.append(try api_list.allocator.dupe(u8, entry.name));
@@ -120,7 +120,7 @@ pub fn jsonObjEnforceKnownFieldsOnly(map: std.json.ObjectMap, known_fields: []co
             if (std.mem.eql(u8, known_field, kv.key_ptr.*))
                 continue :fieldLoop;
         }
-        std.debug.warn("{s}: Error: JSON object has unknown field '{s}', expected one of: {}\n", .{file_for_error, kv.key_ptr.*, formatSliceT([]const u8, "s", known_fields)});
+        std.log.err("{s}: JSON object has unknown field '{s}', expected one of: {}\n", .{file_for_error, kv.key_ptr.*, formatSliceT([]const u8, "s", known_fields)});
         jsonPanic();
     }
 }
@@ -152,7 +152,7 @@ pub fn fmtJson(value: anytype) JsonFormatter {
 }
 
 // TODO: this should be in std, maybe  method on HashMap?
-pub fn allocMapValues(alloc: *std.mem.Allocator, comptime T: type, map: anytype) ![]T {
+pub fn allocMapValues(alloc: std.mem.Allocator, comptime T: type, map: anytype) ![]T {
     var values = try alloc.alloc(T, map.count());
     errdefer alloc.free(values);
     {

@@ -14,7 +14,7 @@ const Map = std.AutoHashMap(*Step, Patch);
 // NOTE: does this need to be synchronized?  Will Zig Build every be parallel?
 var global_step_map: ?Map = null;
 
-pub fn init(allocator: *std.mem.Allocator) void {
+pub fn init(allocator: std.mem.Allocator) void {
     std.debug.assert(global_step_map == null);
     global_step_map = Map.init(allocator);
 }

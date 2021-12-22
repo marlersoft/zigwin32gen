@@ -9,7 +9,7 @@ const jsonObjEnforceKnownFieldsOnly = common.jsonObjEnforceKnownFieldsOnly;
 const fmtJson = common.fmtJson;
 
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-const allocator = &arena.allocator;
+const allocator = arena.allocator();
 
 pub fn main() !u8 {
     const all_args = try std.process.argsAlloc(allocator);
@@ -212,7 +212,7 @@ fn generateNativeTypedef(
 fn jsonObjGetRequired(map: json.ObjectMap, field: []const u8, file_for_error: []const u8) !json.Value {
     return map.get(field) orelse {
         // TODO: print file location?
-        std.debug.warn("{s}: json object is missing '{s}' field: {}\n", .{file_for_error, field, fmtJson(map)});
+        std.log.err("{s}: json object is missing '{s}' field: {}\n", .{file_for_error, field, fmtJson(map)});
         common.jsonPanic();
     };
 }

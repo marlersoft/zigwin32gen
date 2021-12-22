@@ -22,9 +22,9 @@ pub const StringPool = struct {
         }
     };
 
-    allocator: *std.mem.Allocator,
+    allocator: std.mem.Allocator,
     map: StringHashMap(Val),
-    pub fn init(allocator: *std.mem.Allocator) @This() {
+    pub fn init(allocator: std.mem.Allocator) @This() {
         return @This() {
             .allocator = allocator,
             .map = StringHashMap(Val).init(allocator),
@@ -87,7 +87,7 @@ pub const StringPool = struct {
     };
 
     pub fn HashMap(comptime V: type) type {
-        return std.HashMap(Val, V, HashContext, std.hash_map.DefaultMaxLoadPercentage);
+        return std.HashMap(Val, V, HashContext, std.hash_map.default_max_load_percentage);
     }
 };
 

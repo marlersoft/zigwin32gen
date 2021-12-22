@@ -78,7 +78,7 @@ pub fn BaseWindow(comptime DERIVED_TYPE: type) type { return struct {
             dwStyle, options.x, options.y,
             options.nWidth, options.nHeight, options.hWndParent, options.hMenu,
             win32.GetModuleHandle(null),
-            @ptrCast(*c_void, self)
+            @ptrCast(*anyopaque, self)
             );
 
         return if (self.m_hwnd != null) win32.TRUE else win32.FALSE;

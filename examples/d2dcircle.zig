@@ -184,10 +184,10 @@ fn MainWindowHandleMessage(self: *MainWindow, uMsg: u32, wParam: WPARAM, lParam:
     switch (uMsg)
     {
     win32.WM_CREATE => {
-        // TODO: Should I need to case &self.pFactory to **c_void? Maybe
+        // TODO: Should I need to case &self.pFactory to **anyopaque? Maybe
         //       D2D2CreateFactory probably doesn't have the correct type yet?
         if (FAILED(win32.D2D1CreateFactory(
-            win32.D2D1_FACTORY_TYPE_SINGLE_THREADED, win32.IID_ID2D1Factory, null, @ptrCast(**c_void, &self.pFactory))))
+            win32.D2D1_FACTORY_TYPE_SINGLE_THREADED, win32.IID_ID2D1Factory, null, @ptrCast(**anyopaque, &self.pFactory))))
         {
             return -1;  // Fail CreateWindowEx.
         }
