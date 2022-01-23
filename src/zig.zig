@@ -36,55 +36,13 @@ pub const arch: Arch = switch (builtin.target.cpu.arch) {
 };
 
 pub const Guid = std.os.windows.GUID;
-// note: implementation copied from std.os.windows.GUID.parse
-// * remoted curly braces asserts
-pub fn guidParseWithoutCurly(str: []const u8) Guid {
-    var guid: Guid = undefined;
-    var index: usize = 0;
-
-    const assert = std.debug.assert;
-
-    guid.Data1 = std.fmt.parseUnsigned(c_ulong, str[index .. index + 8], 16) catch unreachable;
-    index += 8;
-
-    assert(str[index] == '-');
-    index += 1;
-
-    guid.Data2 = std.fmt.parseUnsigned(c_ushort, str[index .. index + 4], 16) catch unreachable;
-    index += 4;
-
-    assert(str[index] == '-');
-    index += 1;
-
-    guid.Data3 = std.fmt.parseUnsigned(c_ushort, str[index .. index + 4], 16) catch unreachable;
-    index += 4;
-
-    assert(str[index] == '-');
-    index += 1;
-
-    guid.Data4[0] = std.fmt.parseUnsigned(u8, str[index .. index + 2], 16) catch unreachable;
-    index += 2;
-    guid.Data4[1] = std.fmt.parseUnsigned(u8, str[index .. index + 2], 16) catch unreachable;
-    index += 2;
-
-    assert(str[index] == '-');
-    index += 1;
-
-    var i: usize = 2;
-    while (i < guid.Data4.len) : (i += 1) {
-        guid.Data4[i] = std.fmt.parseUnsigned(u8, str[index .. index + 2], 16) catch unreachable;
-        index += 2;
-    }
-
-    return guid;
-}
 
 pub const PropertyKey = extern struct {
     fmtid: Guid,
     pid: u32,
     pub fn init(fmtid: []const u8, pid: u32) PropertyKey {
         return .{
-            .fmtid = guidParseWithoutCurly(fmtid),
+            .fmtid = Guid.parse(fmtid),
             .pid = pid,
         };
     }
