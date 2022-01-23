@@ -21,7 +21,7 @@ pub usingnamespace switch (unicode_mode) {
         pub const TCHAR = u16;
         pub const _T = L;
     },
-    .unspecified => if (builtin.is_test) struct { } else struct {
+    .unspecified => if (builtin.is_test) struct {} else struct {
         pub const TCHAR = @compileError("'TCHAR' requires that UNICODE be set to true or false in the root module");
         pub const _T = @compileError("'_T' requires that UNICODE be set to true or false in the root module");
     },
@@ -35,57 +35,48 @@ pub const arch: Arch = switch (builtin.target.cpu.arch) {
     else => @compileError("unable to determine win32 arch"),
 };
 
-// TODO: this should probably be in the standard lib somewhere?
-pub const Guid = extern union {
-    Ints: extern struct {
-        a: u32,
-        b: u16,
-        c: u16,
-        d: [8]u8,
-    },
-    Bytes: [16]u8,
+pub const Guid = std.os.windows.GUID;
+// note: implementation copied from std.os.windows.GUID.parse
+// * remoted curly braces asserts
+pub fn guidParseWithoutCurly(str: []const u8) Guid {
+    var guid: Guid = undefined;
+    var index: usize = 0;
 
-    const big_endian_hex_offsets = [16] u6 {0, 2, 4, 6, 9, 11, 14, 16, 19, 21, 24, 26, 28, 30, 32, 34};
-    const little_endian_hex_offsets = [16] u6 {
-        6, 4, 2, 0,
-        11, 9,
-        16, 14,
-        19, 21, 24, 26, 28, 30, 32, 34};
-    const hex_offsets = switch (builtin.target.cpu.arch.endian()) {
-        .Big => big_endian_hex_offsets,
-        .Little => little_endian_hex_offsets,
-    };
+    const assert = std.debug.assert;
 
-    pub fn initString(s: []const u8) Guid {
-        var guid = Guid { .Bytes = undefined };
-        for (hex_offsets) |hex_offset, i| {
-            //guid.Bytes[i] = decodeHexByte(s[offset..offset+2]);
-            guid.Bytes[i] = decodeHexByte([2]u8 { s[hex_offset], s[hex_offset+1] });
-        }
-        return guid;
+    guid.Data1 = std.fmt.parseUnsigned(c_ulong, str[index .. index + 8], 16) catch unreachable;
+    index += 8;
+
+    assert(str[index] == '-');
+    index += 1;
+
+    guid.Data2 = std.fmt.parseUnsigned(c_ushort, str[index .. index + 4], 16) catch unreachable;
+    index += 4;
+
+    assert(str[index] == '-');
+    index += 1;
+
+    guid.Data3 = std.fmt.parseUnsigned(c_ushort, str[index .. index + 4], 16) catch unreachable;
+    index += 4;
+
+    assert(str[index] == '-');
+    index += 1;
+
+    guid.Data4[0] = std.fmt.parseUnsigned(u8, str[index .. index + 2], 16) catch unreachable;
+    index += 2;
+    guid.Data4[1] = std.fmt.parseUnsigned(u8, str[index .. index + 2], 16) catch unreachable;
+    index += 2;
+
+    assert(str[index] == '-');
+    index += 1;
+
+    var i: usize = 2;
+    while (i < guid.Data4.len) : (i += 1) {
+        guid.Data4[i] = std.fmt.parseUnsigned(u8, str[index .. index + 2], 16) catch unreachable;
+        index += 2;
     }
-};
-comptime { std.debug.assert(@sizeOf(Guid) == 16); }
 
-// TODO: is this in the standard lib somewhere?
-fn hexVal(c: u8) u4 {
-    if (c <= '9') return @intCast(u4, c - '0');
-    if (c >= 'a') return @intCast(u4, c + 10 - 'a');
-    return @intCast(u4, c + 10 - 'A');
-}
-
-// TODO: is this in the standard lib somewhere?
-fn decodeHexByte(hex: [2]u8) u8 {
-    return @intCast(u8, hexVal(hex[0])) << 4 | hexVal(hex[1]);
-}
-
-test "Guid" {
-    try testing.expect(std.mem.eql(u8,
-        switch (builtin.target.cpu.arch.endian()) {
-            .Big    => "\x01\x23\x45\x67\x89\xAB\xEF\x10\x32\x54\x76\x98\xba\xdc\xfe\x91",
-            .Little => "\x67\x45\x23\x01\xAB\x89\x10\xEF\x32\x54\x76\x98\xba\xdc\xfe\x91"
-        },
-        &Guid.initString("01234567-89AB-EF10-3254-7698badcfe91").Bytes));
+    return guid;
 }
 
 pub const PropertyKey = extern struct {
@@ -93,7 +84,7 @@ pub const PropertyKey = extern struct {
     pid: u32,
     pub fn init(fmtid: []const u8, pid: u32) PropertyKey {
         return .{
-            .fmtid = Guid.initString(fmtid),
+            .fmtid = guidParseWithoutCurly(fmtid),
             .pid = pid,
         };
     }
@@ -108,8 +99,8 @@ pub fn SUCCEEDED(hr: @import("foundation.zig").HRESULT) bool {
 
 // These constants were removed from the metadata to allow each projection
 // to define them however they like (see https://github.com/microsoft/win32metadata/issues/530)
-pub const FALSE : @import("foundation.zig").BOOL = 0;
-pub const TRUE : @import("foundation.zig").BOOL = 1;
+pub const FALSE: @import("foundation.zig").BOOL = 0;
+pub const TRUE: @import("foundation.zig").BOOL = 1;
 
 /// Converts comptime values to the given type.
 /// Note that this function is called at compile time rather than converting constant values earlier at code generation time.
@@ -128,7 +119,7 @@ pub fn typedConst2(comptime ReturnType: type, comptime SwitchType: type, comptim
         .Int => |target_type_info| {
             if (value >= std.math.maxInt(SwitchType)) {
                 if (target_type_info.signedness == .signed) {
-                    const UnsignedT = @Type(std.builtin.TypeInfo { .Int = .{ .signedness = .unsigned, .bits = target_type_info.bits }});
+                    const UnsignedT = @Type(std.builtin.TypeInfo{ .Int = .{ .signedness = .unsigned, .bits = target_type_info.bits } });
                     return @bitCast(SwitchType, @as(UnsignedT, value));
                 }
             }
@@ -146,11 +137,11 @@ pub fn typedConst2(comptime ReturnType: type, comptime SwitchType: type, comptim
             },
             else => target_type_error,
         },
-        .Optional => |target_type_info| switch(@typeInfo(target_type_info.child)) {
+        .Optional => |target_type_info| switch (@typeInfo(target_type_info.child)) {
             .Pointer => return typedConst2(ReturnType, target_type_info.child, value),
             else => target_type_error,
         },
-        .Enum => |_| switch(@typeInfo(@TypeOf(value))) {
+        .Enum => |_| switch (@typeInfo(@TypeOf(value))) {
             .Int => return @intToEnum(ReturnType, value),
             else => target_type_error,
         },
@@ -158,8 +149,8 @@ pub fn typedConst2(comptime ReturnType: type, comptime SwitchType: type, comptim
     }
 }
 test "typedConst" {
-    try testing.expectEqual(@bitCast(usize, @as(isize, -1)),  @ptrToInt(typedConst(?*opaque{}, -1)));
-    try testing.expectEqual(@bitCast(usize, @as(isize, -12)),  @ptrToInt(typedConst(?*opaque{}, -12)));
+    try testing.expectEqual(@bitCast(usize, @as(isize, -1)), @ptrToInt(typedConst(?*opaque {}, -1)));
+    try testing.expectEqual(@bitCast(usize, @as(isize, -12)), @ptrToInt(typedConst(?*opaque {}, -12)));
     try testing.expectEqual(@as(u32, 0xffffffff), typedConst(u32, 0xffffffff));
     try testing.expectEqual(@bitCast(i32, @as(u32, 0x80000000)), typedConst(i32, 0x80000000));
 }

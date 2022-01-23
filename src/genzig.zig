@@ -1283,7 +1283,7 @@ fn generateConstant(sdk_file: *SdkFile, writer: *CodeWriter, constant_obj: json.
         const name = (jsonObjGetRequired(type_ref, "Name", sdk_file) catch unreachable).String;
         const native_type = global_native_type_map.get(name) orelse std.debug.panic("unknown Native type '{s}'", .{name});
         if (native_type == .Guid) {
-            try writer.linef("pub const {s} = Guid.initString({});", .{name_pool, fmtConstValue(value_type, value_node, sdk_file)});
+            try writer.linef("pub const {s} = @import(\"{s}zig.zig\").guidParseWithoutCurly({});", .{name_pool, sdk_file.getWin32DirImportPrefix(), fmtConstValue(value_type, value_node, sdk_file)});
         } else {
             try writer.linef("pub const {s} = {};", .{name_pool, fmtConstValue(value_type, value_node, sdk_file)});
         }
