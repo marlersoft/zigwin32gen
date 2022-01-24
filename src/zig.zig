@@ -35,14 +35,12 @@ pub const arch: Arch = switch (builtin.target.cpu.arch) {
     else => @compileError("unable to determine win32 arch"),
 };
 
-pub const Guid = std.os.windows.GUID;
-
 pub const PropertyKey = extern struct {
-    fmtid: Guid,
+    fmtid: std.os.windows.GUID,
     pid: u32,
     pub fn init(fmtid: []const u8, pid: u32) PropertyKey {
         return .{
-            .fmtid = Guid.parse(fmtid),
+            .fmtid = std.os.windows.GUID.parse(fmtid),
             .pid = pid,
         };
     }

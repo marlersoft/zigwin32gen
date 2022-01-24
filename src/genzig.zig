@@ -715,7 +715,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.ValueTree) !
     try writer.linef("// Section: Imports ({})", .{import_total});
     try writer.line("//--------------------------------------------------------------------------------");
     if (sdk_file.uses_guid) {
-        try writer.linef("const Guid = @import(\"{s}zig.zig\").Guid;", .{sdk_file.getWin32DirImportPrefix()});
+        try writer.linef("const Guid = @import(\"std\").os.windows.GUID;", .{});
     }
     {
         var arch_specific_imports = ArchSpecificMap(StringPool.Val).init(allocator);
@@ -1283,7 +1283,8 @@ fn generateConstant(sdk_file: *SdkFile, writer: *CodeWriter, constant_obj: json.
         const name = (jsonObjGetRequired(type_ref, "Name", sdk_file) catch unreachable).String;
         const native_type = global_native_type_map.get(name) orelse std.debug.panic("unknown Native type '{s}'", .{name});
         if (native_type == .Guid) {
-            try writer.linef("pub const {s} = Guid.parse({});", .{name_pool, fmtConstValue(value_type, value_node, sdk_file)});
+            jsonEnforce(value_type == .String);
+            try writer.linef("pub const {s} = Guid.parse(\"{{{s}}}\");", .{name_pool, value_node.String});
         } else {
             try writer.linef("pub const {s} = {};", .{name_pool, fmtConstValue(value_type, value_node, sdk_file)});
         }
@@ -1299,7 +1300,7 @@ fn generateConstant(sdk_file: *SdkFile, writer: *CodeWriter, constant_obj: json.
             try writer.writef("pub const {s} = ", .{name_pool}, .{.nl=false});
             try generateTypeRef(sdk_file, writer, zig_type_formatter);
             sdk_file.uses_guid = true;
-            try writer.writef(" {{ .fmtid = Guid.initString(\"{s}\"), .pid = {} }};", .{
+            try writer.writef(" {{ .fmtid = Guid.parse(\"{{{s}}}\"), .pid = {} }};", .{
                 fmtid,
                 pid
             }, .{.start=.mid});
@@ -1417,7 +1418,7 @@ fn generateType(
         const guid = (try jsonObjGetRequired(type_obj, "Guid", sdk_file)).String;
         const clsid_pool = try global_symbol_pool.addFormatted("CLSID_{s}", .{tmp_name});
         sdk_file.uses_guid = true;
-        try writer.linef("const {s}_Value = Guid.initString(\"{s}\");", .{clsid_pool, guid});
+        try writer.linef("const {s}_Value = Guid.parse(\"{{{s}}}\");", .{clsid_pool, guid});
         try writer.linef("pub const {s} = &{0s}_Value;", .{clsid_pool});
         try sdk_file.const_exports.append(clsid_pool);
         return;
@@ -2070,7 +2071,7 @@ fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap
     const iid_pool = try global_symbol_pool.addFormatted("IID_{s}", .{com_pool_name.slice});
     if (com_optional_guid) |guid| {
         sdk_file.uses_guid = true;
-        try writer.linef("const {s}_Value = Guid.initString(\"{s}\");", .{ iid_pool, guid});
+        try writer.linef("const {s}_Value = Guid.parse(\"{{{s}}}\");", .{ iid_pool, guid});
         try writer.linef("pub const {s} = &{0s}_Value;", .{iid_pool});
         try sdk_file.const_exports.append(iid_pool);
     }
