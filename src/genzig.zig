@@ -1298,8 +1298,8 @@ fn generateConstant(sdk_file: *SdkFile, writer: *CodeWriter, constant_obj: json.
             const pid = (try jsonObjGetRequired(value_obj, "Pid", sdk_file)).Integer;
             try writer.writef("pub const {s} = ", .{name_pool}, .{.nl=false});
             try generateTypeRef(sdk_file, writer, zig_type_formatter);
-            try writer.writef(" {{ .fmtid = @import(\"{s}zig.zig\").Guid.initString(\"{s}\"), .pid = {} }};", .{
-                sdk_file.getWin32DirImportPrefix(),
+            sdk_file.uses_guid = true;
+            try writer.writef(" {{ .fmtid = Guid.initString(\"{s}\"), .pid = {} }};", .{
                 fmtid,
                 pid
             }, .{.start=.mid});
@@ -1416,7 +1416,8 @@ fn generateType(
         try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Platform", "Architectures", "Kind", "Guid"}, sdk_file);
         const guid = (try jsonObjGetRequired(type_obj, "Guid", sdk_file)).String;
         const clsid_pool = try global_symbol_pool.addFormatted("CLSID_{s}", .{tmp_name});
-        try writer.linef("const {s}_Value = @import(\"{s}zig.zig\").Guid.initString(\"{s}\");", .{clsid_pool, sdk_file.getWin32DirImportPrefix(), guid});
+        sdk_file.uses_guid = true;
+        try writer.linef("const {s}_Value = Guid.initString(\"{s}\");", .{clsid_pool, guid});
         try writer.linef("pub const {s} = &{0s}_Value;", .{clsid_pool});
         try sdk_file.const_exports.append(clsid_pool);
         return;
@@ -2068,8 +2069,8 @@ fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap
 
     const iid_pool = try global_symbol_pool.addFormatted("IID_{s}", .{com_pool_name.slice});
     if (com_optional_guid) |guid| {
-        try writer.linef("const {s}_Value = @import(\"{s}zig.zig\").Guid.initString(\"{s}\");",
-            .{ iid_pool, sdk_file.getWin32DirImportPrefix(), guid});
+        sdk_file.uses_guid = true;
+        try writer.linef("const {s}_Value = Guid.initString(\"{s}\");", .{ iid_pool, guid});
         try writer.linef("pub const {s} = &{0s}_Value;", .{iid_pool});
         try sdk_file.const_exports.append(iid_pool);
     }
