@@ -502,7 +502,7 @@ fn generateContainerModules(dir: std.fs.Dir, module: *Module) anyerror!void {
 
     var file = blk: {
         if (module.file) |_| {
-            const file = try dir.openFile(module.zig_basename, .{ .read = false, .write = true });
+            const file = try dir.openFile(module.zig_basename, .{ .mode = .write_only });
             try file.seekFromEnd(0);
             break :blk file;
         }

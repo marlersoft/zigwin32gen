@@ -80,8 +80,9 @@ pub const StringPool = struct {
             _ = self;
             return @truncate(u32, std.hash.Wyhash.hash(0, @ptrCast([*]const u8, &s.slice.ptr)[0..@sizeOf(usize)]));
         }
-        pub fn eql(self: @This(), a: Val, b: Val) bool {
+        pub fn eql(self: @This(), a: Val, b: Val, index: usize) bool {
             _ = self;
+            _ = index;
             return a.slice.ptr == b.slice.ptr;
         }
     };
