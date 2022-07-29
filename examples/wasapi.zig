@@ -31,7 +31,7 @@ pub fn getDefaultDevice() !void {
     }
     defer _ = enumerator.?.IUnknown_Release();
 
-    log("pre enumerator: {s}", .{enumerator.?});
+    log("pre enumerator: {}", .{enumerator.?});
 
     var device: ?*win32.IMMDevice = undefined;
     {
@@ -73,7 +73,7 @@ pub fn getDefaultDevice() !void {
                 return error.Fail;
             }
         }
-        log("Looping propeties with: {s}", .{propKey});
+        log("Looping propeties with: {}", .{propKey});
 
         var propValue: win32.PROPVARIANT = undefined;
         // The following line fails with a stack trace (pasted below)
