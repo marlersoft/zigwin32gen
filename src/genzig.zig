@@ -2363,7 +2363,11 @@ fn generateFunction(sdk_file: *SdkFile, writer: *CodeWriter, function_obj: json.
     switch (func_kind) {
         .fixed => {
             jsonEnforce(suffix == null);
-            try writer.linef("{s}pub extern \"{s}\" fn {s}(", .{prefix, dll_import, std.zig.fmtId(func_name_tmp)});
+            // we modify the dll_import to be lowercase because zig generates
+            // the .lib files using lowercase since that's what mingw uses.
+            // note the casing only matters on case-sensitive filesystems
+            try writer.linef("{s}pub extern \"{s}\" fn {s}(", .{
+                prefix, fmtLower(dll_import, 100), std.zig.fmtId(func_name_tmp)});
         },
         .ptr => |ptr_data| {
             jsonEnforce(suffix == null);
@@ -2639,6 +2643,30 @@ pub const FmtParamId = struct {
 };
 pub fn fmtParamId(s: []const u8, avoid_lookup: *const fn(s: []const u8) ?Nothing) FmtParamId {
     return FmtParamId { .s = s, .avoid_lookup = avoid_lookup };
+}
+
+pub fn FmtLower(comptime buffer_size: comptime_int) type { return struct {
+    s: []const u8,
+    pub fn format(
+        self: @This(),
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = fmt;
+        _ = options;
+        var buffered = std.io.BufferedWriter(buffer_size, @TypeOf(writer)) {
+            .unbuffered_writer = writer
+        };
+        for (self.s) |c| {
+            const lower = [_]u8 { std.ascii.toLower(c) };
+            try buffered.writer().writeAll(&lower);
+        }
+        try buffered.flush();
+    }
+};}
+pub fn fmtLower(s: []const u8, comptime buffer_size: comptime_int) FmtLower(buffer_size) {
+    return .{ .s = s };
 }
 
 fn cleanDir(dir: std.fs.Dir, sub_path: []const u8) !void {
