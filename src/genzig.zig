@@ -16,6 +16,8 @@ const jsonEnforce = common.jsonEnforce;
 const jsonEnforceMsg = common.jsonEnforceMsg;
 const fmtJson = common.fmtJson;
 
+const BufferedWriter = std.io.BufferedWriter(std.mem.page_size, std.fs.File.Writer);
+
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const allocator = arena.allocator();
 
@@ -413,7 +415,9 @@ fn gatherSdkFiles(sdk_files: *ArrayList(*SdkFile), module: *Module) anyerror!voi
 fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !void {
     var everything_file = try out_win32_dir.createFile("everything.zig", .{});
     defer everything_file.close();
-    const writer = everything_file.writer();
+    var buffered_writer = BufferedWriter{ .unbuffered_writer = everything_file.writer() };
+    defer buffered_writer.flush() catch @panic("flush failed");
+    const writer = buffered_writer.writer();
     try writer.writeAll(removeCr(autogen_header ++
         \\//! This module contains aliases to ALL symbols inside the Win32 SDK.  It allows
         \\//! an application to access any and all symbols through a single import.
@@ -509,7 +513,9 @@ fn generateContainerModules(dir: std.fs.Dir, module: *Module) anyerror!void {
         break :blk try dir.createFile(module.zig_basename, .{});
     };
     defer file.close();
-    const writer = file.writer();
+    var buffered_writer = BufferedWriter{ .unbuffered_writer = file.writer() };
+    defer buffered_writer.flush() catch @panic("flush failed");
+    const writer = buffered_writer.writer();
 
 
     const children = try common.allocMapValues(allocator, *Module, module.children);
@@ -644,7 +650,9 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.ValueTree) !
 
     var out_file = try module_dir.createFile(module.zig_basename, .{});
     defer out_file.close();
-    var code_writer = CodeWriter { .writer = out_file.writer(), .depth = 0, .midline = false };
+    var buffered_writer = BufferedWriter{ .unbuffered_writer = out_file.writer() };
+    defer buffered_writer.flush() catch @panic("flush failed");
+    var code_writer = CodeWriter { .writer = buffered_writer.writer(), .depth = 0, .midline = false };
     const writer = &code_writer;
 
     try writer.writeBlock(autogen_header);
@@ -1328,7 +1336,7 @@ const also_usable_type_api_map = std.ComptimeStringMap([]const u8, .{
 const Depth = u3;
 
 const CodeWriter = struct {
-    writer: std.fs.File.Writer,
+    writer: BufferedWriter.Writer,
     depth: u4,
     midline: bool,
 

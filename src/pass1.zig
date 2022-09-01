@@ -11,6 +11,9 @@ const fmtJson = common.fmtJson;
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const allocator = arena.allocator();
 
+const BufferedWriter = std.io.BufferedWriter(std.mem.page_size, std.fs.File.Writer);
+const OutWriter = BufferedWriter.Writer;
+
 pub fn main() !u8 {
     const all_args = try std.process.argsAlloc(allocator);
     // don't care about freeing args
@@ -55,7 +58,10 @@ pub fn main() !u8 {
 
     const out_file = try std.fs.cwd().createFile("pass1.json.generating", .{});
     defer out_file.close();
-    const out = out_file.writer();
+    var buffered_writer =  BufferedWriter{
+        .unbuffered_writer = out_file.writer(),
+    };
+    const out = buffered_writer.writer();
 
     try out.writeAll("{\n");
     var json_obj_prefix: []const u8 = "";
@@ -71,11 +77,12 @@ pub fn main() !u8 {
     }
 
     try out.writeAll("}\n");
+    try buffered_writer.flush();
     try std.fs.cwd().rename("pass1.json.generating", "pass1.json");
     return 0;
 }
 
-fn pass1OnFile(out: std.fs.File.Writer, filename: []const u8, file: std.fs.File) !void {
+fn pass1OnFile(out: OutWriter, filename: []const u8, file: std.fs.File) !void {
     const content = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
     defer allocator.free(content);
     const parse_start = std.time.milliTimestamp();
@@ -92,11 +99,11 @@ fn pass1OnFile(out: std.fs.File.Writer, filename: []const u8, file: std.fs.File)
     try pass1OnJson(out, filename, json_tree.root.Object);
 }
 
-fn writeType(out: std.fs.File.Writer, json_obj_prefix: []const u8, name: []const u8, kind: []const u8) !void {
+fn writeType(out: OutWriter, json_obj_prefix: []const u8, name: []const u8, kind: []const u8) !void {
     try out.print("        {s}\"{s}\": {{\"Kind\":\"{s}\"}}\n", .{json_obj_prefix, name, kind});
 }
 
-fn pass1OnJson(out: std.fs.File.Writer, filename: []const u8, root_obj: json.ObjectMap) !void {
+fn pass1OnJson(out: OutWriter, filename: []const u8, root_obj: json.ObjectMap) !void {
     const types_array = (try jsonObjGetRequired(root_obj, "Types", filename)).Array;
 
     var json_obj_prefix: []const u8 = "";
@@ -137,7 +144,7 @@ const native_integral_types = std.ComptimeStringMap(Nothing, .{
 });
 
 fn generateNativeTypedef(
-    out: std.fs.File.Writer,
+    out: OutWriter,
     filename: []const u8,
     json_obj_prefix: []const u8,
     type_obj: std.json.ObjectMap,
