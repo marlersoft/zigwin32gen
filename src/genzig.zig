@@ -1,3 +1,4 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const ArrayList = std.ArrayList;
 const StringHashMap = std.StringHashMap;
@@ -208,6 +209,11 @@ fn StringPoolArrayHashMap(comptime T: type) type {
     return std.ArrayHashMap(StringPool.Val, T, StringPool.ArrayHashContext, false);
 }
 
+const AvoidLookupFn = switch (builtin.zig_backend) {
+    .stage1 => fn(s: []const u8) ?Nothing,
+    else => *const fn(s: []const u8) ?Nothing,
+};
+
 const SdkFile = struct {
     json_basename: []const u8,
     json_name: []const u8,
@@ -222,7 +228,7 @@ const SdkFile = struct {
     func_exports: StringPoolArrayHashMap(Nothing),
     // this field is only needed to workaround: https://github.com/ziglang/zig/issues/4476
     tmp_func_ptr_workaround_list: ArrayList(StringPool.Val),
-    param_names_to_avoid_map_get_fn: *const fn(s: []const u8) ?Nothing,
+    param_names_to_avoid_map_get_fn: AvoidLookupFn,
     not_null_funcs: json.ObjectMap,
     not_null_funcs_applied: StringPool.HashMap(Nothing),
 
@@ -653,7 +659,8 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.ValueTree) !
     var buffered_writer = BufferedWriter{ .unbuffered_writer = out_file.writer() };
     defer buffered_writer.flush() catch @panic("flush failed");
     var code_writer = CodeWriter { .writer = buffered_writer.writer(), .depth = 0, .midline = false };
-    const writer = &code_writer;
+    // need to specify type explicitly because of https://github.com/ziglang/zig/issues/12795
+    const writer: *CodeWriter = &code_writer;
 
     try writer.writeBlock(autogen_header);
     // We can't import the everything module because it will re-introduce the same symbols we are exporting
@@ -2581,8 +2588,8 @@ pub fn isBuiltinId(s: []const u8) bool {
 }
 
 // NOTE: this data could be generated automatically by doing a first pass
-fn getParamNamesToAvoidMapGetFn(json_name: []const u8) *const fn(s: []const u8) ?Nothing {
-    if (std.mem.eql(u8, json_name, "System.Mmc")) return &std.ComptimeStringMap(Nothing, .{
+fn getParamNamesToAvoidMapGetFn(json_name: []const u8) AvoidLookupFn {
+    if (std.mem.eql(u8, json_name, "System.Mmc")) return std.ComptimeStringMap(Nothing, .{
         .{ "Node", .{} },
         .{ "Nodes", .{} },
         .{ "Frame", .{} },
@@ -2602,36 +2609,36 @@ fn getParamNamesToAvoidMapGetFn(json_name: []const u8) *const fn(s: []const u8) 
         .{ "ContextMenu", .{} },
         .{ "Guid", .{} },
     }).get;
-    if (std.mem.eql(u8, json_name, "UI.TabletPC")) return &std.ComptimeStringMap(Nothing, .{
+    if (std.mem.eql(u8, json_name, "UI.TabletPC")) return std.ComptimeStringMap(Nothing, .{
         .{ "EventMask", .{} },
         .{ "InkDisplayMode", .{} },
         .{ "Guid", .{} },
     }).get;
-    if (std.mem.eql(u8, json_name, "UI.Shell")) return &std.ComptimeStringMap(Nothing, .{
+    if (std.mem.eql(u8, json_name, "UI.Shell")) return std.ComptimeStringMap(Nothing, .{
         .{ "Folder", .{} },
     }).get;
-    if (std.mem.eql(u8, json_name, "Media.DirectShow")) return &std.ComptimeStringMap(Nothing, .{
+    if (std.mem.eql(u8, json_name, "Media.DirectShow")) return std.ComptimeStringMap(Nothing, .{
         .{ "Quality", .{} },
         .{ "ScanModulationTypes", .{} },
         .{ "AnalogVideoStandard", .{} },
         .{ "Guid", .{} },
     }).get;
-    if (std.mem.eql(u8, json_name, "Media.Speech")) return &std.ComptimeStringMap(Nothing, .{
+    if (std.mem.eql(u8, json_name, "Media.Speech")) return std.ComptimeStringMap(Nothing, .{
         .{ "Guid", .{} },
     }).get;
-    if (std.mem.eql(u8, json_name, "Media.MediaFoundation")) return &std.ComptimeStringMap(Nothing, .{
+    if (std.mem.eql(u8, json_name, "Media.MediaFoundation")) return std.ComptimeStringMap(Nothing, .{
         .{ "Guid", .{} },
     }).get;
-    if (std.mem.eql(u8, json_name, "System.Diagnostics.Debug")) return &std.ComptimeStringMap(Nothing, .{
+    if (std.mem.eql(u8, json_name, "System.Diagnostics.Debug")) return std.ComptimeStringMap(Nothing, .{
         .{ "Guid", .{} },
         .{ "Symbol", .{} },
     }).get;
-    return &EmptyComptimeStringMap(Nothing).get;
+    return EmptyComptimeStringMap(Nothing).get;
 }
 
 pub const FmtParamId = struct {
     s: []const u8,
-    avoid_lookup: *const fn(s: []const u8) ?Nothing,
+    avoid_lookup: AvoidLookupFn,
     pub fn format(
         self: @This(),
         comptime fmt: []const u8,
@@ -2640,7 +2647,7 @@ pub const FmtParamId = struct {
     ) !void {
         _ = fmt;
         _ = options;
-        if (self.avoid_lookup.*(self.s)) |_| {
+        if (self.avoid_lookup(self.s)) |_| {
             try writer.print("_param_{s}", .{self.s});
         } else if (isBuiltinId(self.s)) {
             try writer.print("{s}_", .{self.s});
@@ -2649,7 +2656,7 @@ pub const FmtParamId = struct {
         }
     }
 };
-pub fn fmtParamId(s: []const u8, avoid_lookup: *const fn(s: []const u8) ?Nothing) FmtParamId {
+pub fn fmtParamId(s: []const u8, avoid_lookup: AvoidLookupFn) FmtParamId {
     return FmtParamId { .s = s, .avoid_lookup = avoid_lookup };
 }
 
