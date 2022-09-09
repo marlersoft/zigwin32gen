@@ -1,9 +1,17 @@
+const builtin = @import("builtin");
 const std = @import("std");
 const build = std.build;
 const Step = build.Step;
 
-pub const MakeFn = fn (self: *Step) anyerror!void;
-const PatchFn = fn make(step: *Step, original_make_fn: MakeFn) anyerror!void;
+pub const MakeFn = switch (builtin.zig_backend) {
+    .stage1 => fn(self: *Step) anyerror!void,
+    else => *const fn(self: *Step) anyerror!void,
+};
+const PatchFn = switch (builtin.zig_backend) {
+    .stage1 => fn(step: *Step, original_make_fn: MakeFn) anyerror!void,
+    else => *const fn(step: *Step, original_make_fn: MakeFn) anyerror!void,
+};
+
 const Patch = struct {
     original_make_fn: MakeFn,
     patch_make_fn: PatchFn,
