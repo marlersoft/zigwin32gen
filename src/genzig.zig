@@ -716,7 +716,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.ValueTree) !
     try writer.linef("// Section: Functions ({})", .{functions_array.items.len});
     try writer.line("//--------------------------------------------------------------------------------");
     for (functions_array.items) |*function_node_ptr| {
-        try generateFunction(sdk_file, writer, function_node_ptr.Object, .fixed, null, null);
+        try generateFunction(sdk_file, writer, function_node_ptr.Object, .fixed);
         try writer.line("");
     }
     std.debug.assert(functions_array.items.len >= sdk_file.func_exports.count());
@@ -1570,10 +1570,13 @@ fn generateTypeDefinition(
     } else if (std.mem.eql(u8, kind, "FunctionPointer")) {
         if (func_ptr_dependency_loop_problems.get(pool_name.slice)) |_| {
             try writer.line("// TODO: this function pointer causes dependency loop problems, so it's stubbed out");
-            try writer.linef("{s}fn() callconv(@import(\"std\").os.windows.WINAPI) void{s}", .{def_prefix, def_suffix});
+            try writer.linef("{s}switch (@import(\"builtin\").zig_backend) {{ " ++
+                                 ".stage1 => fn() callconv(@import(\"std\").os.windows.WINAPI) void" ++
+                                 ", else => *const fn() callconv(@import(\"std\").os.windows.WINAPI) void" ++
+                                 "}}{s}", .{def_prefix, def_suffix});
             return;
         }
-        try generateFunction(sdk_file, writer, type_obj, .{ .ptr = .{ .def_prefix = def_prefix, .def_suffix = def_suffix } }, null, null);
+        try generateFunction(sdk_file, writer, type_obj, .{ .ptr = .{ .both = .{ .def_prefix = def_prefix, .def_suffix = def_suffix } } });
         try sdk_file.tmp_func_ptr_workaround_list.append(pool_name);
     } else if (std.mem.eql(u8, kind, "Com")) {
         try generateCom(sdk_file, writer, type_obj, arches, pool_name, def_prefix);
@@ -2112,7 +2115,12 @@ fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap
             const method_name = (try jsonObjGetRequired(method_node_ptr.Object, "Name", sdk_file)).String;
             const count = method_conflicts.get(method_name) orelse 0;
             try method_conflicts.put(method_name, count + 1);
-            try generateFunction(sdk_file, writer, method_node_ptr.Object, .com, if (count == 0) null else count, com_pool_name.slice);
+            writer.depth += 2;
+            try generateFunction(sdk_file, writer, method_node_ptr.Object, .{ .com = .{ .both = .{
+                .symbol_suffix = if (count == 0) null else count,
+                .self_type = com_pool_name.slice,
+            }}});
+            writer.depth -= 2;
         }
     }
 
@@ -2280,12 +2288,23 @@ const noreturn_funcs = std.ComptimeStringMap(Nothing, .{
 
 const ArchCaseContext = enum { outside_arch_case, inside_arch_case };
 const FuncPtrKind = union(enum) {
-    ptr: struct {
-        def_prefix: []const u8,
-        def_suffix: []const u8
-    },
     fixed: void,
-    com: void,
+    ptr: union(enum) {
+        stage1,
+        not_stage1,
+        both: struct {
+            def_prefix: []const u8,
+            def_suffix: []const u8
+        },
+    },
+    com: union(enum) {
+        stage1: struct { self_type: []const u8 },
+        not_stage1: struct { self_type: []const u8 },
+        both: struct {
+            symbol_suffix: ?u8,
+            self_type: []const u8,
+        },
+    },
 };
 
 fn generateArchPrefix(writer: *CodeWriter, module_depth: u2, arches: ArchFlags, prefix: []const u8) !void {
@@ -2308,8 +2327,12 @@ const ParamModifierSet = struct {
     params: [max_params]NullModifier = [_]NullModifier { 0 } ** max_params,
 };
 
-fn generateFunction(sdk_file: *SdkFile, writer: *CodeWriter, function_obj: json.ObjectMap, func_kind: FuncPtrKind, suffix: ?u8, optional_self_type: ?[]const u8) !void {
-    const prefix = if (func_kind == .com) "        " else "";
+fn generateFunction(
+    sdk_file: *SdkFile,
+    writer: *CodeWriter,
+    function_obj: json.ObjectMap,
+    func_kind: FuncPtrKind,
+) !void {
     switch (func_kind) {
         .fixed => try jsonObjEnforceKnownFieldsOnly(function_obj, &[_][]const u8 {"Name", "Platform", "Architectures",
             "SetLastError", "DllImport", "ReturnType", "ReturnAttrs", "Attrs", "Params"}, sdk_file),
@@ -2359,7 +2382,7 @@ fn generateFunction(sdk_file: *SdkFile, writer: *CodeWriter, function_obj: json.
         switch (attr_node) {
             .String => |attr| {
                 if (std.mem.eql(u8, attr, "SpecialName")) {
-                    try writer.linef("{s}// TODO: this function has a \"SpecialName\", should Zig do anything with this?", .{prefix});
+                    try writer.line("// TODO: this function has a \"SpecialName\", should Zig do anything with this?");
                 } else jsonPanic();
             },
             else => jsonPanic(),
@@ -2370,54 +2393,68 @@ fn generateFunction(sdk_file: *SdkFile, writer: *CodeWriter, function_obj: json.
         try generatePlatformComment(writer, platform_node);
     }
     if (funcs_with_issues.get(func_name_tmp)) |_| {
-        try writer.linef("{s}// This function from dll '{s}' is being skipped because it has some sort of issue", .{prefix, dll_import});
-        try writer.linef("{s}pub fn {s}() void {{ @panic(\"this function is not working\"); }}", .{prefix, func_name_tmp});
+        try writer.linef("// This function from dll '{s}' is being skipped because it has some sort of issue", .{dll_import});
+        try writer.linef("pub fn {s}() void {{ @panic(\"this function is not working\"); }}", .{func_name_tmp});
         return;
     }
 
     switch (func_kind) {
         .fixed => {
-            jsonEnforce(suffix == null);
             // we modify the dll_import to be lowercase because zig generates
             // the .lib files using lowercase since that's what mingw uses.
             // note the casing only matters on case-sensitive filesystems
-            try writer.linef("{s}pub extern \"{s}\" fn {s}(", .{
-                prefix, fmtLower(dll_import, 100), std.zig.fmtId(func_name_tmp)});
+            try writer.linef("pub extern \"{s}\" fn {s}(", .{
+                fmtLower(dll_import, 100), std.zig.fmtId(func_name_tmp)});
         },
-        .ptr => |ptr_data| {
-            jsonEnforce(suffix == null);
-            try writer.linef("{s}{s}fn(", .{prefix, ptr_data.def_prefix});
+        .ptr => |ptr_data_union| switch (ptr_data_union) {
+            .stage1 => try writer.line(".stage1 => fn("),
+            .not_stage1 => try writer.line("else => *const fn("),
+            .both => |ptr_data| {
+                try writer.linef("{s}switch (@import(\"builtin\").zig_backend) {{", .{ptr_data.def_prefix});
+                writer.depth += 1;
+                try generateFunction(sdk_file, writer, function_obj, .{ .ptr = .stage1 });
+                try generateFunction(sdk_file, writer, function_obj, .{ .ptr = .not_stage1 });
+                writer.depth -= 1;
+                try writer.linef("}} {s}", .{ptr_data.def_suffix});
+                return;
+            },
         },
-        .com => {
-            if (suffix) |s| {
-                try writer.writef("{s}{s}{}", .{prefix, func_name_tmp, s}, .{.nl=false});
-            } else {
-                try writer.writef("{s}{s}", .{prefix, std.zig.fmtId(func_name_tmp)}, .{.nl=false});
-            }
-            try writer.write(": fn(", .{.start=.mid});
+        .com => |com_data_union| {
+            const self_type = blk: {
+                switch (com_data_union) {
+                    .stage1 => |com_data| {
+                        try writer.line(".stage1 => fn(");
+                        break :blk com_data.self_type;
+                    },
+                    .not_stage1 => |com_data| {
+                        try writer.line("else => *const fn(");
+                        break :blk com_data.self_type;
+                    },
+                    .both => |com_data| {
+                        if (com_data.symbol_suffix) |s| {
+                            try writer.writef("{s}{}", .{func_name_tmp, s}, .{.nl=false});
+                        } else {
+                            try writer.writef("{s}", .{std.zig.fmtId(func_name_tmp)}, .{.nl=false});
+                        }
+                        try writer.write(": switch (@import(\"builtin\").zig_backend) {", .{.start=.mid});
+                        writer.depth += 1;
+                        try generateFunction(sdk_file, writer, function_obj, .{ .com = .{
+                            .stage1 = .{ .self_type = com_data.self_type } } });
+                        try generateFunction(sdk_file, writer, function_obj, .{ .com = .{
+                            .not_stage1 = .{ .self_type = com_data.self_type } } });
+                        writer.depth -= 1;
+                        try writer.line("},");
+                        return;
+                    },
+                }
+            };
+            try writer.linef("    self: *const {s},", .{self_type});
         },
-    }
-    if (optional_self_type) |self_type| {
-        try writer.linef("{s}    self: *const {s},", .{prefix, self_type});
     }
 
-    for (params.items) |*param_node_ptr, i| {
-        const param_obj = param_node_ptr.Object;
-        try jsonObjEnforceKnownFieldsOnly(param_obj, &[_][]const u8 {"Name", "Type", "Attrs"}, sdk_file);
-        const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).String;
-        const param_type = (try jsonObjGetRequired(param_obj, "Type", sdk_file)).Object;
-        const null_modifier = notnull_set.params[i];
-        const param_options = processParamAttrs((try jsonObjGetRequired(param_obj, "Attrs", sdk_file)).Array, .var_decl, null_modifier, sdk_file);
-        const param_type_formatter = try addTypeRefs(sdk_file, arches, param_type, param_options, null);
-        if (param_options.optional_bytes_param_index) |bytes_param_index| {
-            try writer.linef("{s}    // TODO: what to do with BytesParamIndex {}?", .{prefix, bytes_param_index});
-        }
-        try writer.writef("{s}    {s}: ", .{prefix, std.zig.fmtId(param_name)}, .{.nl=false});
-        try generateTypeRef(sdk_file, writer, param_type_formatter);
-        try writer.write(",", .{.start=.mid});
-    }
+    try generateParams(sdk_file, writer, arches, notnull_set, params.items);
 
-    try writer.writef("{s}) callconv(@import(\"std\").os.windows.WINAPI) ", .{prefix}, .{.nl=false});
+    try writer.writef(") callconv(@import(\"std\").os.windows.WINAPI) ", .{}, .{.nl=false});
     if (noreturn_funcs.get(func_name_tmp)) |_| {
         try writer.write("noreturn", .{.start=.mid,.nl=false});
     } else {
@@ -2428,10 +2465,37 @@ fn generateFunction(sdk_file: *SdkFile, writer: *CodeWriter, function_obj: json.
     }
     const term = switch (func_kind) {
         .fixed => ";",
-        .ptr => |ptr_data| ptr_data.def_suffix,
+        .ptr => |ptr_data| switch (ptr_data) {
+            .stage1, .not_stage1 => ",",
+            .both => @panic("code bug"),
+        },
         .com => ",",
     };
     try writer.writef("{s}", .{term}, .{.start=.mid});
+}
+
+fn generateParams(
+    sdk_file: *SdkFile,
+    writer: *CodeWriter,
+    arches: ArchFlags,
+    notnull_set: ParamModifierSet,
+    params: []const json.Value,
+) !void {
+    for (params) |*param_node_ptr, i| {
+        const param_obj = param_node_ptr.Object;
+        try jsonObjEnforceKnownFieldsOnly(param_obj, &[_][]const u8 {"Name", "Type", "Attrs"}, sdk_file);
+        const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).String;
+        const param_type = (try jsonObjGetRequired(param_obj, "Type", sdk_file)).Object;
+        const null_modifier = notnull_set.params[i];
+        const param_options = processParamAttrs((try jsonObjGetRequired(param_obj, "Attrs", sdk_file)).Array, .var_decl, null_modifier, sdk_file);
+        const param_type_formatter = try addTypeRefs(sdk_file, arches, param_type, param_options, null);
+        if (param_options.optional_bytes_param_index) |bytes_param_index| {
+            try writer.linef("    // TODO: what to do with BytesParamIndex {}?", .{bytes_param_index});
+        }
+        try writer.writef("    {s}: ", .{std.zig.fmtId(param_name)}, .{.nl=false});
+        try generateTypeRef(sdk_file, writer, param_type_formatter);
+        try writer.write(",", .{.start=.mid});
+    }
 }
 
 fn generateUnicodeAliases(sdk_file: *SdkFile, writer: *CodeWriter, unicode_aliases: []json.Value) !void {
