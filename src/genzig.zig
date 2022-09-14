@@ -816,7 +816,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.ValueTree) !
         \\    if (!@import("builtin").is_test) return;
         \\    inline for (comptime @import("std").meta.declarations(@This())) |decl| {
         \\        if (decl.is_pub) {
-        \\            _ = decl;
+        \\            _ = @field(@This(), decl.name);
         \\        }
         \\    }
         \\}
@@ -1399,7 +1399,6 @@ const CodeWriter = struct {
 
 pub fn addArchSpecific(comptime T: type, arch_specific: *ArchSpecificMap(T), pool_name: StringPool.Val, arches: ArchFlags, obj: T) !void {
     std.debug.assert(arches.flags != ArchFlags.all.flags);
-    _ = obj;
     if (arch_specific.getPtr(pool_name)) |object| {
         object.add(.{ .arches = arches, .obj = obj });
     } else {
