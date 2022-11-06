@@ -9,7 +9,7 @@ pub fn build(b: *Builder) !void {
     if (builtin.os.tag != .windows) {
         if (target.os_tag == null or target.os_tag.? != .windows) {
             std.log.err("target is not windows", .{});
-            std.log.info("try building with one of -Dtarget=native-windows, -Dtarget=i386-windows or -Dtarget=x86_64-windows\n", .{});
+            std.log.info("try building with one of -Dtarget=native-windows, -Dtarget=x86-windows or -Dtarget=x86_64-windows\n", .{});
             std.os.exit(1);
         }
     }
