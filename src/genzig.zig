@@ -1566,7 +1566,7 @@ fn generateTypeDefinition(
     } else if (std.mem.eql(u8, kind, "Struct")) {
         try generateStructOrUnion(sdk_file, writer, type_obj, arches, pool_name, def_prefix, def_suffix, .Struct, null);
     } else if (std.mem.eql(u8, kind, "FunctionPointer")) {
-        if (func_ptr_dependency_loop_problems.get(pool_name.slice)) |_| {
+        if (funcPtrHasDependencyLoop(pool_name.slice)) {
             try writer.line("// TODO: this function pointer causes dependency loop problems, so it's stubbed out");
             try writer.linef("{s}switch (@import(\"builtin\").zig_backend) {{ " ++
                                  ".stage1 => fn() callconv(@import(\"std\").os.windows.WINAPI) void" ++
@@ -1662,10 +1662,9 @@ fn generateStructOrUnionDef(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: j
     const struct_fields = (try jsonObjGetRequired(type_obj, "Fields", sdk_file)).Array;
     const struct_nested_types = (try jsonObjGetRequired(type_obj, "NestedTypes", sdk_file)).Array;
 
-    const type_mod: []const u8 = if (struct_packing_size == 1) "packed" else "extern";
     const zig_type = if (kind == .Struct) "struct" else "union";
 
-    try writer.writef("{s} {s} {{", .{type_mod, zig_type}, .{.start=.any});
+    try writer.writef("extern {s} {{", .{zig_type}, .{.start=.any});
     writer.depth += 1;
     defer writer.depth -=1;
 
@@ -1705,12 +1704,6 @@ fn generateStructOrUnionDef(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: j
     if (struct_fields.items.len == 0) {
         try writer.line("placeholder: usize, // TODO: why is this type empty?");
     } else {
-        if (struct_packing_size > 1 and kind == .Union) {
-            try writer.line("// WARNING: unable to add field alignment because it's not implemented for unions");
-        } else if (struct_packing_size > 1) {
-            try writer.line("// WARNING: unable to add field alignment because it's causing a compiler bug");
-            // Assertion failed at /home/vsts/work/1/s/src/stage1/analyze.cpp:8758 in resolve_llvm_types_struct. This is a bug in the Zig compiler.thread 3298 panic:
-        }
         for (struct_fields.items) |*field_node_ptr| {
             const field_obj = field_node_ptr.Object;
             try jsonObjEnforceKnownFieldsOnly(field_obj, &[_][]const u8 {"Name", "Type", "Attrs"}, sdk_file);
@@ -1742,9 +1735,8 @@ fn generateStructOrUnionDef(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: j
             const field_type_formatter = try addTypeRefs(sdk_file, arches, field_type, field_options, this_nested_context);
             try writer.writef("{}: ", .{std.zig.fmtId(field_name)}, .{.nl=false});
             try generateTypeRef(sdk_file, writer, field_type_formatter);
-            if (struct_packing_size > 1 and kind == .Struct) {
-                // NOTE: this is causing a compiler bug
-                //try writer.writef(" align({})", .{struct_packing_size}, .{.start=.mid,.nl=false});
+            if (struct_packing_size >= 1) {
+                try writer.writef(" align({})", .{struct_packing_size}, .{.start=.mid,.nl=false});
             }
             try writer.write(",", .{.start=.mid});
         }
@@ -2248,9 +2240,62 @@ fn processParamAttrs(attrs: json.Array, reason: TypeRefFormatter.Reason, null_mo
 }
 
 // Skip these function pointers to workaround: https://github.com/ziglang/zig/issues/4476
+fn funcPtrHasDependencyLoop(name: []const u8) bool {
+    if (func_ptr_dependency_loop_problems.get(name)) |_| return true;
+    if (std.mem.startsWith(u8, name, "PFN_")) return
+           std.mem.startsWith(u8, name, "PFN_CPD_")
+        or std.mem.startsWith(u8, name, "PFN_PROVIDER_")
+        or std.mem.startsWith(u8, name, "PFN_PROVUI_")
+        ;
+    if (std.mem.startsWith(u8, name, "PIBIO_")) return
+           std.mem.startsWith(u8, name, "PIBIO_SENSOR_")
+        or std.mem.startsWith(u8, name, "PIBIO_ENGINE_")
+        or std.mem.startsWith(u8, name, "PIBIO_STORAGE_")
+        or std.mem.startsWith(u8, name, "PIBIO_FRAMEWORK_")
+        ;
+    if (std.mem.startsWith(u8, name, "LPDDHAL")) return
+           std.mem.startsWith(u8, name, "LPDDHAL_")
+        or std.mem.startsWith(u8, name, "LPDDHALSURFCB_")
+        or std.mem.startsWith(u8, name, "LPDDHALPALCB_")
+        or std.mem.startsWith(u8, name, "LPDDHALVPORTCB_")
+        or std.mem.startsWith(u8, name, "LPDDHALCOLORCB_")
+        or std.mem.startsWith(u8, name, "LPDDHALMOCOMPCB_")
+        ;
+    return
+           std.mem.startsWith(u8, name, "UText")
+        or std.mem.startsWith(u8, name, "UCharIterator")
+        ;
+}
 const func_ptr_dependency_loop_problems = std.ComptimeStringMap(Nothing, .{
     .{ "FREEOBJPROC", .{} },
-    .{ "LPDDHAL_WAITFORVERTICALBLANK", .{} },
+    .{ "LPEXCEPFINO_DEFERRED_FILLIN", .{} },
+    .{ "LPDDENUMSURFACESCALLBACK", .{} },
+    .{ "LPDDENUMSURFACESCALLBACK2", .{} },
+    .{ "LPDDENUMSURFACESCALLBACK7", .{} },
+    .{ "OEMCUIPCALLBACK", .{} },
+    .{ "PAudioStateMonitorCallback", .{} },
+    .{ "PFN_IO_COMPLETION", .{} },
+    .{ "PFN_RPCNOTIFICATION_ROUTINE", .{} },
+    .{ "PFNFILLTEXTBUFFER", .{} },
+    .{ "WSD_STUB_FUNCTION", .{} },
+    .{ "PWSD_SOAP_MESSAGE_HANDLER", .{} },
+    .{ "WS_ASYNC_FUNCTION", .{} },
+    .{ "CALLERRELEASE", .{} },
+    .{ "PIO_IRP_EXT_PROCESS_TRACKED_OFFSET_CALLBACK", .{} },
+    .{ "MI_MethodDecl_Invoke", .{} },
+    .{ "MI_ProviderFT_GetInstance", .{} },
+    .{ "MI_ProviderFT_CreateInstance", .{} },
+    .{ "MI_ProviderFT_ModifyInstance", .{} },
+    .{ "MI_ProviderFT_DeleteInstance", .{} },
+    .{ "MI_ProviderFT_AssociatorInstances", .{} },
+    .{ "MI_ProviderFT_ReferenceInstances", .{} },
+    .{ "MI_ProviderFT_Invoke", .{} },
+    .{ "PCMSCALLBACKW", .{} },
+    .{ "PCMSCALLBACKA", .{} },
+    .{ "PEVENT_TRACE_BUFFER_CALLBACKW", .{} },
+    .{ "PEVENT_TRACE_BUFFER_CALLBACKA", .{} },
+    .{ "EXPR_EVAL", .{} },
+    .{ "XMIT_HELPER_ROUTINE", .{} },
 });
 
 const funcs_with_issues = std.ComptimeStringMap(Nothing, .{

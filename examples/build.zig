@@ -15,20 +15,27 @@ pub fn build(b: *Builder) !void {
     }
 
     const mode = b.standardReleaseOptions();
-    try makeExe(b, target, mode, "helloworld");
-    try makeExe(b, target, mode, "helloworld-window");
-    try makeExe(b, target, mode, "d2dcircle");
-    try makeExe(b, target, mode, "opendialog");
-    try makeExe(b, target, mode, "wasapi");
-    try makeExe(b, target, mode, "net");
+    try makeExe(b, target, mode, "helloworld", .Console);
+    try makeExe(b, target, mode, "helloworld-window", .Windows);
+    try makeExe(b, target, mode, "d2dcircle", .Windows);
+    try makeExe(b, target, mode, "opendialog", .Windows);
+    try makeExe(b, target, mode, "wasapi", .Console);
+    try makeExe(b, target, mode, "net", .Console);
 }
 
-fn makeExe(b: *Builder, target: CrossTarget, mode: Mode, root: []const u8) !void {
+fn makeExe(
+    b: *Builder,
+    target: CrossTarget,
+    mode: Mode,
+    root: []const u8,
+    subsystem: std.Target.SubSystem,
+) !void {
     const src = try std.mem.concat(b.allocator, u8, &[_][]const u8 {root, ".zig"});
     const exe = b.addExecutable(root, src);
     exe.single_threaded = true;
     exe.setTarget(target);
     exe.setBuildMode(mode);
+    exe.subsystem = subsystem;
     exe.install();
     exe.addPackage(.{
         .name = "win32",
