@@ -2,6 +2,7 @@
 const std = @import("std");
 pub const std_handle_types = std.ComptimeStringMap([]const u8, .{
     .{ "HANDLE", "os.windows.HANDLE" },
+    .{ "HINSTANCE", "os.windows.HINSTANCE" },
     .{ "SOCKET", "os.windows.ws2_32.SOCKET" },
 });
 pub const handle_types = list: {
@@ -70,7 +71,6 @@ pub const handle_types = list: {
         .{ "HSAVEDUILANGUAGES", .{} },
         .{ "HRSRC", .{} },
         .{ "HSURF", .{} },
-        .{ "HINSTANCE", .{} },
         .{ "HPOWERNOTIFY", .{} },
         .{ "HUMPD", .{} },
         .{ "HSTR", .{} },
