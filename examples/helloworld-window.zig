@@ -30,7 +30,7 @@ pub export fn wWinMain(hInstance: HINSTANCE, _: ?HINSTANCE, pCmdLine: [*:0]u16, 
         .cbWndExtra = 0,
         .hInstance = hInstance,
         .hIcon = null,
-        .hCursor = null,
+        .hCursor = win32.LoadCursor(null,win32.IDC_ARROW),
         .hbrBackground = null,
         // TODO: this field is not marked as options so we can't use null atm
         .lpszMenuName = L("Some Menu Name"),

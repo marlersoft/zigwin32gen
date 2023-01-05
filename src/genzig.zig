@@ -189,14 +189,14 @@ const fail_allocator = std.mem.Allocator{
 };
 const fail_allocator_vtable = std.mem.Allocator.VTable{
     .alloc = failAllocatorAlloc,
-    .resize = std.mem.Allocator.noResize,
-    .free = std.mem.Allocator.noFree,
+    .resize = std.mem.Allocator.NoResize(anyopaque).noResize,
+    .free = std.mem.Allocator.NoOpFree(anyopaque).noOpFree,
 };
-fn failAllocatorAlloc(_: *anyopaque, n: usize, alignment: u8, ra: usize) ?[*]u8 {
+fn failAllocatorAlloc(_: *anyopaque, n: usize, alignment: u29, _: u29, ra: usize) error{OutOfMemory}![]u8 {
     _ = n;
     _ = alignment;
     _ = ra;
-    return null;
+    return error.OutOfMemory;
 }
 const empty_json_object_map = json.ObjectMap {
     .ctx = .{ },

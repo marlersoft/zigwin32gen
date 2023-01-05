@@ -64,7 +64,7 @@ pub fn BaseWindow(comptime DERIVED_TYPE: type) type { return struct {
             .cbWndExtra = 0,
             .hInstance = win32.GetModuleHandle(null),
             .hIcon = null,
-            .hCursor = null,
+            .hCursor = win32.LoadCursor(null,win32.IDC_ARROW),
             .hbrBackground = null,
             // TODO: autogen bindings don't allow for null, should win32metadata allow Option for fields? Or should all strings allow NULL?
             .lpszMenuName = L("Placeholder"),
