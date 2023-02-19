@@ -351,7 +351,7 @@ pub fn main() !u8 {
         std.debug.print("-----------------------------------------------------------------------\n", .{});
         std.debug.print("loading {} api json files...\n", .{api_list.items.len});
 
-        for (api_list.items) |api_json_basename, api_index| {
+        for (api_list.items, 0..) |api_json_basename, api_index| {
             const api_num = api_index + 1;
             std.debug.print("{}/{}: loading '{s}'\n", .{api_num, api_list.items.len, api_json_basename});
             //
@@ -852,7 +852,7 @@ fn typeIsVoid(type_obj: json.ObjectMap, sdk_file: *SdkFile) !bool {
 // TODO: should I cache this mapping from api ref to api import path?
 fn allocApiImportPathFromRef(api_ref: []const u8) ![]u8 {
     const api_path = try cameltosnake.camelToSnakeAlloc(allocator, api_ref);
-    for (api_path) |c, i| {
+    for (api_path, 0..) |c, i| {
         if (c == '.')
             api_path[i] = '/';
     }
@@ -1969,8 +1969,8 @@ fn generateEnum(
     setShortNames(values);
 
     // find conflicts
-    for (values) |val, i| {
-        for (values[0..i]) |other_val, j| {
+    for (values, 0..) |val, i| {
+        for (values[0..i], 0..) |other_val, j| {
             if (jsonEql(val.value, other_val.value)) {
                 values[i].conflict_index = j;
                 break;
@@ -2405,7 +2405,7 @@ fn generateFunction(
             try sdk_file.not_null_funcs_applied.put(func_name_pool, .{});
             jsonEnforce(notnull_node.Array.items.len > 0);
             notnull_set.ret = @intCast(NullModifier, notnull_node.Array.items[0].Integer);
-            for (notnull_node.Array.items[1..]) |item, i| {
+            for (notnull_node.Array.items[1..], 0..) |item, i| {
                 jsonEnforce(i < notnull_set.params.len); // if we hit this, increase max param count
                 jsonEnforce(i < params.items.len);
                 notnull_set.params[i] = @intCast(NullModifier, item.Integer);
@@ -2524,7 +2524,7 @@ fn generateParams(
     notnull_set: ParamModifierSet,
     params: []const json.Value,
 ) !void {
-    for (params) |*param_node_ptr, i| {
+    for (params, 0..) |*param_node_ptr, i| {
         const param_obj = param_node_ptr.Object;
         try jsonObjEnforceKnownFieldsOnly(param_obj, &[_][]const u8 {"Name", "Type", "Attrs"}, sdk_file);
         const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).String;

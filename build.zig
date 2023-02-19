@@ -6,7 +6,8 @@ const patchstep = @import("patchstep.zig");
 
 pub fn build(b: *Builder) !void {
     patchstep.init(b.allocator);
-    const mode = b.standardReleaseOptions();
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
 
     const win32json_repo = GitRepoStep.create(b, .{
         .url = "https://github.com/marlersoft/win32json",
@@ -15,8 +16,12 @@ pub fn build(b: *Builder) !void {
     });
 
     const run_pass1 = blk: {
-        const pass1_exe = b.addExecutable("pass1", "src/pass1.zig");
-        pass1_exe.setBuildMode(mode);
+        const pass1_exe = b.addExecutable(.{
+            .name = "pass1",
+            .root_source_file = .{ .path = "src/pass1.zig" },
+            .target = target,
+            .optimize = optimize,
+        });
 
         const run_pass1 = pass1_exe.run();
         patchstep.patch(&run_pass1.step, runStepMake);
@@ -28,8 +33,13 @@ pub fn build(b: *Builder) !void {
     };
 
     {
-        const genzig_exe = b.addExecutable("genzig", "src/genzig.zig");
-        genzig_exe.setBuildMode(mode);
+        const genzig_exe = b.addExecutable(.{
+            .name = "genzig",
+            .root_source_file = .{ .path = "src/genzig.zig" },
+            .target = target,
+            .optimize = optimize,
+        });
+
         const run_genzig = genzig_exe.run();
         patchstep.patch(&run_genzig.step, runStepMake);
         run_genzig.step.dependOn(&run_pass1.step);
