@@ -6,7 +6,6 @@ const patchstep = @import("patchstep.zig");
 
 pub fn build(b: *Builder) !void {
     patchstep.init(b.allocator);
-    const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
     const win32json_repo = GitRepoStep.create(b, .{
@@ -19,7 +18,6 @@ pub fn build(b: *Builder) !void {
         const pass1_exe = b.addExecutable(.{
             .name = "pass1",
             .root_source_file = .{ .path = "src/pass1.zig" },
-            .target = target,
             .optimize = optimize,
         });
 
@@ -36,10 +34,8 @@ pub fn build(b: *Builder) !void {
         const genzig_exe = b.addExecutable(.{
             .name = "genzig",
             .root_source_file = .{ .path = "src/genzig.zig" },
-            .target = target,
             .optimize = optimize,
         });
-
         const run_genzig = genzig_exe.run();
         patchstep.patch(&run_genzig.step, runStepMake);
         run_genzig.step.dependOn(&run_pass1.step);
