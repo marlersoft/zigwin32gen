@@ -47,8 +47,8 @@ pub fn build(b: *Builder) !void {
     }
 }
 
-fn runStepMake(step: *std.build.Step, original_make_fn: patchstep.MakeFn) anyerror!void {
-    original_make_fn(step) catch |err| switch (err) {
+fn runStepMake(step: *std.build.Step, prog_node: *std.Progress.Node, original_make_fn: patchstep.MakeFn) anyerror!void {
+    original_make_fn(step, prog_node) catch |err| switch (err) {
         // just exit if subprocess failed with error exit code
         error.UnexpectedExitCode => std.os.exit(0xff),
         else => |e| return e,

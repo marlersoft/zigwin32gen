@@ -4,12 +4,12 @@ const build = std.build;
 const Step = build.Step;
 
 pub const MakeFn = switch (builtin.zig_backend) {
-    .stage1 => fn(self: *Step) anyerror!void,
-    else => *const fn(self: *Step) anyerror!void,
+    .stage1 => fn(self: *Step, prog_node: *std.Progress.Node) anyerror!void,
+    else => *const fn(self: *Step, prog_node: *std.Progress.Node) anyerror!void,
 };
 const PatchFn = switch (builtin.zig_backend) {
-    .stage1 => fn(step: *Step, original_make_fn: MakeFn) anyerror!void,
-    else => *const fn(step: *Step, original_make_fn: MakeFn) anyerror!void,
+    .stage1 => fn(step: *Step, prog_node: *std.Progress.Node, original_make_fn: MakeFn) anyerror!void,
+    else => *const fn(step: *Step, prog_node: *std.Progress.Node, original_make_fn: MakeFn) anyerror!void,
 };
 
 const Patch = struct {
@@ -38,8 +38,8 @@ pub fn patch(step: *Step, patch_fn: PatchFn) void {
     step.makeFn = patchMake;
 }
 
-fn patchMake(step: *Step) anyerror!void {
+fn patchMake(step: *Step, prog_node: *std.Progress.Node) anyerror!void {
     const p = global_step_map.?.get(step) orelse
         std.debug.panic("patchMake was used on a step ({s}) that wasn't in the global step map???", .{step.name});
-    return p.patch_make_fn(step, p.original_make_fn);
+    return p.patch_make_fn(step, prog_node, p.original_make_fn);
 }
