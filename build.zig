@@ -21,7 +21,7 @@ pub fn build(b: *Builder) !void {
             .optimize = optimize,
         });
 
-        const run_pass1 = pass1_exe.run();
+        const run_pass1 = b.addRunArtifact(pass1_exe);
         patchstep.patch(&run_pass1.step, runStepMake);
         run_pass1.step.dependOn(&win32json_repo.step);
         run_pass1.addArg(win32json_repo.getPath(&run_pass1.step));
@@ -36,7 +36,7 @@ pub fn build(b: *Builder) !void {
             .root_source_file = .{ .path = "src/genzig.zig" },
             .optimize = optimize,
         });
-        const run_genzig = genzig_exe.run();
+        const run_genzig = b.addRunArtifact(genzig_exe);
         patchstep.patch(&run_genzig.step, runStepMake);
         run_genzig.step.dependOn(&run_pass1.step);
         run_genzig.addArg(win32json_repo.getPath(&run_genzig.step));

@@ -14,33 +14,37 @@ pub fn build(b: *Builder) !void {
         }
     }
 
-    const mode = b.standardReleaseOptions();
-    try makeExe(b, target, mode, "helloworld", .Console);
-    try makeExe(b, target, mode, "helloworld-window", .Windows);
-    try makeExe(b, target, mode, "d2dcircle", .Windows);
-    try makeExe(b, target, mode, "opendialog", .Windows);
-    try makeExe(b, target, mode, "wasapi", .Console);
-    try makeExe(b, target, mode, "net", .Console);
+    const win32 = b.createModule(.{
+        .source_file = .{ .path = "../zigwin32/win32.zig" },
+    });
+
+    const mode = b.standardOptimizeOption(.{});
+    try makeExe(b, target, mode, win32, "helloworld", .Console);
+    try makeExe(b, target, mode, win32, "helloworld-window", .Windows);
+    try makeExe(b, target, mode, win32, "d2dcircle", .Windows);
+    try makeExe(b, target, mode, win32, "opendialog", .Windows);
+    try makeExe(b, target, mode, win32, "wasapi", .Console);
+    try makeExe(b, target, mode, win32, "net", .Console);
 }
 
 fn makeExe(
     b: *Builder,
     target: CrossTarget,
-    mode: Mode,
+    optimize: Mode,
+    win32: *std.Build.Module,
     root: []const u8,
     subsystem: std.Target.SubSystem,
 ) !void {
-    const src = try std.mem.concat(b.allocator, u8, &[_][]const u8 {root, ".zig"});
-    const exe = b.addExecutable(root, src);
-    exe.single_threaded = true;
-    exe.setTarget(target);
-    exe.setBuildMode(mode);
-    exe.subsystem = subsystem;
-    exe.install();
-    exe.addPackage(.{
-        .name = "win32",
-        .source = .{ .path = "../zigwin32/win32.zig" },
+    const exe = b.addExecutable(.{
+        .name = root,
+        .root_source_file = .{ .path = try std.mem.concat(b.allocator, u8, &[_][]const u8 {root, ".zig"}) },
+        .target = target,
+        .optimize = optimize,
     });
+    exe.single_threaded = true;
+    exe.subsystem = subsystem;
+    b.installArtifact(exe);
+    exe.addModule("win32", win32);
 
     //const run_cmd = exe.run();
     //run_cmd.step.dependOn(b.getInstallStep());

@@ -423,7 +423,7 @@ fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !vo
     var buffered_writer = BufferedWriter{ .unbuffered_writer = everything_file.writer() };
     defer buffered_writer.flush() catch @panic("flush failed");
     const writer = buffered_writer.writer();
-    try writer.writeAll(removeCr(autogen_header ++
+    try writer.writeAll(comptime removeCr(autogen_header ++
         \\//! This module contains aliases to ALL symbols inside the Win32 SDK.  It allows
         \\//! an application to access any and all symbols through a single import.
         \\
@@ -539,7 +539,7 @@ fn generateContainerModules(dir: std.fs.Dir, module: *Module) anyerror!void {
     }
 
     if (module.file) |_| { } else {
-        try writer.writeAll(removeCr(
+        try writer.writeAll(comptime removeCr(
             \\test {
             \\    @import("std").testing.refAllDecls(@This());
             \\}
