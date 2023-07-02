@@ -21,7 +21,7 @@ pub fn getModifyTime(dir: std.fs.Dir, path: []const u8) !?Time {
 }
 
 pub fn win32jsonIsNewerThan(win32json_dir: std.fs.Dir, time: Time) !bool {
-    var api_dir = try win32json_dir.openIterableDir("api", .{}) ;
+    var api_dir = try win32json_dir.openIterableDir("api", .{});
     defer api_dir.close();
 
     var dir_it = api_dir.iterate();
@@ -44,7 +44,7 @@ pub fn win32jsonIsNewerThan(win32json_dir: std.fs.Dir, time: Time) !bool {
 }
 
 pub fn getcwd(a: std.mem.Allocator) ![]u8 {
-    var path_buf : [std.fs.MAX_PATH_BYTES]u8 = undefined;
+    var path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
     const path = try std.os.getcwd(&path_buf);
     const path_allocated = try a.alloc(u8, path.len);
     std.mem.copy(u8, path_allocated, path);
@@ -66,27 +66,29 @@ pub fn asciiLessThanIgnoreCase(_: Nothing, lhs: []const u8, rhs: []const u8) boo
     return std.ascii.lessThanIgnoreCase(lhs, rhs);
 }
 
-fn SliceFormatter(comptime T: type, comptime spec: []const u8) type { return struct {
-    slice: []const T,
-    pub fn format(
-        self: @This(),
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        _ = fmt;
-        _ = options;
-        var first : bool = true;
-        for (self.slice) |e| {
-            if (first) {
-                first = false;
-            } else {
-                try writer.writeAll(", ");
+fn SliceFormatter(comptime T: type, comptime spec: []const u8) type {
+    return struct {
+        slice: []const T,
+        pub fn format(
+            self: @This(),
+            comptime fmt: []const u8,
+            options: std.fmt.FormatOptions,
+            writer: anytype,
+        ) !void {
+            _ = fmt;
+            _ = options;
+            var first: bool = true;
+            for (self.slice) |e| {
+                if (first) {
+                    first = false;
+                } else {
+                    try writer.writeAll(", ");
+                }
+                try std.fmt.format(writer, "{" ++ spec ++ "}", .{e});
             }
-            try std.fmt.format(writer, "{" ++ spec ++ "}", .{e});
         }
-    }
-};}
+    };
+}
 pub fn formatSliceT(comptime T: type, comptime spec: []const u8, slice: []const T) SliceFormatter(T, spec) {
     return .{ .slice = slice };
 }
@@ -120,7 +122,7 @@ pub fn jsonObjEnforceKnownFieldsOnly(map: std.json.ObjectMap, known_fields: []co
             if (std.mem.eql(u8, known_field, kv.key_ptr.*))
                 continue :fieldLoop;
         }
-        std.log.err("{s}: JSON object has unknown field '{s}', expected one of: {}\n", .{file_for_error, kv.key_ptr.*, formatSliceT([]const u8, "s", known_fields)});
+        std.log.err("{s}: JSON object has unknown field '{s}', expected one of: {}\n", .{ file_for_error, kv.key_ptr.*, formatSliceT([]const u8, "s", known_fields) });
         jsonPanic();
     }
 }
@@ -138,15 +140,16 @@ const JsonFormatter = struct {
         try std.json.stringify(self.value, .{}, writer);
     }
 };
+
 pub fn fmtJson(value: anytype) JsonFormatter {
     if (@TypeOf(value) == std.json.ObjectMap) {
-        return .{ .value = .{ .Object = value } };
+        return .{ .value = .{ .object = value } };
     }
     if (@TypeOf(value) == std.json.Array) {
-        return .{ .value = .{ .Array = value } };
+        return .{ .value = .{ .array = value } };
     }
     if (@TypeOf(value) == []std.json.Value) {
-        return .{ .value = .{ .Array = std.json.Array  { .items = value, .capacity = value.len, .allocator = undefined } } };
+        return .{ .value = .{ .array = std.json.Array{ .items = value, .capacity = value.len, .allocator = undefined } } };
     }
     return .{ .value = value };
 }

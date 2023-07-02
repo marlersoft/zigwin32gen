@@ -17,13 +17,7 @@ pub fn getDefaultDevice() !void {
     var enumerator: ?*win32.IMMDeviceEnumerator = undefined;
 
     {
-        const status = win32.CoCreateInstance(
-            win32.CLSID_MMDeviceEnumerator,
-            null,
-            win32.CLSCTX_ALL,
-            win32.IID_IMMDeviceEnumerator,
-            @ptrCast(*?*anyopaque, &enumerator)
-        );
+        const status = win32.CoCreateInstance(win32.CLSID_MMDeviceEnumerator, null, win32.CLSCTX_ALL, win32.IID_IMMDeviceEnumerator, @as(*?*anyopaque, @ptrCast(&enumerator)));
         if (win32.FAILED(status)) {
             log("CoCreateInstance FAILED: {d}", .{status});
             return error.Fail;
@@ -42,7 +36,7 @@ pub fn getDefaultDevice() !void {
         }
     }
     defer _ = device.?.IUnknown_Release(); // No such method
-    
+
     var properties: ?*win32.IPropertyStore = undefined;
     {
         const status = device.?.IMMDevice_OpenPropertyStore(win32.STGM_READ, &properties);
@@ -51,7 +45,7 @@ pub fn getDefaultDevice() !void {
             return error.Fail;
         }
     }
-    
+
     var count: u32 = 0;
     {
         const status = properties.?.IPropertyStore_GetCount(&count);
@@ -60,7 +54,7 @@ pub fn getDefaultDevice() !void {
             return error.Fail;
         }
     }
-    
+
     var index: u32 = 0;
     while (index < count - 1) : (index += 1) {
         var propKey: win32.PROPERTYKEY = undefined;
@@ -85,7 +79,7 @@ pub fn getDefaultDevice() !void {
 }
 
 pub fn main() !u8 {
-    const config_value = win32.COINIT.initFlags(.{.APARTMENTTHREADED = 1, .DISABLE_OLE1DDE = 1});
+    const config_value = win32.COINIT.initFlags(.{ .APARTMENTTHREADED = 1, .DISABLE_OLE1DDE = 1 });
     {
         _ = config_value;
         const status = win32.CoInitialize(null); // CoInitializeEx(null, @intToEnum(COINIT, config_value));

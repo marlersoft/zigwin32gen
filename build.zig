@@ -41,9 +41,16 @@ pub fn build(b: *Builder) !void {
         run_genzig.step.dependOn(&run_pass1.step);
         run_genzig.addArg(win32json_repo.getPath(&run_genzig.step));
 
-        b.step("genzig", "Generate Zig bindings").dependOn(&run_genzig.step);
+        const genzig_step = b.step("genzig", "Generate Zig bindings");
+        genzig_step.dependOn(&run_genzig.step);
 
-        b.getInstallStep().dependOn(&run_genzig.step);
+        const fmt_step = b.addFmt(.{
+            .paths = &.{"zigwin32"},
+        });
+
+        fmt_step.step.dependOn(genzig_step);
+
+        b.getInstallStep().dependOn(&fmt_step.step);
     }
 }
 
