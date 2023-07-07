@@ -8,7 +8,7 @@ const win32 = struct {
 };
 
 pub fn main() void {
-    const s = win32.socket(@enumToInt(win32.AF_INET), win32.SOCK_STREAM, @enumToInt(win32.IPPROTO_TCP));
+    const s = win32.socket(@intFromEnum(win32.AF_INET), win32.SOCK_STREAM, @intFromEnum(win32.IPPROTO_TCP));
     if (s == win32.INVALID_SOCKET) {
         std.log.err("socket failed with {}", .{win32.GetLastError()});
     }

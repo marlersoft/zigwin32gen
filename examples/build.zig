@@ -37,7 +37,7 @@ fn makeExe(
 ) !void {
     const exe = b.addExecutable(.{
         .name = root,
-        .root_source_file = .{ .path = try std.mem.concat(b.allocator, u8, &[_][]const u8 {root, ".zig"}) },
+        .root_source_file = .{ .path = try std.mem.concat(b.allocator, u8, &[_][]const u8{ root, ".zig" }) },
         .target = target,
         .optimize = optimize,
     });
