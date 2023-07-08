@@ -4,12 +4,12 @@ const build = std.build;
 const Step = build.Step;
 
 pub const MakeFn = switch (builtin.zig_backend) {
-    .stage1 => fn (self: *Step, prog_node: *std.Progress.Node) anyerror!void,
-    else => *const fn (self: *Step, prog_node: *std.Progress.Node) anyerror!void,
+    .stage1 => fn(self: *Step, prog_node: *std.Progress.Node) anyerror!void,
+    else => *const fn(self: *Step, prog_node: *std.Progress.Node) anyerror!void,
 };
 const PatchFn = switch (builtin.zig_backend) {
-    .stage1 => fn (step: *Step, prog_node: *std.Progress.Node, original_make_fn: MakeFn) anyerror!void,
-    else => *const fn (step: *Step, prog_node: *std.Progress.Node, original_make_fn: MakeFn) anyerror!void,
+    .stage1 => fn(step: *Step, prog_node: *std.Progress.Node, original_make_fn: MakeFn) anyerror!void,
+    else => *const fn(step: *Step, prog_node: *std.Progress.Node, original_make_fn: MakeFn) anyerror!void,
 };
 
 const Patch = struct {
@@ -31,7 +31,7 @@ pub fn patch(step: *Step, patch_fn: PatchFn) void {
     const map = &(global_step_map orelse @panic("patchstep.init has not been called"));
     if (map.get(step)) |_|
         std.debug.panic("patchstep does not currently support multiple patches on the same step step={s}", .{step.name});
-    map.put(step, Patch{
+    map.put(step, Patch {
         .original_make_fn = step.makeFn,
         .patch_make_fn = patch_fn,
     }) catch @panic("Out Of Memory");

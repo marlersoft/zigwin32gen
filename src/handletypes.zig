@@ -7,7 +7,7 @@ pub const std_handle_types = std.ComptimeStringMap([]const u8, .{
 });
 pub const handle_types = list: {
     @setEvalBranchQuota(3000);
-    break :list std.ComptimeStringMap(struct {}, .{
+    break :list std.ComptimeStringMap(struct{}, .{
         .{ "HICON", .{} },
         .{ "HCURSOR", .{} },
         .{ "HBRUSH", .{} },
