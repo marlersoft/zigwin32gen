@@ -52,7 +52,7 @@ pub fn main() !u8 {
     try common.readApiList(api_dir, &api_list);
 
     // sort so our data is always in the same order
-    std.sort.sort([]const u8, api_list.items, Nothing{}, common.asciiLessThanIgnoreCase);
+    std.mem.sort([]const u8, api_list.items, Nothing{}, common.asciiLessThanIgnoreCase);
 
     const out_file = try std.fs.cwd().createFile("pass1.json.generating", .{});
     defer out_file.close();
@@ -86,15 +86,17 @@ fn pass1OnFile(out: OutWriter, filename: []const u8, file: std.fs.File) !void {
     const parse_start = std.time.milliTimestamp();
     const start = if (std.mem.startsWith(u8, content, "\xEF\xBB\xBF")) 3 else @as(usize, 0);
     var json_tree = blk: {
-        var parser = json.Parser.init(allocator, false); // false is copy_strings
-        defer parser.deinit();
-        break :blk try parser.parse(content[start..]);
+        //var parser = json.Parser.init(allocator, false); // false is copy_strings
+        //defer parser.deinit();
+        //break :blk try parser.parse(content[start..]);
+        // TODO: call parseFromSliceLeaky because we are using an arena allocator
+        break :blk try json.parseFromSlice(json.Value, allocator, content[start..], .{});
     };
     defer json_tree.deinit();
     const parse_time = std.time.milliTimestamp() - parse_start;
     std.log.info("{} ms: parse time for '{s}'", .{ parse_time, filename });
 
-    try pass1OnJson(out, filename, json_tree.root.Object);
+    try pass1OnJson(out, filename, json_tree.value.object);
 }
 
 fn writeType(out: OutWriter, json_obj_prefix: []const u8, name: []const u8, kind: []const u8) !void {
@@ -102,14 +104,14 @@ fn writeType(out: OutWriter, json_obj_prefix: []const u8, name: []const u8, kind
 }
 
 fn pass1OnJson(out: OutWriter, filename: []const u8, root_obj: json.ObjectMap) !void {
-    const types_array = (try jsonObjGetRequired(root_obj, "Types", filename)).Array;
+    const types_array = (try jsonObjGetRequired(root_obj, "Types", filename)).array;
 
     var json_obj_prefix: []const u8 = "";
     for (types_array.items) |*type_node| {
-        const type_obj = type_node.Object;
-        const kind = (try jsonObjGetRequired(type_obj, "Kind", filename)).String;
-        const name = (try jsonObjGetRequired(type_obj, "Name", filename)).String;
-        //const arches = ArchFlags.initJson((try jsonObjGetRequired(type_obj, "Architectures", filename)).Array.items);
+        const type_obj = type_node.object;
+        const kind = (try jsonObjGetRequired(type_obj, "Kind", filename)).string;
+        const name = (try jsonObjGetRequired(type_obj, "Name", filename)).string;
+        //const arches = ArchFlags.initJson((try jsonObjGetRequired(type_obj, "Architectures", filename)).array.items);
 
         if (std.mem.eql(u8, kind, "ComClassID")) {
             continue;
@@ -153,7 +155,7 @@ fn generateNativeTypedef(
     try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8{ "Name", "Platform", "Architectures", "AlsoUsableFor", "Kind", "Def", "FreeFunc" }, filename);
     //const platform_node = try jsonObjGetRequired(type_obj, "Platform", sdk_file);
     //const also_usable_for_node = try jsonObjGetRequired(type_obj, "AlsoUsableFor", sdk_file);
-    const def_type = (try jsonObjGetRequired(type_obj, "Def", filename)).Object;
+    const def_type = (try jsonObjGetRequired(type_obj, "Def", filename)).object;
 
     // HANDLE PSTR and PWSTR specially because win32metadata is not properly declaring them as arrays, only pointers
     // not sure if this is a real issue with the metadata or intentional
@@ -169,7 +171,7 @@ fn generateNativeTypedef(
 
     // we should be able to ignore also_usable_for_node because the def_type should be the same as the type being defined
     //switch (also_usable_for_node) {
-    //    .String => |also_usable_for| {
+    //    .string => |also_usable_for| {
     //        if (also_usable_type_api_map.get(also_usable_for)) |api| {
     //            try sdk_file.addApiImport(arches, also_usable_for, api, json.Array { .items = &[_]json.Value{}, .capacity = 0, .allocator = allocator });
     //            try writer.linef("//TODO: type '{s}' is \"AlsoUsableFor\" '{s}' which means this type is implicitly", .{tmp_name, also_usable_for});
@@ -196,10 +198,10 @@ fn generateNativeTypedef(
         return;
     }
 
-    const kind = (try jsonObjGetRequired(def_type, "Kind", filename)).String;
+    const kind = (try jsonObjGetRequired(def_type, "Kind", filename)).string;
     if (std.mem.eql(u8, kind, "Native")) {
         try jsonObjEnforceKnownFieldsOnly(def_type, &[_][]const u8{ "Kind", "Name" }, filename);
-        const native_type_name = (try jsonObjGetRequired(def_type, "Name", filename)).String;
+        const native_type_name = (try jsonObjGetRequired(def_type, "Name", filename)).string;
         if (native_integral_types.get(native_type_name)) |_| {
             try writeType(out, json_obj_prefix, name, "Integral");
             return;

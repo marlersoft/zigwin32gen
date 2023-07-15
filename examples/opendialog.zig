@@ -25,7 +25,7 @@ pub export fn wWinMain(__: win32.HINSTANCE, _: ?win32.HINSTANCE, ___: [*:0]u16, 
         var pFileOpen : ?*win32.IFileOpenDialog = undefined;
 
         // Create the FileOpenDialog object.
-        hr = win32.CoCreateInstance(win32.CLSID_FileOpenDialog, null, .ALL, win32.IID_IFileOpenDialog, @ptrCast(*?*anyopaque, &pFileOpen));
+        hr = win32.CoCreateInstance(win32.CLSID_FileOpenDialog, null, .ALL, win32.IID_IFileOpenDialog, @ptrCast(&pFileOpen));
         if (win32.SUCCEEDED(hr))
         {
             // Show the Open dialog box.

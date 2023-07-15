@@ -68,7 +68,7 @@ pub const StringPool = struct {
     pub const HashContext = struct {
         pub fn hash(self: HashContext, s: Val) u64 {
             _ = self;
-            return std.hash.Wyhash.hash(0, @ptrCast([*]const u8, &s.slice.ptr)[0..@sizeOf(usize)]);
+            return std.hash.Wyhash.hash(0, @as([*]const u8, @ptrCast(&s.slice.ptr))[0..@sizeOf(usize)]);
         }
         pub fn eql(self: HashContext, a: Val, b: Val) bool {
             _ = self;
@@ -78,7 +78,7 @@ pub const StringPool = struct {
     pub const ArrayHashContext = struct {
         pub fn hash(self: @This(), s: Val) u32 {
             _ = self;
-            return @truncate(u32, std.hash.Wyhash.hash(0, @ptrCast([*]const u8, &s.slice.ptr)[0..@sizeOf(usize)]));
+            return @as(u32, @truncate(std.hash.Wyhash.hash(0, @as([*]const u8, @ptrCast(&s.slice.ptr))[0..@sizeOf(usize)])));
         }
         pub fn eql(self: @This(), a: Val, b: Val, index: usize) bool {
             _ = self;

@@ -72,7 +72,7 @@ fn MainWindowCalculateLayout(self: *MainWindow) void {
         const size = D2D_SIZE_F { .width = 300, .height = 300 };
         const x: f32 = size.width / 2;
         const y: f32 = size.height / 2;
-        const radius = @import("std").math.min(x, y);
+        const radius = @min(x, y);
         self.ellipse = D2D1.Ellipse(D2D1.Point2F(x, y), radius, radius);
     }
 }
@@ -85,19 +85,19 @@ fn MainWindowCreateGraphicsResources(self: *MainWindow) HRESULT
         var rc: RECT = undefined;
         _ = win32.GetClientRect(self.base.m_hwnd.?, &rc);
 
-        const size = D2D_SIZE_U{ .width = @intCast(u32, rc.right), .height = @intCast(u32, rc.bottom) };
+        const size = D2D_SIZE_U{ .width = @intCast(rc.right), .height = @intCast(rc.bottom) };
 
         hr = self.pFactory.?.ID2D1Factory_CreateHwndRenderTarget(
             &D2D1.RenderTargetProperties(),
             &D2D1.HwndRenderTargetProperties(self.base.m_hwnd.?, size),
             // TODO: figure out how to cast a COM object to a base type
-            @ptrCast(*?*win32.ID2D1HwndRenderTarget, &self.pRenderTarget));
+            @ptrCast(&self.pRenderTarget));
 
         if (SUCCEEDED(hr))
         {
             const color = D2D1.ColorF(.{ .r = 1, .g = 1, .b = 0});
             // TODO: how do I do this ptrCast better by using COM base type?
-            hr = self.pRenderTarget.?.ID2D1RenderTarget_CreateSolidColorBrush(&color, null, @ptrCast(*?*win32.ID2D1SolidColorBrush, &self.pBrush));
+            hr = self.pRenderTarget.?.ID2D1RenderTarget_CreateSolidColorBrush(&color, null, @ptrCast(&self.pBrush));
 
             if (SUCCEEDED(hr))
             {
@@ -127,7 +127,7 @@ fn MainWindowOnPaint(self: *MainWindow) void
         self.pRenderTarget.?.ID2D1RenderTarget_Clear(&D2D1.ColorFU32(.{ .rgb = D2D1.SkyBlue }));
         // TODO: how do I get a COM interface type to convert to a base type without
         //       an explicit cast like this?
-        self.pRenderTarget.?.ID2D1RenderTarget_FillEllipse(&self.ellipse, @ptrCast(*win32.ID2D1Brush, self.pBrush));
+        self.pRenderTarget.?.ID2D1RenderTarget_FillEllipse(&self.ellipse, @ptrCast(self.pBrush));
 
         hr = self.pRenderTarget.?.ID2D1RenderTarget_EndDraw(null, null);
         if (FAILED(hr) or hr == win32.D2DERR_RECREATE_TARGET)
@@ -145,7 +145,7 @@ fn MainWindowResize(self: *MainWindow) void
         var rc: RECT = undefined;
         _ = win32.GetClientRect(self.base.m_hwnd.?, &rc);
 
-        const size = D2D_SIZE_U{ .width = @intCast(u32, rc.right), .height = @intCast(u32, rc.bottom) };
+        const size = D2D_SIZE_U{ .width = @intCast(rc.right), .height = @intCast(rc.bottom) };
 
         _ = renderTarget.ID2D1HwndRenderTarget_Resize(&size);
         self.CalculateLayout();
@@ -165,7 +165,7 @@ pub export fn wWinMain(_: HINSTANCE, __: ?HINSTANCE, ___: [*:0]u16, nCmdShow: u3
         return 0;
     }
 
-    _ = win32.ShowWindow(win.base.Window(), @intToEnum(win32.SHOW_WINDOW_CMD, nCmdShow));
+    _ = win32.ShowWindow(win.base.Window(), @enumFromInt(nCmdShow));
 
     // Run the message loop.
 
@@ -187,7 +187,7 @@ fn MainWindowHandleMessage(self: *MainWindow, uMsg: u32, wParam: WPARAM, lParam:
         // TODO: Should I need to case &self.pFactory to **anyopaque? Maybe
         //       D2D2CreateFactory probably doesn't have the correct type yet?
         if (FAILED(win32.D2D1CreateFactory(
-            win32.D2D1_FACTORY_TYPE_SINGLE_THREADED, win32.IID_ID2D1Factory, null, @ptrCast(**anyopaque, &self.pFactory))))
+            win32.D2D1_FACTORY_TYPE_SINGLE_THREADED, win32.IID_ID2D1Factory, null, @ptrCast(&self.pFactory))))
         {
             return -1;  // Fail CreateWindowEx.
         }
@@ -226,9 +226,9 @@ const D2D1 = struct {
     // TODO: this is missing
     pub fn ColorFU32(o: struct { rgb: u32, a: f32 = 1 }) win32.D2D1_COLOR_F {
         return .{
-            .r = @intToFloat(f32, (o.rgb >> 16) & 0xff) / 255,
-            .g = @intToFloat(f32, (o.rgb >>  8) & 0xff) / 255,
-            .b = @intToFloat(f32, (o.rgb >>  0) & 0xff) / 255,
+            .r = @as(f32, @floatFromInt((o.rgb >> 16) & 0xff)) / 255,
+            .g = @as(f32, @floatFromInt((o.rgb >>  8) & 0xff)) / 255,
+            .b = @as(f32, @floatFromInt((o.rgb >>  0) & 0xff)) / 255,
             .a = o.a,
         };
     }

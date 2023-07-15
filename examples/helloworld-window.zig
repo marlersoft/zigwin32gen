@@ -24,7 +24,7 @@ pub export fn wWinMain(hInstance: HINSTANCE, _: ?HINSTANCE, pCmdLine: [*:0]u16, 
     const CLASS_NAME = L("Sample Window Class");
 
     const wc = win32.WNDCLASS {
-        .style = @intToEnum(win32.WNDCLASS_STYLES, 0),
+        .style = @enumFromInt(0),
         .lpfnWndProc = WindowProc,
         .cbClsExtra = 0,
         .cbWndExtra = 0,
@@ -42,7 +42,7 @@ pub export fn wWinMain(hInstance: HINSTANCE, _: ?HINSTANCE, pCmdLine: [*:0]u16, 
     // Create the window.
 
     const hwnd = win32.CreateWindowEx(
-        @intToEnum(win32.WINDOW_EX_STYLE, 0), // Optional window styles.
+        @enumFromInt(0),                // Optional window styles.
         CLASS_NAME,                     // Window class
         L("Learn to Program Windows"),  // Window text
         win32.WS_OVERLAPPEDWINDOW,      // Window style
@@ -60,7 +60,7 @@ pub export fn wWinMain(hInstance: HINSTANCE, _: ?HINSTANCE, pCmdLine: [*:0]u16, 
         return 0;
     }
 
-    _ = win32.ShowWindow(hwnd, @intToEnum(win32.SHOW_WINDOW_CMD, nCmdShow));
+    _ = win32.ShowWindow(hwnd, @enumFromInt(nCmdShow));
 
     // Run the message loop.
     var msg : MSG = undefined;
@@ -88,7 +88,7 @@ fn WindowProc(hwnd: HWND , uMsg: u32, wParam: win32.WPARAM, lParam: win32.LPARAM
             const hdc = win32.BeginPaint(hwnd, &ps);
 
             // All painting occurs here, between BeginPaint and EndPaint.
-            _ = win32.FillRect(hdc, &ps.rcPaint, @intToPtr(win32.HBRUSH, @as(usize, @enumToInt(win32.COLOR_WINDOW)+1)));
+            _ = win32.FillRect(hdc, &ps.rcPaint, @ptrFromInt(@intFromEnum(win32.COLOR_WINDOW)+1));
             _ = win32.EndPaint(hwnd, &ps);
             return 0;
         },

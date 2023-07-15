@@ -142,13 +142,13 @@ const JsonFormatter = struct {
 };
 pub fn fmtJson(value: anytype) JsonFormatter {
     if (@TypeOf(value) == std.json.ObjectMap) {
-        return .{ .value = .{ .Object = value } };
+        return .{ .value = .{ .object = value } };
     }
     if (@TypeOf(value) == std.json.Array) {
-        return .{ .value = .{ .Array = value } };
+        return .{ .value = .{ .array = value } };
     }
     if (@TypeOf(value) == []std.json.Value) {
-        return .{ .value = .{ .Array = std.json.Array{ .items = value, .capacity = value.len, .allocator = undefined } } };
+        return .{ .value = .{ .array = std.json.Array{ .items = value, .capacity = value.len, .allocator = undefined } } };
     }
     return .{ .value = value };
 }

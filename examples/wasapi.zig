@@ -22,7 +22,7 @@ pub fn getDefaultDevice() !void {
             null,
             win32.CLSCTX_ALL,
             win32.IID_IMMDeviceEnumerator,
-            @ptrCast(*?*anyopaque, &enumerator)
+            @ptrCast(&enumerator),
         );
         if (win32.FAILED(status)) {
             log("CoCreateInstance FAILED: {d}", .{status});

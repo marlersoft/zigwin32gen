@@ -240,7 +240,7 @@ const SdkFile = struct {
 
     pub fn addApiImport(self: *SdkFile, arches: ArchFlags, name: []const u8, api: []const u8, parents: json.Array) !void {
         if (!std.mem.eql(u8, self.json_name, api)) {
-            const top_level_symbol = try global_symbol_pool.add(if (parents.items.len == 0) name else parents.items[0].String);
+            const top_level_symbol = try global_symbol_pool.add(if (parents.items.len == 0) name else parents.items[0].string);
             const pool_api = try global_symbol_pool.add(api);
             if (self.top_level_api_imports.getPtr(top_level_symbol)) |import| {
                 jsonEnforceMsg(pool_api.eql(import.api), "symbol conflict '{s}', api mismatch '{s}' and '{s}'", .{ name, pool_api, import.api });
@@ -341,7 +341,7 @@ pub fn main() !u8 {
         try common.readApiList(api_dir, &api_list);
 
         // sort the list of APIs so our api order is not dependent on the file-system ordering
-        std.sort.sort([]const u8, api_list.items, Nothing{}, common.asciiLessThanIgnoreCase);
+        std.mem.sort([]const u8, api_list.items, Nothing{}, common.asciiLessThanIgnoreCase);
 
         std.debug.print("-----------------------------------------------------------------------\n", .{});
         std.debug.print("loading {} api json files...\n", .{api_list.items.len});
@@ -388,15 +388,17 @@ fn readJson(filename: []const u8) !std.json.ObjectMap {
     };
 
     var json_tree = blk: {
-        var parser = json.Parser.init(allocator, false); // false is copy_strings
-        defer parser.deinit();
+        //var parser = json.Parser.init(allocator, false); // false is copy_strings
+        //defer parser.deinit();
 
         const start = if (std.mem.startsWith(u8, content, "\xEF\xBB\xBF")) 3 else @as(usize, 0);
         const json_content = content[start..];
         std.log.info("parsing '{s}'...", .{filename});
-        break :blk try parser.parse(json_content);
+        //break :blk try parser.parse(json_content);
+        // TODO: parseFromSliceLeaky?
+        break :blk try json.parseFromSlice(json.Value, allocator, json_content, .{});
     };
-    return json_tree.root.Object;
+    return json_tree.value.object;
 }
 
 fn gatherSdkFiles(sdk_files: *ArrayList(*SdkFile), module: *Module) anyerror!void {
@@ -405,7 +407,7 @@ fn gatherSdkFiles(sdk_files: *ArrayList(*SdkFile), module: *Module) anyerror!voi
     }
     const children = try common.allocMapValues(allocator, *Module, module.children);
     defer allocator.free(children);
-    std.sort.sort(*Module, children, {}, moduleLessThan); // sort so the order is predictable
+    std.mem.sort(*Module, children, {}, moduleLessThan); // sort so the order is predictable
     for (children) |child| {
         try gatherSdkFiles(sdk_files, child);
     }
@@ -516,7 +518,7 @@ fn generateContainerModules(dir: std.fs.Dir, module: *Module) anyerror!void {
     const children = try common.allocMapValues(allocator, *Module, module.children);
     defer allocator.free(children);
 
-    std.sort.sort(*Module, children, {}, moduleLessThan);
+    std.mem.sort(*Module, children, {}, moduleLessThan);
     if (module.file) |_| {
         try writer.print("//--------------------------------------------------------------------------------\n", .{});
         try writer.print("// Section: SubModules ({})\n", .{children.len});
@@ -555,9 +557,10 @@ fn readAndGenerateApiFile(root_module: *Module, out_dir: std.fs.Dir, json_basena
 
     // Parsing the JSON is VERY VERY SLOW!!!!!!
     var json_tree = blk: {
-        var parser = json.Parser.init(allocator, false); // false is copy_strings
-        defer parser.deinit();
-        break :blk try parser.parse(content);
+        //var parser = json.Parser.init(allocator, false); // false is copy_strings
+        //defer parser.deinit();
+        //break :blk try parser.parse(content);
+        break :blk try json.parseFromSlice(json.Value, allocator, content, .{});
     };
     defer json_tree.deinit();
     global_times.parse_time_millis += std.time.milliTimestamp() - read_end_millis;
@@ -604,9 +607,9 @@ fn readAndGenerateApiFile(root_module: *Module, out_dir: std.fs.Dir, json_basena
 
     var not_null_funcs = empty_json_object_map;
     if (global_notnull.get(json_name)) |*api_node| {
-        const api_obj = api_node.Object;
+        const api_obj = api_node.object;
         try jsonObjEnforceKnownFieldsOnly(api_obj, &[_][]const u8{"Functions"}, notnull_filename);
-        not_null_funcs = (try jsonObjGetRequired(api_obj, "Functions", notnull_filename)).Object;
+        not_null_funcs = (try jsonObjGetRequired(api_obj, "Functions", notnull_filename)).object;
     }
 
     module.file = SdkFile{
@@ -643,7 +646,7 @@ fn ArchSpecificMap(comptime T: type) type {
     return StringPoolArrayHashMap(ArchSpecificObjects(T));
 }
 
-fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.ValueTree) !void {
+fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.Parsed(json.Value)) !void {
     const sdk_file = &module.file.?;
 
     var out_file = try module_dir.createFile(module.zig_basename, .{});
@@ -657,16 +660,16 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.ValueTree) !
     try writer.writeBlock(autogen_header);
     // We can't import the everything module because it will re-introduce the same symbols we are exporting
     //try writer.print("usingnamespace @import(\"everything.zig\");\n", .{});
-    const root_obj = tree.root.Object;
-    const constants_array = (try jsonObjGetRequired(root_obj, "Constants", sdk_file)).Array;
-    const types_array = (try jsonObjGetRequired(root_obj, "Types", sdk_file)).Array;
-    const functions_array = (try jsonObjGetRequired(root_obj, "Functions", sdk_file)).Array;
-    const unicode_aliases = (try jsonObjGetRequired(root_obj, "UnicodeAliases", sdk_file)).Array;
+    const root_obj = tree.value.object;
+    const constants_array = (try jsonObjGetRequired(root_obj, "Constants", sdk_file)).array;
+    const types_array = (try jsonObjGetRequired(root_obj, "Types", sdk_file)).array;
+    const functions_array = (try jsonObjGetRequired(root_obj, "Functions", sdk_file)).array;
+    const unicode_aliases = (try jsonObjGetRequired(root_obj, "UnicodeAliases", sdk_file)).array;
     try writer.line("//--------------------------------------------------------------------------------");
     try writer.linef("// Section: Constants ({})", .{constants_array.items.len});
     try writer.line("//--------------------------------------------------------------------------------");
     for (constants_array.items) |*constant_node_ptr| {
-        try generateConstant(sdk_file, writer, constant_node_ptr.Object);
+        try generateConstant(sdk_file, writer, constant_node_ptr.object);
     }
     std.debug.assert(constants_array.items.len == sdk_file.const_exports.items.len);
     try writer.line("");
@@ -679,7 +682,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.ValueTree) !
         var enum_alias_conflicts = StringPool.HashMap(StringPool.Val).init(allocator);
         defer enum_alias_conflicts.deinit();
         for (types_array.items) |*type_node_ptr| {
-            try generateType(sdk_file, writer, &arch_specific_types, type_node_ptr.Object, &enum_alias_conflicts);
+            try generateType(sdk_file, writer, &arch_specific_types, type_node_ptr.object, &enum_alias_conflicts);
             try writer.line("");
         }
         var it = arch_specific_types.iterator();
@@ -691,7 +694,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.ValueTree) !
                 combined_arches |= object.arches.flags;
                 var buf: [40]u8 = undefined;
                 const def_prefix = buf[0..try object.arches.formatCase(&buf)];
-                const kind = (try jsonObjGetRequired(object.obj, "Kind", sdk_file)).String;
+                const kind = (try jsonObjGetRequired(object.obj, "Kind", sdk_file)).string;
                 writer.depth += 1;
                 defer writer.depth -= 1;
                 try generateTypeDefinition(sdk_file, writer, object.obj, &enum_alias_conflicts, object.arches, kind, name, def_prefix, ",");
@@ -708,7 +711,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.ValueTree) !
     try writer.linef("// Section: Functions ({})", .{functions_array.items.len});
     try writer.line("//--------------------------------------------------------------------------------");
     for (functions_array.items) |*function_node_ptr| {
-        try generateFunction(sdk_file, writer, function_node_ptr.Object, .fixed);
+        try generateFunction(sdk_file, writer, function_node_ptr.object, .fixed);
         try writer.line("");
     }
     std.debug.assert(functions_array.items.len >= sdk_file.func_exports.count());
@@ -717,7 +720,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.ValueTree) !
     try writer.linef("// Section: Unicode Aliases ({})", .{unicode_aliases.items.len});
     try writer.line("//--------------------------------------------------------------------------------");
     try generateUnicodeAliases(sdk_file, writer, unicode_aliases.items);
-    const import_total = @boolToInt(sdk_file.uses_guid) + sdk_file.top_level_api_imports.count();
+    const import_total = @intFromBool(sdk_file.uses_guid) + sdk_file.top_level_api_imports.count();
     try writer.line("//--------------------------------------------------------------------------------");
     try writer.linef("// Section: Imports ({})", .{import_total});
     try writer.line("//--------------------------------------------------------------------------------");
@@ -743,7 +746,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.ValueTree) !
                 try sorted_imports.append(.{ .name = entry.key_ptr.*, .import = entry.value_ptr.* });
             }
         }
-        std.sort.sort(NamedApiImport, sorted_imports.items, Nothing{}, NamedApiImport.asciiLessThanIgnoreCase);
+        std.mem.sort(NamedApiImport, sorted_imports.items, Nothing{}, NamedApiImport.asciiLessThanIgnoreCase);
 
         // print the arch-agnostic imports first
         for (sorted_imports.items) |import| {
@@ -832,9 +835,9 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.ValueTree) !
 }
 
 fn typeIsVoid(type_obj: json.ObjectMap, sdk_file: *SdkFile) !bool {
-    const kind = (try jsonObjGetRequired(type_obj, "Kind", sdk_file)).String;
+    const kind = (try jsonObjGetRequired(type_obj, "Kind", sdk_file)).string;
     if (std.mem.eql(u8, kind, "Native")) {
-        const name = (try jsonObjGetRequired(type_obj, "Name", sdk_file)).String;
+        const name = (try jsonObjGetRequired(type_obj, "Name", sdk_file)).string;
         return std.mem.eql(u8, name, "void");
     }
     return false;
@@ -860,10 +863,10 @@ fn addTypeRefs(sdk_file: *SdkFile, arches: ArchFlags, type_ref: json.ObjectMap, 
 }
 
 fn addTypeRefsNoFormatter(sdk_file: *SdkFile, arches: ArchFlags, type_ref: json.ObjectMap) anyerror!void {
-    const kind = (try jsonObjGetRequired(type_ref, "Kind", sdk_file)).String;
+    const kind = (try jsonObjGetRequired(type_ref, "Kind", sdk_file)).string;
     if (std.mem.eql(u8, kind, "Native")) {
         try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8{ "Kind", "Name" }, sdk_file);
-        const name = (try jsonObjGetRequired(type_ref, "Name", sdk_file)).String;
+        const name = (try jsonObjGetRequired(type_ref, "Name", sdk_file)).string;
         if (std.mem.eql(u8, name, "Void")) {
             // void is special
         } else if (std.mem.eql(u8, name, "Guid")) {
@@ -873,19 +876,19 @@ fn addTypeRefsNoFormatter(sdk_file: *SdkFile, arches: ArchFlags, type_ref: json.
         }
     } else if (std.mem.eql(u8, kind, "ApiRef")) {
         try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8{ "Kind", "Name", "TargetKind", "Api", "Parents" }, sdk_file);
-        const tmp_name = (try jsonObjGetRequired(type_ref, "Name", sdk_file)).String;
-        const api = (try jsonObjGetRequired(type_ref, "Api", sdk_file)).String;
-        const parents = (try jsonObjGetRequired(type_ref, "Parents", sdk_file)).Array;
+        const tmp_name = (try jsonObjGetRequired(type_ref, "Name", sdk_file)).string;
+        const api = (try jsonObjGetRequired(type_ref, "Api", sdk_file)).string;
+        const parents = (try jsonObjGetRequired(type_ref, "Parents", sdk_file)).array;
         try sdk_file.addApiImport(arches, tmp_name, api, parents);
     } else if (std.mem.eql(u8, kind, "PointerTo")) {
         try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8{ "Kind", "Child" }, sdk_file);
-        try addTypeRefsNoFormatter(sdk_file, arches, (try jsonObjGetRequired(type_ref, "Child", sdk_file)).Object);
+        try addTypeRefsNoFormatter(sdk_file, arches, (try jsonObjGetRequired(type_ref, "Child", sdk_file)).object);
     } else if (std.mem.eql(u8, kind, "Array")) {
         try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8{ "Kind", "Shape", "Child" }, sdk_file);
-        try addTypeRefsNoFormatter(sdk_file, arches, (try jsonObjGetRequired(type_ref, "Child", sdk_file)).Object);
+        try addTypeRefsNoFormatter(sdk_file, arches, (try jsonObjGetRequired(type_ref, "Child", sdk_file)).object);
     } else if (std.mem.eql(u8, kind, "LPArray")) {
         try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8{ "Kind", "NullNullTerm", "CountConst", "CountParamIndex", "Child" }, sdk_file);
-        try addTypeRefsNoFormatter(sdk_file, arches, (try jsonObjGetRequired(type_ref, "Child", sdk_file)).Object);
+        try addTypeRefsNoFormatter(sdk_file, arches, (try jsonObjGetRequired(type_ref, "Child", sdk_file)).object);
     } else if (std.mem.eql(u8, kind, "MissingClrType")) {
         try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8{ "Kind", "Name", "Namespace" }, sdk_file);
     } else {
@@ -913,8 +916,8 @@ const NestedContext = struct {
     pub fn contains(self: NestedContext, name: []const u8) bool {
         std.debug.assert(self.nested_types.items.len > 0);
         for (self.nested_types.items) |*nested_type_node_ptr| {
-            const nested_type_obj = nested_type_node_ptr.Object;
-            const nested_name = (nested_type_obj.get("Name") orelse jsonPanic()).String;
+            const nested_type_obj = nested_type_node_ptr.object;
+            const nested_name = (nested_type_obj.get("Name") orelse jsonPanic()).string;
             if (std.mem.eql(u8, nested_name, name))
                 return true;
         }
@@ -970,11 +973,11 @@ fn generateTypeRef(sdk_file: *SdkFile, writer: *CodeWriter, self: TypeRefFormatt
     try generateTypeRefRec(sdk_file, writer, self, .top_level);
 }
 fn generateTypeRefRec(sdk_file: *SdkFile, writer: *CodeWriter, self: TypeRefFormatter, depth_context: DepthContext) anyerror!void {
-    const kind = (try jsonObjGetRequired(self.type_ref, "Kind", sdk_file)).String;
+    const kind = (try jsonObjGetRequired(self.type_ref, "Kind", sdk_file)).string;
 
     if (std.mem.eql(u8, kind, "Native")) {
         try jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8{ "Kind", "Name" }, sdk_file);
-        const name = (try jsonObjGetRequired(self.type_ref, "Name", sdk_file)).String;
+        const name = (try jsonObjGetRequired(self.type_ref, "Name", sdk_file)).string;
         if (std.mem.eql(u8, name, "Void")) {
             const type_name: []const u8 = switch (depth_context) {
                 .top_level => "void",
@@ -992,8 +995,8 @@ fn generateTypeRefRec(sdk_file: *SdkFile, writer: *CodeWriter, self: TypeRefForm
         }
     } else if (std.mem.eql(u8, kind, "ApiRef")) {
         try jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8{ "Kind", "Name", "TargetKind", "Api", "Parents" }, sdk_file);
-        const name = (try jsonObjGetRequired(self.type_ref, "Name", sdk_file)).String;
-        const api = (try jsonObjGetRequired(self.type_ref, "Api", sdk_file)).String;
+        const name = (try jsonObjGetRequired(self.type_ref, "Name", sdk_file)).string;
+        const api = (try jsonObjGetRequired(self.type_ref, "Api", sdk_file)).string;
 
         if (getAnonKind(name)) |anon_kind| {
             const anon_types = self.options.anon_types orelse
@@ -1006,11 +1009,11 @@ fn generateTypeRefRec(sdk_file: *SdkFile, writer: *CodeWriter, self: TypeRefForm
             return;
         }
 
-        const parents = (try jsonObjGetRequired(self.type_ref, "Parents", sdk_file)).Array;
+        const parents = (try jsonObjGetRequired(self.type_ref, "Parents", sdk_file)).array;
 
         const type_kind_category = blk: {
             const pass1_api_map = (global_pass1.get(api) orelse
-                jsonPanicMsg("type '{s}' is from API '{s}' that is missing from pass1 data", .{ name, api })).Object;
+                jsonPanicMsg("type '{s}' is from API '{s}' that is missing from pass1 data", .{ name, api })).object;
             const pass1_type_obj = (pass1_api_map.get(name) orelse {
                 if (parents.items.len == 0) {
                     const in_nested_context = if (self.nested_context) |c| c.contains(name) else false;
@@ -1020,9 +1023,9 @@ fn generateTypeRefRec(sdk_file: *SdkFile, writer: *CodeWriter, self: TypeRefForm
                 }
                 // this means its a nested type which are always structs/unions
                 break :blk Pass1TypeKindCategory.default;
-            }).Object;
+            }).object;
             try jsonObjEnforceKnownFieldsOnly(pass1_type_obj, &[_][]const u8{"Kind"}, sdk_file);
-            const type_kind = (try jsonObjGetRequired(pass1_type_obj, "Kind", sdk_file)).String;
+            const type_kind = (try jsonObjGetRequired(pass1_type_obj, "Kind", sdk_file)).string;
             break :blk pass1_type_kind_info.get(type_kind) orelse
                 jsonPanicMsg("unknown pass1 type kind '{s}'", .{type_kind});
         };
@@ -1071,13 +1074,13 @@ fn generateTypeRefRec(sdk_file: *SdkFile, writer: *CodeWriter, self: TypeRefForm
         // for now, all nested type references MUST be in the same scope so this
         // just causes issues
         //for (parents.items) |*parent_ptr| {
-        //    try writer.writef("{s}", .{parent_ptr.String}, .{.start=.any,.nl=false});
+        //    try writer.writef("{s}", .{parent_ptr.string}, .{.start=.any,.nl=false});
         //    try writer.write(".", .{.start=.any,.nl=false});
         //}
         try writer.writef("{s}", .{name}, .{ .start = .any, .nl = false });
     } else if (std.mem.eql(u8, kind, "PointerTo")) {
         try jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8{ "Kind", "Child" }, sdk_file);
-        const child = (try jsonObjGetRequired(self.type_ref, "Child", sdk_file)).Object;
+        const child = (try jsonObjGetRequired(self.type_ref, "Child", sdk_file)).object;
         var child_options = self.options;
         if (self.options.reason == .var_decl and self.options.null_modifier & 1 == 0) {
             try writer.write("?", .{ .start = .any, .nl = false });
@@ -1091,14 +1094,14 @@ fn generateTypeRefRec(sdk_file: *SdkFile, writer: *CodeWriter, self: TypeRefForm
         try generateTypeRefRec(sdk_file, writer, fmtTypeRef(child, self.arches, child_options, self.nested_context), .child);
     } else if (std.mem.eql(u8, kind, "Array")) {
         try jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8{ "Kind", "Shape", "Child" }, sdk_file);
-        const child = (try jsonObjGetRequired(self.type_ref, "Child", sdk_file)).Object;
+        const child = (try jsonObjGetRequired(self.type_ref, "Child", sdk_file)).object;
         const shape_size = init: {
             switch (try jsonObjGetRequired(self.type_ref, "Shape", sdk_file)) {
                 // TODO: should we use size 1 here?
-                .Null => break :init 1,
-                .Object => |shape_obj| {
+                .null => break :init 1,
+                .object => |shape_obj| {
                     try jsonObjEnforceKnownFieldsOnly(shape_obj, &[_][]const u8{"Size"}, sdk_file);
-                    break :init (try jsonObjGetRequired(shape_obj, "Size", sdk_file)).Integer;
+                    break :init (try jsonObjGetRequired(shape_obj, "Size", sdk_file)).integer;
                 },
                 else => jsonPanic(),
             }
@@ -1107,14 +1110,14 @@ fn generateTypeRefRec(sdk_file: *SdkFile, writer: *CodeWriter, self: TypeRefForm
         try generateTypeRefRec(sdk_file, writer, fmtTypeRef(child, self.arches, self.options, self.nested_context), .child);
     } else if (std.mem.eql(u8, kind, "LPArray")) {
         try jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8{ "Kind", "NullNullTerm", "CountConst", "CountParamIndex", "Child" }, sdk_file);
-        const null_null_term = (try jsonObjGetRequired(self.type_ref, "NullNullTerm", sdk_file)).Bool;
-        const count_const = (try jsonObjGetRequired(self.type_ref, "CountConst", sdk_file)).Integer;
-        const count_param_index = (try jsonObjGetRequired(self.type_ref, "CountParamIndex", sdk_file)).Integer;
+        const null_null_term = (try jsonObjGetRequired(self.type_ref, "NullNullTerm", sdk_file)).bool;
+        const count_const = (try jsonObjGetRequired(self.type_ref, "CountConst", sdk_file)).integer;
+        const count_param_index = (try jsonObjGetRequired(self.type_ref, "CountParamIndex", sdk_file)).integer;
         _ = count_param_index; // ignored for now
-        const type_ref_kind = (try jsonObjGetRequired(self.type_ref, "Kind", sdk_file)).String;
+        const type_ref_kind = (try jsonObjGetRequired(self.type_ref, "Kind", sdk_file)).string;
         _ = type_ref_kind; // ignored for now
         // TODO: can Zig use count_param_index?
-        const child = (try jsonObjGetRequired(self.type_ref, "Child", sdk_file)).Object;
+        const child = (try jsonObjGetRequired(self.type_ref, "Child", sdk_file)).object;
         var child_options = self.options;
         if (self.options.optional) {
             child_options.optional = false;
@@ -1139,8 +1142,8 @@ fn generateTypeRefRec(sdk_file: *SdkFile, writer: *CodeWriter, self: TypeRefForm
         }
     } else if (std.mem.eql(u8, kind, "MissingClrType")) {
         try jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8{ "Kind", "Name", "Namespace" }, sdk_file);
-        const name = (try jsonObjGetRequired(self.type_ref, "Name", sdk_file)).String;
-        const namespace = (try jsonObjGetRequired(self.type_ref, "Namespace", sdk_file)).String;
+        const name = (try jsonObjGetRequired(self.type_ref, "Name", sdk_file)).string;
+        const namespace = (try jsonObjGetRequired(self.type_ref, "Namespace", sdk_file)).string;
         try writer.writef("*struct{{comment: []const u8 = \"MissingClrType {s}.{s}\"}}", .{ name, namespace }, .{ .start = .any, .nl = false });
     } else {
         jsonPanicMsg("fmtTypeRef kind '{s}' is not implemented", .{kind});
@@ -1148,11 +1151,11 @@ fn generateTypeRefRec(sdk_file: *SdkFile, writer: *CodeWriter, self: TypeRefForm
 }
 
 fn isByteOrCharOrUInt16Type(type_obj: json.ObjectMap, sdk_file: *SdkFile) bool {
-    const kind = (try jsonObjGetRequired(type_obj, "Kind", sdk_file)).String;
+    const kind = (try jsonObjGetRequired(type_obj, "Kind", sdk_file)).string;
     if (!std.mem.eql(u8, kind, "Native"))
         return false;
 
-    const name = (try jsonObjGetRequired(type_obj, "Name", sdk_file)).String;
+    const name = (try jsonObjGetRequired(type_obj, "Name", sdk_file)).string;
     if (std.mem.eql(u8, name, "Void"))
         return false;
     const native_type = global_native_type_map.get(name) orelse jsonPanicMsg("unknown Native type '{s}'", .{name});
@@ -1184,7 +1187,7 @@ const ConstValueFormatter = struct {
         const zig_type = valueTypeToZigType(self.value_type);
         if (self.value_type == .Single or self.value_type == .Double) {
             switch (self.value) {
-                .String => |float_str| {
+                .string => |float_str| {
                     if (std.mem.eql(u8, float_str, "inf")) {
                         try writer.print("@import(\"std\").math.inf({s})", .{zig_type});
                         return;
@@ -1262,12 +1265,12 @@ const constants_to_skip = std.ComptimeStringMap(Nothing, .{
 });
 fn generateConstant(sdk_file: *SdkFile, writer: *CodeWriter, constant_obj: json.ObjectMap) !void {
     try jsonObjEnforceKnownFieldsOnly(constant_obj, &[_][]const u8{ "Name", "Type", "Value", "ValueType", "Attrs" }, sdk_file);
-    const name_tmp = (try jsonObjGetRequired(constant_obj, "Name", sdk_file)).String;
-    const type_ref = (try jsonObjGetRequired(constant_obj, "Type", sdk_file)).Object;
-    const value_type_str = (try jsonObjGetRequired(constant_obj, "ValueType", sdk_file)).String;
+    const name_tmp = (try jsonObjGetRequired(constant_obj, "Name", sdk_file)).string;
+    const type_ref = (try jsonObjGetRequired(constant_obj, "Type", sdk_file)).object;
+    const value_type_str = (try jsonObjGetRequired(constant_obj, "ValueType", sdk_file)).string;
     const value_node = try jsonObjGetRequired(constant_obj, "Value", sdk_file);
 
-    const attrs_node = (try jsonObjGetRequired(constant_obj, "Attrs", sdk_file)).Array;
+    const attrs_node = (try jsonObjGetRequired(constant_obj, "Attrs", sdk_file)).array;
     _ = attrs_node; // TODO: handle Attrs
 
     const name_pool = try global_symbol_pool.add(name_tmp);
@@ -1282,11 +1285,11 @@ fn generateConstant(sdk_file: *SdkFile, writer: *CodeWriter, constant_obj: json.
     }
     const zig_type_formatter = try addTypeRefs(sdk_file, ArchFlags.all, type_ref, .{ .reason = .direct_type_access, .is_const = true, .in = false, .out = false, .anon_types = null, .null_modifier = 0 }, null);
 
-    const kind = (jsonObjGetRequired(type_ref, "Kind", sdk_file) catch unreachable).String;
+    const kind = (jsonObjGetRequired(type_ref, "Kind", sdk_file) catch unreachable).string;
     if (std.mem.eql(u8, kind, "Native")) {
         jsonEnforce(value_type != .PropertyKey);
         jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8{ "Kind", "Name" }, sdk_file) catch unreachable;
-        const name = (jsonObjGetRequired(type_ref, "Name", sdk_file) catch unreachable).String;
+        const name = (jsonObjGetRequired(type_ref, "Name", sdk_file) catch unreachable).string;
         const native_type = global_native_type_map.get(name) orelse std.debug.panic("unknown Native type '{s}'", .{name});
         if (native_type == .Guid) {
             try writer.linef("pub const {s} = Guid.initString({});", .{ name_pool, fmtConstValue(value_type, value_node, sdk_file) });
@@ -1296,12 +1299,12 @@ fn generateConstant(sdk_file: *SdkFile, writer: *CodeWriter, constant_obj: json.
     } else {
         if (value_type == .PropertyKey) {
             const value_obj = switch (value_node) {
-                .Object => |obj| obj,
+                .object => |obj| obj,
                 else => jsonPanicMsg("expected PropertyKey to be an object but got: {s}", .{fmtJson(value_node)}),
             };
             try jsonObjEnforceKnownFieldsOnly(value_obj, &[_][]const u8{ "Fmtid", "Pid" }, sdk_file);
-            const fmtid = (try jsonObjGetRequired(value_obj, "Fmtid", sdk_file)).String;
-            const pid = (try jsonObjGetRequired(value_obj, "Pid", sdk_file)).Integer;
+            const fmtid = (try jsonObjGetRequired(value_obj, "Fmtid", sdk_file)).string;
+            const pid = (try jsonObjGetRequired(value_obj, "Pid", sdk_file)).integer;
             try writer.writef("pub const {s} = ", .{name_pool}, .{ .nl = false });
             try generateTypeRef(sdk_file, writer, zig_type_formatter);
             sdk_file.uses_guid = true;
@@ -1406,19 +1409,19 @@ fn generateType(
     type_obj: json.ObjectMap,
     enum_alias_conflicts: *StringPool.HashMap(StringPool.Val),
 ) !void {
-    const arches = ArchFlags.initJson((try jsonObjGetRequired(type_obj, "Architectures", sdk_file)).Array.items);
+    const arches = ArchFlags.initJson((try jsonObjGetRequired(type_obj, "Architectures", sdk_file)).array.items);
     {
         const platform_node = try jsonObjGetRequired(type_obj, "Platform", sdk_file);
         try generatePlatformComment(writer, platform_node);
     }
-    const kind = (try jsonObjGetRequired(type_obj, "Kind", sdk_file)).String;
-    const tmp_name = (try jsonObjGetRequired(type_obj, "Name", sdk_file)).String;
+    const kind = (try jsonObjGetRequired(type_obj, "Kind", sdk_file)).string;
+    const tmp_name = (try jsonObjGetRequired(type_obj, "Name", sdk_file)).string;
 
     if (std.mem.eql(u8, kind, "ComClassID")) {
         if (arches.flags != ArchFlags.all.flags)
             jsonPanicMsg("not impl", .{});
         try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8{ "Name", "Platform", "Architectures", "Kind", "Guid" }, sdk_file);
-        const guid = (try jsonObjGetRequired(type_obj, "Guid", sdk_file)).String;
+        const guid = (try jsonObjGetRequired(type_obj, "Guid", sdk_file)).string;
         const clsid_pool = try global_symbol_pool.addFormatted("CLSID_{s}", .{tmp_name});
         sdk_file.uses_guid = true;
         try writer.linef("const {s}_Value = Guid.initString(\"{s}\");", .{ clsid_pool, guid });
@@ -1468,10 +1471,10 @@ fn generateTypeDefinition(
     if (std.mem.eql(u8, kind, "NativeTypedef")) {
         try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8{ "Name", "Platform", "Architectures", "AlsoUsableFor", "Kind", "Def", "FreeFunc" }, sdk_file);
         const also_usable_for_node = try jsonObjGetRequired(type_obj, "AlsoUsableFor", sdk_file);
-        const def_type = (try jsonObjGetRequired(type_obj, "Def", sdk_file)).Object;
+        const def_type = (try jsonObjGetRequired(type_obj, "Def", sdk_file)).object;
         const optional_free_func: ?[]const u8 = switch (try jsonObjGetRequired(type_obj, "FreeFunc", sdk_file)) {
-            .Null => null,
-            .String => |s| s,
+            .null => null,
+            .string => |s| s,
             else => jsonPanic(),
         };
         if (optional_free_func) |free_func| {
@@ -1489,14 +1492,14 @@ fn generateTypeDefinition(
             //
             // verify the definition is what we expect, if not, we might be able to remove out workaround
             //
-            const def_kind = (try jsonObjGetRequired(def_type, "Kind", sdk_file)).String;
+            const def_kind = (try jsonObjGetRequired(def_type, "Kind", sdk_file)).string;
             jsonEnforceMsg(std.mem.eql(u8, def_kind, "PointerTo"), "definition of {s} has changed! (Def.Kind != PointerTo, it is {s})", .{ pool_name, def_kind });
             try jsonObjEnforceKnownFieldsOnly(def_type, &[_][]const u8{ "Kind", "Child" }, sdk_file);
-            const child_type = (try jsonObjGetRequired(def_type, "Child", sdk_file)).Object;
-            const child_kind = (try jsonObjGetRequired(child_type, "Kind", sdk_file)).String;
+            const child_type = (try jsonObjGetRequired(def_type, "Child", sdk_file)).object;
+            const child_kind = (try jsonObjGetRequired(child_type, "Kind", sdk_file)).string;
             jsonEnforceMsg(std.mem.eql(u8, child_kind, "Native"), "definition of {s} has changed! (Def.Child.Kind != Native", .{pool_name});
             try jsonObjEnforceKnownFieldsOnly(child_type, &[_][]const u8{ "Kind", "Name" }, sdk_file);
-            const child_native_name = (try jsonObjGetRequired(child_type, "Name", sdk_file)).String;
+            const child_native_name = (try jsonObjGetRequired(child_type, "Name", sdk_file)).string;
             // TODO: is something is referencing PSTR or PWSTR and is NotNullTerm, then
             //       maybe I'll do something like @import("zig.zig").NotNullTerm(PSTR)
             const native_type = global_native_type_map.get(child_native_name) orelse jsonPanic();
@@ -1515,7 +1518,7 @@ fn generateTypeDefinition(
         }
 
         switch (also_usable_for_node) {
-            .String => |also_usable_for| {
+            .string => |also_usable_for| {
                 if (also_usable_type_api_map.get(also_usable_for)) |api| {
                     try sdk_file.addApiImport(arches, also_usable_for, api, json.Array{ .items = &[_]json.Value{}, .capacity = 0, .allocator = allocator });
                     try writer.linef("//TODO: type '{s}' is \"AlsoUsableFor\" '{s}' which means this type is implicitly", .{ pool_name, also_usable_for });
@@ -1526,7 +1529,7 @@ fn generateTypeDefinition(
                 } else std.debug.panic("AlsoUsableFor type '{s}' is missing from alsoUsableForApiMap", .{also_usable_for});
                 return;
             },
-            .Null => {},
+            .null => {},
             else => jsonPanic(),
         }
 
@@ -1613,10 +1616,10 @@ const com_types_to_skip = std.ComptimeStringMap(Nothing, .{
 
 fn generatePlatformComment(writer: *CodeWriter, platform_node: std.json.Value) !void {
     switch (platform_node) {
-        .String => |platform| {
+        .string => |platform| {
             try writer.linef("// TODO: this type is limited to platform '{s}'", .{platform});
         },
-        .Null => {},
+        .null => {},
         else => jsonPanic(),
     }
 }
@@ -1642,11 +1645,11 @@ fn generateStructOrUnion(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json
 
 fn generateStructOrUnionDef(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap, arches: ArchFlags, kind: ContainerKind, nested_context: ?*const NestedContext) anyerror!void {
     try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8{ "Kind", "Name", "Platform", "Architectures", "Size", "PackingSize", "Fields", "Comment", "NestedTypes" }, sdk_file);
-    const struct_size = (try jsonObjGetRequired(type_obj, "Size", sdk_file)).Integer;
+    const struct_size = (try jsonObjGetRequired(type_obj, "Size", sdk_file)).integer;
     _ = struct_size; // ignored for now
-    const struct_packing_size = (try jsonObjGetRequired(type_obj, "PackingSize", sdk_file)).Integer;
-    const struct_fields = (try jsonObjGetRequired(type_obj, "Fields", sdk_file)).Array;
-    const struct_nested_types = (try jsonObjGetRequired(type_obj, "NestedTypes", sdk_file)).Array;
+    const struct_packing_size = (try jsonObjGetRequired(type_obj, "PackingSize", sdk_file)).integer;
+    const struct_fields = (try jsonObjGetRequired(type_obj, "Fields", sdk_file)).array;
+    const struct_nested_types = (try jsonObjGetRequired(type_obj, "NestedTypes", sdk_file)).array;
 
     const zig_type = if (kind == .Struct) "struct" else "union";
 
@@ -1664,10 +1667,10 @@ fn generateStructOrUnionDef(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: j
     const this_nested_context = if (struct_nested_types.items.len > 0) &this_nested_context_data else nested_context;
 
     for (struct_nested_types.items) |*nested_type_node_ptr| {
-        const nested_type_obj = nested_type_node_ptr.Object;
-        const nested_kind = (try jsonObjGetRequired(nested_type_obj, "Kind", sdk_file)).String;
-        const nested_tmp_name = (try jsonObjGetRequired(nested_type_obj, "Name", sdk_file)).String;
-        const architectures = (try jsonObjGetRequired(nested_type_obj, "Architectures", sdk_file)).Array;
+        const nested_type_obj = nested_type_node_ptr.object;
+        const nested_kind = (try jsonObjGetRequired(nested_type_obj, "Kind", sdk_file)).string;
+        const nested_tmp_name = (try jsonObjGetRequired(nested_type_obj, "Name", sdk_file)).string;
+        const architectures = (try jsonObjGetRequired(nested_type_obj, "Architectures", sdk_file)).array;
         const pool_name = try global_symbol_pool.add(nested_tmp_name);
         if (getAnonKind(nested_tmp_name)) |_| {
             if (architectures.items.len > 0) // we don't handle architectures in this case
@@ -1691,11 +1694,11 @@ fn generateStructOrUnionDef(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: j
         try writer.line("placeholder: usize, // TODO: why is this type empty?");
     } else {
         for (struct_fields.items) |*field_node_ptr| {
-            const field_obj = field_node_ptr.Object;
+            const field_obj = field_node_ptr.object;
             try jsonObjEnforceKnownFieldsOnly(field_obj, &[_][]const u8{ "Name", "Type", "Attrs" }, sdk_file);
-            const field_name = (try jsonObjGetRequired(field_obj, "Name", sdk_file)).String;
-            const field_type = (try jsonObjGetRequired(field_obj, "Type", sdk_file)).Object;
-            const field_attrs = (try jsonObjGetRequired(field_obj, "Attrs", sdk_file)).Array;
+            const field_name = (try jsonObjGetRequired(field_obj, "Name", sdk_file)).string;
+            const field_type = (try jsonObjGetRequired(field_obj, "Type", sdk_file)).object;
+            const field_attrs = (try jsonObjGetRequired(field_obj, "Attrs", sdk_file)).array;
             // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             // TODO: implement null_modifier
@@ -1703,7 +1706,7 @@ fn generateStructOrUnionDef(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: j
             // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             var field_options = TypeRefFormatter.Options{ .reason = .var_decl, .anon_types = &anon_types, .null_modifier = 0 };
             for (field_attrs.items) |*attr_node_ptr| {
-                const attr_str = attr_node_ptr.String;
+                const attr_str = attr_node_ptr.string;
                 if (std.mem.eql(u8, attr_str, "Const")) {
                     field_options.is_const = true;
                 } else if (std.mem.eql(u8, attr_str, "NotNullTerminated")) {
@@ -1763,103 +1766,107 @@ fn shortEnumValueName(enum_type_name: []const u8, full_value_name: []const u8) [
 }
 
 // TODO: this is a set of enums whose value symbols conflict with other symbols
-const suppress_enum_aliases = std.ComptimeStringMap(Nothing, .{
-    // suppress this one because the CFE_UNDERLINE enum value alias conflicts with the name of an enum type
-    .{ "CFE_EFFECTS", .{} },
-    // these types have values that conflict with their own enum type name
-    .{ "INTERNET_DEFAULT_PORT", .{} },
-    .{ "PDH_VERSION", .{} },
-    .{ "POWER_PLATFORM_ROLE_VERSION", .{} },
-    // --------------------------------------------------------------------------------
-    // suppress these enum value aliases because there is already a constant with the same name
-    // --------------------------------------------------------------------------------
-    .{ "JsRuntimeVersion", .{} },
-    .{ "GetIconInfo_hicon", .{} },
-    .{ "PFN_WdsCliCallback_dwMessageIdFlags", .{} },
-    .{ "MIB_IPFORWARD_TYPE", .{} },
-    .{ "OLEMISC", .{} },
-    .{ "IMAGEHLP_CBA_EVENT_SEVERITY", .{} },
-    .{ "PFN_WDS_CLI_CALLBACK_MESSAGE_ID", .{} },
-    // --------------------------------------------------------------------------------
-    // suppress the rest because there is another enum with the same enum value alias
-    // --------------------------------------------------------------------------------
-    // Security
-    .{ "NCrypt_dwFlags", .{} },
-    .{ "IAzClientContext3_GetGroups_ulOptionsFlags", .{} },
-    .{ "NCryptNotifyChangeKey_dwFlags", .{} },
-    .{ "SECPKG_ATTR_1", .{} },
-    .{ "CryptImportPKCS8_dwFlags", .{} },
-    .{ "NCryptDecrypt_dwFlags", .{} },
-    .{ "KERB_CERTIFICATE_LOGON_MessageTypeFlags", .{} },
-    .{ "SC_ACTION_TypeFlags", .{} },
-    .{ "IIdentityProvider_Advise_dwIdentityUpdateEventsFlags", .{} },
-    .{ "CRYPT_KEY_PROV_FLAGS", .{} },
-    // WindowsProgramming
-    .{ "VER_MASK", .{} },
-    .{ "SetHandleInformation_dwFlags", .{} },
-    .{ "DuplicateHandle_dwOptionsFlags", .{} },
-    .{ "REG_OPEN_CREATE_OPTIONS", .{} },
-    // SystemServices
-    .{ "QueryInformationJobObject_JobObjectInformationClassFlags", .{} },
-    .{ "HeapSetInformation_HeapInformationClassFlags", .{} },
-    .{ "JOBOBJECT_NOTIFICATION_LIMIT_INFORMATION_2_IoRateControlToleranceInterval", .{} },
-    .{ "JOBOBJECT_RATE_CONTROL_TOLERANCE_INTERVAL", .{} },
-    .{ "JOBOBJECT_LIMIT_VIOLATION_INFORMATION_2_RateControlTolerance", .{} },
-    .{ "JOBOBJECT_IO_RATE_CONTROL_INFORMATIONFlags", .{} },
-    .{ "CreateFileMapping_flProtect", .{} },
-    .{ "PFM_FLAGS", .{} },
-    .{ "JOBOBJECT_BASIC_LIMIT_INFORMATIONFlags", .{} },
-    .{ "JOBOBJECT_SECURITY_LIMIT_INFORMATIONFlags", .{} },
-    .{ "JOBOBJECT_BASIC_UI_RESTRICTIONS_UIRestrictionsClassFlags", .{} },
-    // NetManagement
-    .{ "NetWkstaSetInfo_levelFlags", .{} },
-    // ComponentServices
-    .{ "ICOMAdminCatalog2_IsSafeToDelete_pCOMAdminInUseFlags", .{} },
-    .{ "ImportUnconfiguredComponents_pVarComponentType", .{} },
-    .{ "ICOMAdminCatalog_InstallApplication_lOptionsFlags", .{} },
-    .{ "ICOMAdminCatalog_ExportApplication_lOptionsFlags", .{} },
-    .{ "WerRegisterFile_regFileTypeFlags", .{} },
-    .{ "WerReportSubmit_pSubmitResultFlags", .{} },
-    .{ "WerReportCreate_repTypeFlags", .{} },
-    .{ "WerReportSubmit_consentFlags", .{} },
-    // FileSystem
-    .{ "DefineDosDevice_dwFlags", .{} },
-    .{ "CreateFile_dwShareMode", .{} },
-    .{ "CreateLogFile_fCreateDispositionFlags", .{} },
-    .{ "ReOpenFile_dwFlagsAndAttributes", .{} },
-    // Parental Controls
-    .{ "IWindowsParentalControlsCore_GetVisibility_peVisibilityFlags", .{} },
-    .{ "GetRestrictions_pdwRestrictions", .{} },
-    .{ "IWPCWebSettings_GetSettings_pdwSettingsFlags", .{} },
-    // Gdi
-    .{ "CombineRgn_iMode", .{} },
-    .{ "CreateDIBitmap_iUsage", .{} },
-    .{ "PatBlt_ropFlags", .{} },
-    .{ "GetCurrentObject_typeFlags", .{} },
-    .{ "SetROP2_rop2Flags", .{} },
-    // MachineLearning
-    .{ "MLOperatorTensorDataType", .{} },
-    .{ "MLOperatorExecutionType", .{} },
-    .{ "MLOperatorEdgeType", .{} },
-    // Com
-    .{ "IPropertyPageSite_OnStatusChangeFlags", .{} },
-    .{ "IOleControlSite_TransformCoordsFlags", .{} },
-    // ApplicationInstallationAndServicing
-    .{ "LPDISPLAYVAL_uiTypeFlags", .{} },
-    .{ "MsiSourceList_dwContext", .{} },
-    .{ "MsiAdvertiseScript_dwFlags", .{} },
-    .{ "MsiViewModify_eModifyModeFlags", .{} },
-    .{ "MsiCreateTransformSummaryInfo_iErrorConditions", .{} },
-    .{ "MsiCreateTransformSummaryInfo_iValidation", .{} },
-    .{ "MsiEnumClientsEx_dwContext", .{} },
-    // WindowsAndMessaging
-    .{ "DrawIconEx_diFlags", .{} },
-    // Debug
-    .{ "SymGetHomeDirectory_type", .{} },
-    .{ "SymGetSymbolFile_Type", .{} },
-    // Multimedia
-    .{ "MIDI_OPEN_TYPE", .{} },
-});
+const suppress_enum_aliases = blk: {
+    @setEvalBranchQuota(3000);
+    break :blk std.ComptimeStringMap(Nothing, .{
+
+        // suppress this one because the CFE_UNDERLINE enum value alias conflicts with the name of an enum type
+        .{ "CFE_EFFECTS", .{} },
+        // these types have values that conflict with their own enum type name
+        .{ "INTERNET_DEFAULT_PORT", .{} },
+        .{ "PDH_VERSION", .{} },
+        .{ "POWER_PLATFORM_ROLE_VERSION", .{} },
+        // --------------------------------------------------------------------------------
+        // suppress these enum value aliases because there is already a constant with the same name
+        // --------------------------------------------------------------------------------
+        .{ "JsRuntimeVersion", .{} },
+        .{ "GetIconInfo_hicon", .{} },
+        .{ "PFN_WdsCliCallback_dwMessageIdFlags", .{} },
+        .{ "MIB_IPFORWARD_TYPE", .{} },
+        .{ "OLEMISC", .{} },
+        .{ "IMAGEHLP_CBA_EVENT_SEVERITY", .{} },
+        .{ "PFN_WDS_CLI_CALLBACK_MESSAGE_ID", .{} },
+        // --------------------------------------------------------------------------------
+        // suppress the rest because there is another enum with the same enum value alias
+        // --------------------------------------------------------------------------------
+        // Security
+        .{ "NCrypt_dwFlags", .{} },
+        .{ "IAzClientContext3_GetGroups_ulOptionsFlags", .{} },
+        .{ "NCryptNotifyChangeKey_dwFlags", .{} },
+        .{ "SECPKG_ATTR_1", .{} },
+        .{ "CryptImportPKCS8_dwFlags", .{} },
+        .{ "NCryptDecrypt_dwFlags", .{} },
+        .{ "KERB_CERTIFICATE_LOGON_MessageTypeFlags", .{} },
+        .{ "SC_ACTION_TypeFlags", .{} },
+        .{ "IIdentityProvider_Advise_dwIdentityUpdateEventsFlags", .{} },
+        .{ "CRYPT_KEY_PROV_FLAGS", .{} },
+        // WindowsProgramming
+        .{ "VER_MASK", .{} },
+        .{ "SetHandleInformation_dwFlags", .{} },
+        .{ "DuplicateHandle_dwOptionsFlags", .{} },
+        .{ "REG_OPEN_CREATE_OPTIONS", .{} },
+        // SystemServices
+        .{ "QueryInformationJobObject_JobObjectInformationClassFlags", .{} },
+        .{ "HeapSetInformation_HeapInformationClassFlags", .{} },
+        .{ "JOBOBJECT_NOTIFICATION_LIMIT_INFORMATION_2_IoRateControlToleranceInterval", .{} },
+        .{ "JOBOBJECT_RATE_CONTROL_TOLERANCE_INTERVAL", .{} },
+        .{ "JOBOBJECT_LIMIT_VIOLATION_INFORMATION_2_RateControlTolerance", .{} },
+        .{ "JOBOBJECT_IO_RATE_CONTROL_INFORMATIONFlags", .{} },
+        .{ "CreateFileMapping_flProtect", .{} },
+        .{ "PFM_FLAGS", .{} },
+        .{ "JOBOBJECT_BASIC_LIMIT_INFORMATIONFlags", .{} },
+        .{ "JOBOBJECT_SECURITY_LIMIT_INFORMATIONFlags", .{} },
+        .{ "JOBOBJECT_BASIC_UI_RESTRICTIONS_UIRestrictionsClassFlags", .{} },
+        // NetManagement
+        .{ "NetWkstaSetInfo_levelFlags", .{} },
+        // ComponentServices
+        .{ "ICOMAdminCatalog2_IsSafeToDelete_pCOMAdminInUseFlags", .{} },
+        .{ "ImportUnconfiguredComponents_pVarComponentType", .{} },
+        .{ "ICOMAdminCatalog_InstallApplication_lOptionsFlags", .{} },
+        .{ "ICOMAdminCatalog_ExportApplication_lOptionsFlags", .{} },
+        .{ "WerRegisterFile_regFileTypeFlags", .{} },
+        .{ "WerReportSubmit_pSubmitResultFlags", .{} },
+        .{ "WerReportCreate_repTypeFlags", .{} },
+        .{ "WerReportSubmit_consentFlags", .{} },
+        // FileSystem
+        .{ "DefineDosDevice_dwFlags", .{} },
+        .{ "CreateFile_dwShareMode", .{} },
+        .{ "CreateLogFile_fCreateDispositionFlags", .{} },
+        .{ "ReOpenFile_dwFlagsAndAttributes", .{} },
+        // Parental Controls
+        .{ "IWindowsParentalControlsCore_GetVisibility_peVisibilityFlags", .{} },
+        .{ "GetRestrictions_pdwRestrictions", .{} },
+        .{ "IWPCWebSettings_GetSettings_pdwSettingsFlags", .{} },
+        // Gdi
+        .{ "CombineRgn_iMode", .{} },
+        .{ "CreateDIBitmap_iUsage", .{} },
+        .{ "PatBlt_ropFlags", .{} },
+        .{ "GetCurrentObject_typeFlags", .{} },
+        .{ "SetROP2_rop2Flags", .{} },
+        // MachineLearning
+        .{ "MLOperatorTensorDataType", .{} },
+        .{ "MLOperatorExecutionType", .{} },
+        .{ "MLOperatorEdgeType", .{} },
+        // Com
+        .{ "IPropertyPageSite_OnStatusChangeFlags", .{} },
+        .{ "IOleControlSite_TransformCoordsFlags", .{} },
+        // ApplicationInstallationAndServicing
+        .{ "LPDISPLAYVAL_uiTypeFlags", .{} },
+        .{ "MsiSourceList_dwContext", .{} },
+        .{ "MsiAdvertiseScript_dwFlags", .{} },
+        .{ "MsiViewModify_eModifyModeFlags", .{} },
+        .{ "MsiCreateTransformSummaryInfo_iErrorConditions", .{} },
+        .{ "MsiCreateTransformSummaryInfo_iValidation", .{} },
+        .{ "MsiEnumClientsEx_dwContext", .{} },
+        // WindowsAndMessaging
+        .{ "DrawIconEx_diFlags", .{} },
+        // Debug
+        .{ "SymGetHomeDirectory_type", .{} },
+        .{ "SymGetSymbolFile_Type", .{} },
+        // Multimedia
+        .{ "MIDI_OPEN_TYPE", .{} },
+    });
+};
 
 const EnumValue = struct {
     pool_name: StringPool.Val,
@@ -1869,7 +1876,7 @@ const EnumValue = struct {
     conflict_index: ?usize,
     pub fn valueIsZero(self: EnumValue) bool {
         return switch (self.value) {
-            .Integer => |i| i == 0,
+            .integer => |i| i == 0,
             else => false,
         };
     }
@@ -1926,12 +1933,12 @@ fn generateEnum(
     def_suffix: []const u8,
 ) !void {
     try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8{ "Name", "Platform", "Architectures", "Kind", "Flags", "Scoped", "Values", "IntegerBase" }, sdk_file);
-    const flags = (try jsonObjGetRequired(type_obj, "Flags", sdk_file)).Bool;
-    const scoped = (try jsonObjGetRequired(type_obj, "Scoped", sdk_file)).Bool;
-    const json_values = (try jsonObjGetRequired(type_obj, "Values", sdk_file)).Array;
+    const flags = (try jsonObjGetRequired(type_obj, "Flags", sdk_file)).bool;
+    const scoped = (try jsonObjGetRequired(type_obj, "Scoped", sdk_file)).bool;
+    const json_values = (try jsonObjGetRequired(type_obj, "Values", sdk_file)).array;
     const integer_base = switch (try jsonObjGetRequired(type_obj, "IntegerBase", sdk_file)) {
-        .Null => "i32",
-        .String => |s| nativeTypeToZigType(global_native_type_map.get(s) orelse
+        .null => "i32",
+        .string => |s| nativeTypeToZigType(global_native_type_map.get(s) orelse
             fatal("enum '{}' has an unknown IntegerBase '{s}'", .{ pool_name, s })),
         else => jsonPanic(),
     };
@@ -1939,9 +1946,9 @@ fn generateEnum(
     var values_initialized_len: usize = 0;
     defer allocator.free(values);
     for (json_values.items) |*value_node_ptr| {
-        const value_obj = value_node_ptr.Object;
+        const value_obj = value_node_ptr.object;
         try jsonObjEnforceKnownFieldsOnly(value_obj, &[_][]const u8{ "Name", "Value" }, sdk_file);
-        const value_tmp_name = (try jsonObjGetRequired(value_obj, "Name", sdk_file)).String;
+        const value_tmp_name = (try jsonObjGetRequired(value_obj, "Name", sdk_file)).string;
         values[values_initialized_len] = .{
             .pool_name = try global_symbol_pool.add(value_tmp_name),
             .short_name = "",
@@ -1989,15 +1996,15 @@ fn generateEnum(
             }
         }
         try writer.linef("    }}) {s} {{", .{pool_name});
-        try writer.linef("        return @intToEnum({s},", .{pool_name});
+        try writer.linef("        return @as({s}, @enumFromInt(", .{pool_name});
         var prefix: []const u8 = " ";
         for (values) |val| {
             if (val.conflict_index == null) {
-                try writer.linef("            {s} (if (o.{s} == 1) @enumToInt({s}.{1s}) else 0)", .{ prefix, std.zig.fmtId(val.short_name), pool_name });
+                try writer.linef("            {s} (if (o.{s} == 1) @intFromEnum({s}.{1s}) else 0)", .{ prefix, std.zig.fmtId(val.short_name), pool_name });
                 prefix = "|";
             }
         }
-        try writer.line("        );");
+        try writer.line("        ));");
         try writer.line("    }");
     }
     try writer.linef("}}{s}", .{def_suffix});
@@ -2041,16 +2048,16 @@ fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap
     try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8{ "Kind", "Name", "Platform", "Architectures", "Guid", "Interface", "Methods" }, sdk_file);
 
     const com_optional_guid: ?[]const u8 = switch (try jsonObjGetRequired(type_obj, "Guid", sdk_file)) {
-        .Null => null,
-        .String => |s| s,
+        .null => null,
+        .string => |s| s,
         else => jsonPanic(),
     };
     const com_optional_iface: ?json.ObjectMap = switch (try jsonObjGetRequired(type_obj, "Interface", sdk_file)) {
-        .Null => null,
-        .Object => |o| o,
+        .null => null,
+        .object => |o| o,
         else => jsonPanic(),
     };
-    const com_methods = (try jsonObjGetRequired(type_obj, "Methods", sdk_file)).Array;
+    const com_methods = (try jsonObjGetRequired(type_obj, "Methods", sdk_file)).array;
     const skip = com_types_to_skip.has(com_pool_name.slice);
     if (skip) {
         try writer.line("// WARNING: this COM type has been skipped because it causes some sort of error");
@@ -2083,11 +2090,11 @@ fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap
         defer method_conflicts.deinit();
 
         for (com_methods.items) |*method_node_ptr| {
-            const method_name = (try jsonObjGetRequired(method_node_ptr.Object, "Name", sdk_file)).String;
+            const method_name = (try jsonObjGetRequired(method_node_ptr.object, "Name", sdk_file)).string;
             const count = method_conflicts.get(method_name) orelse 0;
             try method_conflicts.put(method_name, count + 1);
             writer.depth += 2;
-            try generateFunction(sdk_file, writer, method_node_ptr.Object, .{ .com = .{ .both = .{
+            try generateFunction(sdk_file, writer, method_node_ptr.object, .{ .com = .{ .both = .{
                 .symbol_suffix = if (count == 0) null else count,
                 .self_type = com_pool_name.slice,
             } } });
@@ -2112,10 +2119,10 @@ fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap
             try writer.write(".MethodMixin(T);", .{ .start = .mid });
         }
         for (com_methods.items) |*method_node_ptr| {
-            const method_obj = method_node_ptr.Object;
-            const method_name = (try jsonObjGetRequired(method_obj, "Name", sdk_file)).String;
-            const return_type = (try jsonObjGetRequired(method_obj, "ReturnType", sdk_file)).Object;
-            const params = (try jsonObjGetRequired(method_obj, "Params", sdk_file)).Array;
+            const method_obj = method_node_ptr.object;
+            const method_name = (try jsonObjGetRequired(method_obj, "Name", sdk_file)).string;
+            const return_type = (try jsonObjGetRequired(method_obj, "ReturnType", sdk_file)).object;
+            const params = (try jsonObjGetRequired(method_obj, "Params", sdk_file)).array;
 
             const count = method_conflicts.get(method_name) orelse 0;
             try method_conflicts.put(method_name, count + 1);
@@ -2127,17 +2134,17 @@ fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap
             }
             try writer.write("(self: *const T", .{ .start = .mid, .nl = false });
             for (params.items) |*param_node_ptr| {
-                const param_obj = param_node_ptr.Object;
+                const param_obj = param_node_ptr.object;
                 try jsonObjEnforceKnownFieldsOnly(param_obj, &[_][]const u8{ "Name", "Type", "Attrs" }, sdk_file);
-                const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).String;
-                const param_type = (try jsonObjGetRequired(param_obj, "Type", sdk_file)).Object;
+                const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).string;
+                const param_type = (try jsonObjGetRequired(param_obj, "Type", sdk_file)).object;
                 // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
                 // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
                 // TODO: set null_modifier properly
                 // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
                 // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
                 const null_modifier = 0;
-                const param_options = processParamAttrs((try jsonObjGetRequired(param_obj, "Attrs", sdk_file)).Array, .var_decl, null_modifier, sdk_file);
+                const param_options = processParamAttrs((try jsonObjGetRequired(param_obj, "Attrs", sdk_file)).array, .var_decl, null_modifier, sdk_file);
                 // NOTE: don't need to call addTypeRefs because it was already called in generateFunction above
                 const param_type_formatter = fmtTypeRef(param_type, arches, param_options, null);
                 if (param_options.optional_bytes_param_index) |bytes_param_index| {
@@ -2158,10 +2165,10 @@ fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap
             try writer.write(") callconv(.Inline) ", .{ .start = .mid, .nl = false });
             try generateTypeRef(sdk_file, writer, return_type_formatter);
             try writer.write(" {", .{ .start = .mid });
-            try writer.writef("            return @ptrCast(*const {s}.VTable, self.vtable).{s}(@ptrCast(*const {0s}, self)", .{ com_pool_name, std.zig.fmtId(method_name) }, .{ .nl = false });
+            try writer.writef("            return @as(*const {s}.VTable, @ptrCast(self.vtable)).{s}(@as(*const {0s}, @ptrCast(self))", .{ com_pool_name, std.zig.fmtId(method_name) }, .{ .nl = false });
             for (params.items) |*param_node_ptr| {
-                const param_obj = param_node_ptr.Object;
-                const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).String;
+                const param_obj = param_node_ptr.object;
+                const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).string;
                 try writer.writef(", {s}", .{fmtParamId(param_name, sdk_file.param_names_to_avoid_map_get_fn)}, .{ .start = .mid, .nl = false });
             }
             try writer.write(");", .{ .start = .any });
@@ -2177,18 +2184,18 @@ fn processParamAttrs(attrs: json.Array, reason: TypeRefFormatter.Reason, null_mo
     var opts = TypeRefFormatter.Options{ .reason = reason, .anon_types = null, .null_modifier = null_modifier };
     for (attrs.items) |*attr_node_ptr| {
         switch (attr_node_ptr.*) {
-            .Object => |attr_obj| {
-                const kind = (try jsonObjGetRequired(attr_obj, "Kind", sdk_file)).String;
+            .object => |attr_obj| {
+                const kind = (try jsonObjGetRequired(attr_obj, "Kind", sdk_file)).string;
                 if (std.mem.eql(u8, kind, "MemorySize")) {
                     try jsonObjEnforceKnownFieldsOnly(attr_obj, &[_][]const u8{ "Kind", "BytesParamIndex" }, sdk_file);
-                    opts.optional_bytes_param_index = @intCast(i16, (try jsonObjGetRequired(attr_obj, "BytesParamIndex", sdk_file)).Integer);
+                    opts.optional_bytes_param_index = @intCast((try jsonObjGetRequired(attr_obj, "BytesParamIndex", sdk_file)).integer);
                 } else if (std.mem.eql(u8, kind, "FreeWith")) {
                     try jsonObjEnforceKnownFieldsOnly(attr_obj, &[_][]const u8{ "Kind", "Func" }, sdk_file);
-                    const func = (try jsonObjGetRequired(attr_obj, "Func", sdk_file)).String;
+                    const func = (try jsonObjGetRequired(attr_obj, "Func", sdk_file)).string;
                     _ = func; // TODO: what to do with this?
                 } else jsonPanicMsg("unknown param attr Kind '{s}'", .{kind});
             },
-            .String => |attr_str| {
+            .string => |attr_str| {
                 if (std.mem.eql(u8, attr_str, "Const")) {
                     opts.is_const = true;
                 } else if (std.mem.eql(u8, attr_str, "In")) {
@@ -2339,16 +2346,16 @@ fn generateFunction(
         .ptr, .com => try jsonObjEnforceKnownFieldsOnly(function_obj, &[_][]const u8{ "Kind", "Name", "Platform", "Architectures", "SetLastError", "ReturnType", "ReturnAttrs", "Attrs", "Params" }, sdk_file),
     }
 
-    const func_name_tmp = (try jsonObjGetRequired(function_obj, "Name", sdk_file)).String;
+    const func_name_tmp = (try jsonObjGetRequired(function_obj, "Name", sdk_file)).string;
     const platform_node = try jsonObjGetRequired(function_obj, "Platform", sdk_file);
-    const arches = ArchFlags.initJson((try jsonObjGetRequired(function_obj, "Architectures", sdk_file)).Array.items);
-    const set_last_error = (try jsonObjGetRequired(function_obj, "SetLastError", sdk_file)).Bool;
+    const arches = ArchFlags.initJson((try jsonObjGetRequired(function_obj, "Architectures", sdk_file)).array.items);
+    const set_last_error = (try jsonObjGetRequired(function_obj, "SetLastError", sdk_file)).bool;
     _ = set_last_error; // ignored for now
-    const dll_import = if (func_kind == .fixed) (try jsonObjGetRequired(function_obj, "DllImport", sdk_file)).String else "";
-    const return_type = (try jsonObjGetRequired(function_obj, "ReturnType", sdk_file)).Object;
-    const return_attrs = (try jsonObjGetRequired(function_obj, "ReturnAttrs", sdk_file)).Array;
-    const attrs = (try jsonObjGetRequired(function_obj, "Attrs", sdk_file)).Array;
-    const params = (try jsonObjGetRequired(function_obj, "Params", sdk_file)).Array;
+    const dll_import = if (func_kind == .fixed) (try jsonObjGetRequired(function_obj, "DllImport", sdk_file)).string else "";
+    const return_type = (try jsonObjGetRequired(function_obj, "ReturnType", sdk_file)).object;
+    const return_attrs = (try jsonObjGetRequired(function_obj, "ReturnAttrs", sdk_file)).array;
+    const attrs = (try jsonObjGetRequired(function_obj, "Attrs", sdk_file)).array;
+    const params = (try jsonObjGetRequired(function_obj, "Params", sdk_file)).array;
 
     var notnull_set = ParamModifierSet{};
 
@@ -2359,12 +2366,12 @@ fn generateFunction(
         }
         if (sdk_file.not_null_funcs.get(func_name_pool.slice)) |notnull_node| {
             try sdk_file.not_null_funcs_applied.put(func_name_pool, .{});
-            jsonEnforce(notnull_node.Array.items.len > 0);
-            notnull_set.ret = @intCast(NullModifier, notnull_node.Array.items[0].Integer);
-            for (notnull_node.Array.items[1..], 0..) |item, i| {
+            jsonEnforce(notnull_node.array.items.len > 0);
+            notnull_set.ret = @as(NullModifier, @intCast(notnull_node.array.items[0].integer));
+            for (notnull_node.array.items[1..], 0..) |item, i| {
                 jsonEnforce(i < notnull_set.params.len); // if we hit this, increase max param count
                 jsonEnforce(i < params.items.len);
-                notnull_set.params[i] = @intCast(NullModifier, item.Integer);
+                notnull_set.params[i] = @as(NullModifier, @intCast(item.integer));
             }
         }
     }
@@ -2379,7 +2386,7 @@ fn generateFunction(
 
     for (attrs.items) |attr_node| {
         switch (attr_node) {
-            .String => |attr| {
+            .string => |attr| {
                 if (std.mem.eql(u8, attr, "SpecialName")) {
                     try writer.line("// TODO: this function has a \"SpecialName\", should Zig do anything with this?");
                 } else jsonPanic();
@@ -2478,12 +2485,12 @@ fn generateParams(
     params: []const json.Value,
 ) !void {
     for (params, 0..) |*param_node_ptr, i| {
-        const param_obj = param_node_ptr.Object;
+        const param_obj = param_node_ptr.object;
         try jsonObjEnforceKnownFieldsOnly(param_obj, &[_][]const u8{ "Name", "Type", "Attrs" }, sdk_file);
-        const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).String;
-        const param_type = (try jsonObjGetRequired(param_obj, "Type", sdk_file)).Object;
+        const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).string;
+        const param_type = (try jsonObjGetRequired(param_obj, "Type", sdk_file)).object;
         const null_modifier = notnull_set.params[i];
-        const param_options = processParamAttrs((try jsonObjGetRequired(param_obj, "Attrs", sdk_file)).Array, .var_decl, null_modifier, sdk_file);
+        const param_options = processParamAttrs((try jsonObjGetRequired(param_obj, "Attrs", sdk_file)).array, .var_decl, null_modifier, sdk_file);
         const param_type_formatter = try addTypeRefs(sdk_file, arches, param_type, param_options, null);
         if (param_options.optional_bytes_param_index) |bytes_param_index| {
             try writer.linef("    // TODO: what to do with BytesParamIndex {}?", .{bytes_param_index});
@@ -2499,21 +2506,21 @@ fn generateUnicodeAliases(sdk_file: *SdkFile, writer: *CodeWriter, unicode_alias
     try writer.linef("pub usingnamespace switch (@import(\"{s}zig.zig\").unicode_mode) {{", .{sdk_file.getWin32DirImportPrefix()});
     try writer.line("    .ansi => struct {");
     for (unicode_aliases) |*alias_node_ptr| {
-        try writer.linef("        pub const {s} = thismodule.{0s}A;", .{alias_node_ptr.String});
+        try writer.linef("        pub const {s} = thismodule.{0s}A;", .{alias_node_ptr.string});
     }
     try writer.line("    },");
     try writer.line("    .wide => struct {");
     for (unicode_aliases) |*alias_node_ptr| {
-        try writer.linef("        pub const {s} = thismodule.{0s}W;", .{alias_node_ptr.String});
+        try writer.linef("        pub const {s} = thismodule.{0s}W;", .{alias_node_ptr.string});
     }
     try writer.line("    },");
     try writer.line("    .unspecified => if (@import(\"builtin\").is_test) struct {");
     for (unicode_aliases) |*alias_node_ptr| {
-        try writer.linef("        pub const {s} = *opaque{{}};", .{alias_node_ptr.String});
+        try writer.linef("        pub const {s} = *opaque{{}};", .{alias_node_ptr.string});
     }
     try writer.line("    } else struct {");
     for (unicode_aliases) |*alias_node_ptr| {
-        try writer.linef("        pub const {s} = @compileError(\"'{0s}' requires that UNICODE be set to true or false in the root module\");", .{alias_node_ptr.String});
+        try writer.linef("        pub const {s} = @compileError(\"'{0s}' requires that UNICODE be set to true or false in the root module\");", .{alias_node_ptr.string});
     }
     try writer.line("    },");
     try writer.line("};");
@@ -2546,7 +2553,7 @@ const ArchFlags = struct {
         }
         var result = ArchFlags{ .flags = 0 };
         for (architectures) |arch_node| {
-            const arch = arch_name_map.get(arch_node.String) orelse std.debug.panic("unhandled arch '{s}'", .{arch_node.String});
+            const arch = arch_name_map.get(arch_node.string) orelse std.debug.panic("unhandled arch '{s}'", .{arch_node.string});
             result.flags |= getFlag(arch).flags;
         }
         return result;
@@ -2618,12 +2625,12 @@ fn jsonObjGetRequiredImpl(map: json.ObjectMap, field: []const u8, file_for_error
 // TODO: this should probably be in std.json
 pub fn jsonEql(a: json.Value, b: json.Value) bool {
     switch (a) {
-        .Integer => |a_val| switch (b) {
-            .Integer => |b_val| return a_val == b_val,
+        .integer => |a_val| switch (b) {
+            .integer => |b_val| return a_val == b_val,
             else => return false,
         },
-        .NumberString => |a_val| switch (b) {
-            .NumberString => |b_val| return std.mem.eql(u8, a_val, b_val),
+        .number_string => |a_val| switch (b) {
+            .number_string => |b_val| return std.mem.eql(u8, a_val, b_val),
             else => return false,
         },
         else => @panic("not impl"),

@@ -25,14 +25,15 @@ pub fn BaseWindow(comptime DERIVED_TYPE: type) type { return struct {
         var pThis : ?*DERIVED_TYPE = null;
         if (uMsg == win32.WM_NCCREATE)
         {
-            const pCreate = @intToPtr(*win32.CREATESTRUCT, @bitCast(usize, lParam));
-            pThis = @ptrCast(*DERIVED_TYPE, @alignCast(@alignOf(DERIVED_TYPE), pCreate.lpCreateParams));
-            _ = windowlongptr.SetWindowLongPtr(hwnd, win32.GWL_USERDATA, @bitCast(isize, @ptrToInt(pThis)));
+            const pCreate: *win32.CREATESTRUCT = @ptrFromInt(@as(usize, @bitCast(lParam)));
+            pThis = @ptrCast(@alignCast(pCreate.lpCreateParams));
+            _ = windowlongptr.SetWindowLongPtr(hwnd, win32.GWL_USERDATA, @bitCast(@intFromPtr(pThis)));
             pThis.?.base.m_hwnd = hwnd;
         }
         else
         {
-            pThis = @intToPtr(?*DERIVED_TYPE, @bitCast(usize, windowlongptr.GetWindowLongPtr(hwnd, win32.GWL_USERDATA)));
+            //pThis = @intToPtr(?*DERIVED_TYPE, @bitCast(usize, windowlongptr.GetWindowLongPtr(hwnd, win32.GWL_USERDATA)));
+            pThis = @ptrFromInt(@as(usize, @bitCast(windowlongptr.GetWindowLongPtr(hwnd, win32.GWL_USERDATA))));
         }
         if (pThis) |this|
         {
@@ -48,7 +49,7 @@ pub fn BaseWindow(comptime DERIVED_TYPE: type) type { return struct {
         lpWindowName: [*:0]const u16,
         dwStyle: win32.WINDOW_STYLE,
         options: struct {
-            dwExStyle: win32.WINDOW_EX_STYLE = @intToEnum(win32.WINDOW_EX_STYLE, 0),
+            dwExStyle: win32.WINDOW_EX_STYLE = @enumFromInt(0),
             x: i32 = win32.CW_USEDEFAULT,
             y: i32 = win32.CW_USEDEFAULT,
             nWidth: i32 = win32.CW_USEDEFAULT,
@@ -58,7 +59,7 @@ pub fn BaseWindow(comptime DERIVED_TYPE: type) type { return struct {
         },
     ) win32.BOOL {
         const wc = win32.WNDCLASS {
-            .style = @intToEnum(win32.WNDCLASS_STYLES, 0),
+            .style = @enumFromInt(0),
             .lpfnWndProc = WindowProc,
             .cbClsExtra = 0,
             .cbWndExtra = 0,
@@ -78,8 +79,8 @@ pub fn BaseWindow(comptime DERIVED_TYPE: type) type { return struct {
             dwStyle, options.x, options.y,
             options.nWidth, options.nHeight, options.hWndParent, options.hMenu,
             win32.GetModuleHandle(null),
-            @ptrCast(*anyopaque, self)
-            );
+            @ptrCast(self),
+        );
 
         return if (self.m_hwnd != null) win32.TRUE else win32.FALSE;
     }
