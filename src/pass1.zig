@@ -28,11 +28,9 @@ pub fn main() !u8 {
     var win32json_dir = try std.fs.cwd().openDir(win32json_path, .{});
     defer win32json_dir.close();
 
-
     {
         const need_update = blk: {
-            const dest_mtime = (try common.getModifyTime(std.fs.cwd(), "pass1.json"))
-                orelse break :blk true;
+            const dest_mtime = (try common.getModifyTime(std.fs.cwd(), "pass1.json")) orelse break :blk true;
             break :blk try common.win32jsonIsNewerThan(win32json_dir, dest_mtime);
         };
         if (!need_update) {
@@ -41,7 +39,7 @@ pub fn main() !u8 {
         }
     }
 
-    var api_dir = try win32json_dir.openIterableDir("api", .{}) ;
+    var api_dir = try win32json_dir.openIterableDir("api", .{});
     defer api_dir.close();
 
     var api_list = std.ArrayList([]const u8).init(allocator);
@@ -54,11 +52,11 @@ pub fn main() !u8 {
     try common.readApiList(api_dir, &api_list);
 
     // sort so our data is always in the same order
-    std.sort.sort([]const u8, api_list.items, Nothing {}, common.asciiLessThanIgnoreCase);
+    std.sort.sort([]const u8, api_list.items, Nothing{}, common.asciiLessThanIgnoreCase);
 
     const out_file = try std.fs.cwd().createFile("pass1.json.generating", .{});
     defer out_file.close();
-    var buffered_writer =  BufferedWriter{
+    var buffered_writer = BufferedWriter{
         .unbuffered_writer = out_file.writer(),
     };
     const out = buffered_writer.writer();
@@ -67,8 +65,8 @@ pub fn main() !u8 {
     var json_obj_prefix: []const u8 = "";
 
     for (api_list.items) |api_json_basename| {
-        const name = api_json_basename[0..api_json_basename.len-5];
-        try out.print("    {s}\"{s}\": {{\n", .{json_obj_prefix, name});
+        const name = api_json_basename[0 .. api_json_basename.len - 5];
+        try out.print("    {s}\"{s}\": {{\n", .{ json_obj_prefix, name });
         var file = try api_dir.dir.openFile(api_json_basename, .{});
         defer file.close();
         try pass1OnFile(out, api_json_basename, file);
@@ -94,13 +92,13 @@ fn pass1OnFile(out: OutWriter, filename: []const u8, file: std.fs.File) !void {
     };
     defer json_tree.deinit();
     const parse_time = std.time.milliTimestamp() - parse_start;
-    std.log.info("{} ms: parse time for '{s}'", .{parse_time, filename});
+    std.log.info("{} ms: parse time for '{s}'", .{ parse_time, filename });
 
     try pass1OnJson(out, filename, json_tree.root.Object);
 }
 
 fn writeType(out: OutWriter, json_obj_prefix: []const u8, name: []const u8, kind: []const u8) !void {
-    try out.print("        {s}\"{s}\": {{\"Kind\":\"{s}\"}}\n", .{json_obj_prefix, name, kind});
+    try out.print("        {s}\"{s}\": {{\"Kind\":\"{s}\"}}\n", .{ json_obj_prefix, name, kind });
 }
 
 fn pass1OnJson(out: OutWriter, filename: []const u8, root_obj: json.ObjectMap) !void {
@@ -130,7 +128,7 @@ fn pass1OnJson(out: OutWriter, filename: []const u8, root_obj: json.ObjectMap) !
         } else if (std.mem.eql(u8, kind, "Com")) {
             try writeType(out, json_obj_prefix, name, "Com");
         } else {
-            jsonPanicMsg("{s}: unknown type Kind '{s}'", .{filename, kind});
+            jsonPanicMsg("{s}: unknown type Kind '{s}'", .{ filename, kind });
         }
         json_obj_prefix = ",";
     }
@@ -138,9 +136,11 @@ fn pass1OnJson(out: OutWriter, filename: []const u8, root_obj: json.ObjectMap) !
 
 const native_integral_types = std.ComptimeStringMap(Nothing, .{
     .{ "Byte", .{} },
-    .{ "Int32", .{} }, .{ "UInt32", .{} },
+    .{ "Int32", .{} },
+    .{ "UInt32", .{} },
     .{ "UInt64", .{} },
-    .{ "IntPtr", .{} }, .{ "UIntPtr", .{} },
+    .{ "IntPtr", .{} },
+    .{ "UIntPtr", .{} },
 });
 
 fn generateNativeTypedef(
@@ -150,15 +150,14 @@ fn generateNativeTypedef(
     type_obj: std.json.ObjectMap,
     name: []const u8,
 ) !void {
-    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8 {"Name", "Platform", "Architectures",
-        "AlsoUsableFor", "Kind", "Def", "FreeFunc"}, filename);
+    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8{ "Name", "Platform", "Architectures", "AlsoUsableFor", "Kind", "Def", "FreeFunc" }, filename);
     //const platform_node = try jsonObjGetRequired(type_obj, "Platform", sdk_file);
     //const also_usable_for_node = try jsonObjGetRequired(type_obj, "AlsoUsableFor", sdk_file);
     const def_type = (try jsonObjGetRequired(type_obj, "Def", filename)).Object;
 
     // HANDLE PSTR and PWSTR specially because win32metadata is not properly declaring them as arrays, only pointers
     // not sure if this is a real issue with the metadata or intentional
-    const special : enum { pstr, pwstr, other } = blk: {
+    const special: enum { pstr, pwstr, other } = blk: {
         if (std.mem.eql(u8, name, "PSTR")) break :blk .pstr;
         if (std.mem.eql(u8, name, "PWSTR")) break :blk .pwstr;
         break :blk .other;
@@ -199,7 +198,7 @@ fn generateNativeTypedef(
 
     const kind = (try jsonObjGetRequired(def_type, "Kind", filename)).String;
     if (std.mem.eql(u8, kind, "Native")) {
-        try jsonObjEnforceKnownFieldsOnly(def_type, &[_][]const u8 {"Kind", "Name"}, filename);
+        try jsonObjEnforceKnownFieldsOnly(def_type, &[_][]const u8{ "Kind", "Name" }, filename);
         const native_type_name = (try jsonObjGetRequired(def_type, "Name", filename)).String;
         if (native_integral_types.get(native_type_name)) |_| {
             try writeType(out, json_obj_prefix, name, "Integral");
@@ -219,7 +218,7 @@ fn generateNativeTypedef(
 fn jsonObjGetRequired(map: json.ObjectMap, field: []const u8, file_for_error: []const u8) !json.Value {
     return map.get(field) orelse {
         // TODO: print file location?
-        std.log.err("{s}: json object is missing '{s}' field: {}\n", .{file_for_error, field, fmtJson(map)});
+        std.log.err("{s}: json object is missing '{s}' field: {}\n", .{ file_for_error, field, fmtJson(map) });
         common.jsonPanic();
     };
 }

@@ -25,7 +25,7 @@ pub const StringPool = struct {
     allocator: std.mem.Allocator,
     map: StringHashMap(Val),
     pub fn init(allocator: std.mem.Allocator) @This() {
-        return @This() {
+        return @This(){
             .allocator = allocator,
             .map = StringHashMap(Val).init(allocator),
         };
@@ -49,7 +49,7 @@ pub const StringPool = struct {
         }
         var newString = try self.allocator.alloc(u8, s.len);
         std.mem.copy(u8, newString, s);
-        const val = Val { .slice = newString };
+        const val = Val{ .slice = newString };
         _ = try self.map.put(newString, val);
         return val;
     }
@@ -92,13 +92,12 @@ pub const StringPool = struct {
     }
 };
 
-test "stringpool"
-{
+test "stringpool" {
     var pool = StringPool.init(std.testing.allocator);
     defer pool.deinit();
     const s = try pool.add("hello");
     {
-        var buf : [5]u8 = undefined;
+        var buf: [5]u8 = undefined;
         std.mem.copy(u8, buf[0..], "hello");
         const s2 = try pool.add(buf[0..]);
         try std.testing.expect(s.slice.ptr == s2.slice.ptr);
