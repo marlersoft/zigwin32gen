@@ -137,7 +137,13 @@ const JsonFormatter = struct {
     ) !void {
         _ = fmt;
         _ = options;
-        try std.json.stringify(self.value, .{}, writer);
+        switch (self.value) {
+            // avoid issues where std.json adds quotes to big numbers
+            // (potential fix: https://github.com/ziglang/zig/pull/16707)
+            .integer => |i| try std.fmt.formatIntValue(i, "", .{}, writer),
+            .number_string => |s| try writer.writeAll(s),
+            else => try std.json.stringify(self.value, .{}, writer),
+        }
     }
 };
 pub fn fmtJson(value: anytype) JsonFormatter {
