@@ -1485,12 +1485,10 @@ fn generateTypeDefinition(
         if (optional_free_func) |free_func| {
             try writer.linef("// TODO: this type has a FreeFunc '{s}', what can Zig do with this information?", .{free_func});
         }
-        const invalid_handle_value_opt: ?i64 = blk: {
-            const value = type_obj.get("InvalidHandleValue") orelse break :blk null;
-            break :blk switch (value) {
-                .integer => |i| i,
-                else => jsonPanic(),
-            };
+        const invalid_handle_value_opt: ?i64 = switch (try jsonObjGetRequired(type_obj, "InvalidHandleValue", sdk_file)) {
+            .null => null,
+            .integer => |i| i,
+            else => jsonPanic(),
         };
         if (invalid_handle_value_opt) |v| {
             try writer.linef("// TODO: this type has an InvalidHandleValue of '{}', what can Zig do with this information?", .{v});
