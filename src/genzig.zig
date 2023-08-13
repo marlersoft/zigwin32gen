@@ -1474,7 +1474,7 @@ fn generateTypeDefinition(
     def_suffix: []const u8,
 ) !void {
     if (std.mem.eql(u8, kind, "NativeTypedef")) {
-        try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8{ "Name", "Platform", "Architectures", "AlsoUsableFor", "Kind", "Def", "FreeFunc" }, sdk_file);
+        try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8{ "Name", "Platform", "Architectures", "AlsoUsableFor", "Kind", "Def", "FreeFunc", "InvalidHandleValue" }, sdk_file);
         const also_usable_for_node = try jsonObjGetRequired(type_obj, "AlsoUsableFor", sdk_file);
         const def_type = (try jsonObjGetRequired(type_obj, "Def", sdk_file)).object;
         const optional_free_func: ?[]const u8 = switch (try jsonObjGetRequired(type_obj, "FreeFunc", sdk_file)) {
@@ -1484,6 +1484,16 @@ fn generateTypeDefinition(
         };
         if (optional_free_func) |free_func| {
             try writer.linef("// TODO: this type has a FreeFunc '{s}', what can Zig do with this information?", .{free_func});
+        }
+        const invalid_handle_value_opt: ?i64 = blk: {
+            const value = type_obj.get("InvalidHandleValue") orelse break :blk null;
+            break :blk switch (value) {
+                .integer => |i| i,
+                else => jsonPanic(),
+            };
+        };
+        if (invalid_handle_value_opt) |v| {
+            try writer.linef("// TODO: this type has an InvalidHandleValue of '{}', what can Zig do with this information?", .{v});
         }
 
         // HANDLE PSTR and PWSTR specially because win32metadata is not properly declaring them as arrays, only pointers

@@ -21,8 +21,8 @@ pub fn build(b: *Builder) !void {
 
     const win32json_repo = GitRepoStep.create(b, .{
         .url = "https://github.com/marlersoft/win32json",
-        .branch = "19.0.1-preview",
-        .sha = "826a2005386024bf0da9ef65dd145bced689736c",
+        .branch = "20.0.1-preview",
+        .sha = "e70b222f8f608666c8483a1742de3ce24c8c03ac",
     });
 
     const run_pass1 = blk: {

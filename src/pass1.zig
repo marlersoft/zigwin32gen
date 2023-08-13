@@ -160,7 +160,7 @@ fn generateNativeTypedef(
     type_obj: std.json.ObjectMap,
     name: []const u8,
 ) !void {
-    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8{ "Name", "Platform", "Architectures", "AlsoUsableFor", "Kind", "Def", "FreeFunc" }, filename);
+    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8{ "Name", "Platform", "Architectures", "AlsoUsableFor", "Kind", "Def", "FreeFunc", "InvalidHandleValue" }, filename);
     //const platform_node = try jsonObjGetRequired(type_obj, "Platform", sdk_file);
     //const also_usable_for_node = try jsonObjGetRequired(type_obj, "AlsoUsableFor", sdk_file);
     const def_type = (try jsonObjGetRequired(type_obj, "Def", filename)).object;
