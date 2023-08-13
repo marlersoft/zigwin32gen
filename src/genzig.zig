@@ -1179,7 +1179,11 @@ const ConstValueFormatter = struct {
         _ = fmt;
         _ = options;
         if (self.value_type == .String) {
-            try writer.print("{}", .{fmtJson(self.value)});
+            switch (self.value) {
+                .null => try writer.writeAll("null"),
+                .string => |s| try writer.print("\"{}\"", .{std.zig.fmtEscapes(s)}),
+                else => std.debug.panic("uhandled type '{s}'", .{@tagName(self.value)}),
+            }
             return;
         }
         const zig_type = valueTypeToZigType(self.value_type);
@@ -1260,6 +1264,9 @@ const constants_to_skip = std.ComptimeStringMap(Nothing, .{
     // HWND_DESKTOP and HWND_TOP are HWND types, but they are 0 so they need to be ?HWND
     .{ "HWND_DESKTOP", .{} },
     .{ "HWND_TOP", .{} },
+
+    // This is both a constant and a type definition in Networking.HttpServer
+    .{ "HTTP_VERSION", .{} },
 });
 fn generateConstant(sdk_file: *SdkFile, writer: *CodeWriter, constant_obj: json.ObjectMap) !void {
     try jsonObjEnforceKnownFieldsOnly(constant_obj, &[_][]const u8{ "Name", "Type", "Value", "ValueType", "Attrs" }, sdk_file);
@@ -2291,9 +2298,6 @@ const funcs_with_issues = std.ComptimeStringMap(Nothing, .{
     .{ "SymLoadModuleExW", .{} },
     .{ "PssDuplicateSnapshot", .{} },
 });
-const noreturn_funcs = std.ComptimeStringMap(Nothing, .{
-    .{ "ExitProcess", .{} },
-});
 
 const ArchCaseContext = enum { outside_arch_case, inside_arch_case };
 const FuncPtrKind = union(enum) {
@@ -2382,11 +2386,17 @@ fn generateFunction(
         if (func_kind != .ptr and arches.flags != ArchFlags.all.flags) generateArchSuffix(writer);
     }
 
+    var is_noreturn = false;
     for (attrs.items) |attr_node| {
         switch (attr_node) {
             .string => |attr| {
                 if (std.mem.eql(u8, attr, "SpecialName")) {
                     try writer.line("// TODO: this function has a \"SpecialName\", should Zig do anything with this?");
+                } else if (std.mem.eql(u8, attr, "PreserveSig")) {
+                    // we don't care about PreserveSig because we don't automatically turn HRESULT return
+                    // values into errors
+                } else if (std.mem.eql(u8, attr, "DoesNotReturn")) {
+                    is_noreturn = true;
                 } else jsonPanic();
             },
             else => jsonPanic(),
@@ -2456,7 +2466,7 @@ fn generateFunction(
     try generateParams(sdk_file, writer, arches, notnull_set, params.items);
 
     try writer.writef(") callconv(@import(\"std\").os.windows.WINAPI) ", .{}, .{ .nl = false });
-    if (noreturn_funcs.get(func_name_tmp)) |_| {
+    if (is_noreturn) {
         try writer.write("noreturn", .{ .start = .mid, .nl = false });
     } else {
         // TODO: set is_const, in and out properly

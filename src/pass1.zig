@@ -14,6 +14,16 @@ const allocator = arena.allocator();
 const BufferedWriter = std.io.BufferedWriter(std.mem.page_size, std.fs.File.Writer);
 const OutWriter = BufferedWriter.Writer;
 
+pub fn fatalTrace(trace: ?*std.builtin.StackTrace, comptime fmt: []const u8, args: anytype) noreturn {
+    std.log.err(fmt, args);
+    if (trace) |t| {
+        std.debug.dumpStackTrace(t.*);
+    } else {
+        std.log.err("no error return trace", .{});
+    }
+    std.os.exit(0xff);
+}
+
 pub fn main() !u8 {
     const all_args = try std.process.argsAlloc(allocator);
     // don't care about freeing args
@@ -86,11 +96,9 @@ fn pass1OnFile(out: OutWriter, filename: []const u8, file: std.fs.File) !void {
     const parse_start = std.time.milliTimestamp();
     const start = if (std.mem.startsWith(u8, content, "\xEF\xBB\xBF")) 3 else @as(usize, 0);
     var json_tree = blk: {
-        //var parser = json.Parser.init(allocator, false); // false is copy_strings
-        //defer parser.deinit();
-        //break :blk try parser.parse(content[start..]);
         // TODO: call parseFromSliceLeaky because we are using an arena allocator
-        break :blk try json.parseFromSlice(json.Value, allocator, content[start..], .{});
+        break :blk json.parseFromSlice(json.Value, allocator, content[start..], .{}) catch |e|
+            fatalTrace(@errorReturnTrace(), "failed to parse '{s}' with {s}", .{filename, @errorName(e)});
     };
     defer json_tree.deinit();
     const parse_time = std.time.milliTimestamp() - parse_start;
