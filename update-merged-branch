@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+#
+# Updates origin/merged with the latest set of commits from all release branches
+#
+import sys
+import os
+import subprocess
+import functools
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ZIGWIN32_DIR = os.path.join(SCRIPT_DIR, "zigwin32")
+
+def gitRun(git_args, **kwargs):
+    if "allow_fail" in kwargs:
+        allow_fail = kwargs["allow_fail"]
+        del kwargs["allow_fail"]
+    else:
+        allow_fail = False
+    args = ["git", "-C", ZIGWIN32_DIR] + git_args
+    print("[RUN] {}".format(" ".join(args)))
+    result = subprocess.run(args, **kwargs)
+    capture_output = kwargs.get('capture_output', False)
+    if capture_output:
+        sys.stderr.buffer.write(result.stderr)
+    if (not allow_fail) and result.returncode != 0:
+        sys.exit(result.returncode)
+    if capture_output:
+        if allow_fail:
+            return { "returncode": result.returncode, "stdout": result.stdout }
+        return result.stdout
+    if allow_fail:
+        return result.returncode
+
+class Branch:
+    def __init__(self, full):
+        self.full = full
+        name = os.path.basename(full)
+        self.name = name
+        preview_index = name.index("-preview")
+        self.parts = name[:preview_index].split(".")
+        suffix = name[preview_index+8:]
+        if suffix:
+            if not suffix.startswith("."):
+                sys.exit(f"expected '.' after '-preview' but got '{name}'")
+            self.suffix = int(suffix[1:])
+        else:
+            self.suffix = None
+    def __repr__(self):
+        return self.name
+    def compare(self, right):
+        i = 0
+        while True:
+            if i == len(self.parts):
+                if i == len(right.parts):
+                    break;
+                sys.exit("todo or error?")
+            self_i = int(self.parts[i])
+            right_i = int(right.parts[i])
+            if self_i < right_i:
+                return -1
+            if self_i > right_i:
+                return 1
+            i += 1
+    
+        if self.suffix:
+            if not right.suffix:
+                sys.exit("todo or error?")
+            return self.suffix - right.suffix
+        else:
+            if right.suffix:
+                sys.exit("todo or error?")
+            return 0
+
+def hasCommit(refspec, sha):
+    result = gitRun(["merge-base", refspec, sha], capture_output=True, allow_fail=True)
+    returncode = result["returncode"]
+    merge_base = result["stdout"].decode("utf8").strip()    
+    if (returncode == 0) and (merge_base == sha):
+        #if returncode == 0:
+        return True
+    elif (returncode != 0) and (len(merge_base) == 0):
+        return False
+    return False
+    sys.exit(f"error: unexpected merge-base output returncode={returncode}, stdout='{merge_base}'")
+
+def getShas(refspec):
+    return gitRun(["log", "--reverse", "--pretty=%H", refspec, "--"], capture_output=True).decode("utf8").strip().split()    
+    
+def findMissingSha(branches):
+    for branch_index, branch in enumerate(branches):
+        print(f"Checking if {branch} is in origin/merged")
+        shas = getShas(branch.full)
+        # shas are ordered oldest to newest
+        for sha_index, sha in enumerate(shas):
+            if not hasCommit("origin/merged", sha):
+                return (branch_index, shas, sha_index)
+            print(f"  {sha} YES")
+    return (None, None, None)
+        
+def main():
+    gitRun(["fetch"])
+    gitRun(["reset", "--hard", "HEAD"])
+    gitRun(["clean", "-xfd"])
+
+    raw_branches = gitRun(["branch", "--remotes", "--format", "%(refname)"], capture_output=True).decode("utf8").split()
+    branches = []
+    for raw_branch in raw_branches:
+        name = os.path.basename(raw_branch)
+        if "-preview" in name:
+            branches.append(Branch(raw_branch))
+        else:
+            print(f"Ignoring Branch {name}")
+    branches.sort(key=functools.cmp_to_key(Branch.compare))
+
+    (branch_index, shas, sha_index) = findMissingSha(branches)
+    if branch_index == None:
+        print("Success: origin/merged already contains all commits")
+        return
+
+    print("First missing Sha:")
+    print(f"  Branch '{branches[branch_index]}' ({branch_index+1} out of {len(branches)})")
+    print(f"  Sha {sha_index+1} out of {len(shas)}: {shas[sha_index]}")
+
+    # detach in case we are on the merged branch we are about to delete
+    gitRun(["checkout", "--detach"])
+    gitRun(["branch", "-D", "merged"], allow_fail=True)
+    gitRun(["checkout", shas[sha_index], "-b", "merged"])
+
+    for branch in branches[branch_index:]:
+        print(f"Processing {branch}...")
+        shas = getShas(branch.full)
+        for sha_index, sha in enumerate(shas):
+            if hasCommit("HEAD", sha):
+                print(f"  {sha} already merged")
+                continue
+            body = gitRun([
+                "log",
+                "--format=%B",
+                "-n", "1",
+                sha,
+            ], capture_output=True).decode("utf8")
+            gitRun([
+                "merge",
+                "-m", f"{branch} commit {sha_index+1}/{len(shas)}: {body}",
+                "--allow-unrelated-histories", sha,
+                "--strategy-option", "theirs",
+            ])
+
+    gitRun(["push", "origin", "merged", "-f"])
+    print("Success: updated origin/merged with latest set of commits")
+
+main()
