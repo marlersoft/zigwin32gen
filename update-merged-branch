@@ -124,7 +124,7 @@ def main():
     # detach in case we are on the merged branch we are about to delete
     gitRun(["checkout", "--detach"])
     gitRun(["branch", "-D", "merged"], allow_fail=True)
-    gitRun(["checkout", shas[sha_index], "-b", "merged"])
+    gitRun(["checkout", "origin/merged", "-b", "merged"])
 
     for branch in branches[branch_index:]:
         print(f"Processing {branch}...")
