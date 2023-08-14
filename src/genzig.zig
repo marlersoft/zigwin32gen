@@ -2058,13 +2058,30 @@ fn generateEnum(
 }
 
 fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap, arches: ArchFlags, com_pool_name: StringPool.Val, def_prefix: []const u8) !void {
-    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8{ "Kind", "Name", "Platform", "Architectures", "Guid", "Interface", "Methods" }, sdk_file);
+    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8{ "Kind", "Name", "Platform", "Architectures", "Guid", "Attrs", "Interface", "Methods" }, sdk_file);
 
     const com_optional_guid: ?[]const u8 = switch (try jsonObjGetRequired(type_obj, "Guid", sdk_file)) {
         .null => null,
         .string => |s| s,
         else => jsonPanic(),
     };
+    var is_agile = false;
+    {
+        const attr_nodes = (try jsonObjGetRequired(type_obj, "Attrs", sdk_file)).array;
+        for (attr_nodes.items) |attr_node| {
+            switch (attr_node) {
+                .string => |s| {
+                    if (std.mem.eql(u8, s, "Agile")) {
+                        is_agile = true;
+                    } else jsonPanic();
+                },
+                else => jsonPanic(),
+            }
+        }
+    }
+    if (is_agile) {
+        try writer.line("// This COM type is Agile, not sure what that means");
+    }
     const com_optional_iface: ?json.ObjectMap = switch (try jsonObjGetRequired(type_obj, "Interface", sdk_file)) {
         .null => null,
         .object => |o| o,
