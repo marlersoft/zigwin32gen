@@ -61,6 +61,11 @@ pub fn build(b: *Builder) !void {
             .target = target,
             .optimize = optimize,
         });
+        if (builtin.os.tag != .windows) {
+            // code that depends on DLL's must be PIC, windows does this by default so this
+            // makes things work on other platforms
+            test_step.force_pic = true;
+        }
         if (with_gen) {
             test_step.step.dependOn(run_genzig_step);
             gen_step.dependOn(&test_step.step);
