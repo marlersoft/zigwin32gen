@@ -35,4 +35,10 @@
             ,"WSASocketW": [1]
         }
     }
+    ,"Storage.FileSystem": {
+        "Functions": {
+            "CreateFileA": [1]
+            ,"CreateFileW": [1]
+        }
+    }
 }
