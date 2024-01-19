@@ -21,7 +21,7 @@ pub fn getModifyTime(dir: std.fs.Dir, path: []const u8) !?Time {
 }
 
 pub fn win32jsonIsNewerThan(win32json_dir: std.fs.Dir, time: Time) !bool {
-    var api_dir = try win32json_dir.openIterableDir("api", .{});
+    var api_dir = try win32json_dir.openDir("api", .{ .iterate = true });
     defer api_dir.close();
 
     var dir_it = api_dir.iterate();
@@ -30,7 +30,7 @@ pub fn win32jsonIsNewerThan(win32json_dir: std.fs.Dir, time: Time) !bool {
             fatal("expected all files to end in '.json' but got '{s}'", .{entry.name});
 
         // TODO: should be able to get stat without opening file
-        const file = try api_dir.dir.openFile(entry.name, .{});
+        const file = try api_dir.openFile(entry.name, .{});
         defer file.close();
         const stat = try file.stat();
         if (stat.mtime > time) {
@@ -51,7 +51,7 @@ pub fn getcwd(a: std.mem.Allocator) ![]u8 {
     return path_allocated;
 }
 
-pub fn readApiList(api_dir: std.fs.IterableDir, api_list: *std.ArrayList([]const u8)) !void {
+pub fn readApiList(api_dir: std.fs.Dir, api_list: *std.ArrayList([]const u8)) !void {
     var dir_it = api_dir.iterate();
     while (try dir_it.next()) |entry| {
         if (!std.mem.endsWith(u8, entry.name, ".json")) {

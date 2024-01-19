@@ -49,7 +49,7 @@ pub fn main() !u8 {
         }
     }
 
-    var api_dir = try win32json_dir.openIterableDir("api", .{});
+    var api_dir = try win32json_dir.openDir("api", .{ .iterate = true });
     defer api_dir.close();
 
     var api_list = std.ArrayList([]const u8).init(allocator);
@@ -77,7 +77,7 @@ pub fn main() !u8 {
     for (api_list.items) |api_json_basename| {
         const name = api_json_basename[0 .. api_json_basename.len - 5];
         try out.print("    {s}\"{s}\": {{\n", .{ json_obj_prefix, name });
-        var file = try api_dir.dir.openFile(api_json_basename, .{});
+        var file = try api_dir.openFile(api_json_basename, .{});
         defer file.close();
         try pass1OnFile(out, api_json_basename, file);
         try out.writeAll("    }\n");
@@ -98,7 +98,7 @@ fn pass1OnFile(out: OutWriter, filename: []const u8, file: std.fs.File) !void {
     var json_tree = blk: {
         // TODO: call parseFromSliceLeaky because we are using an arena allocator
         break :blk json.parseFromSlice(json.Value, allocator, content[start..], .{}) catch |e|
-            fatalTrace(@errorReturnTrace(), "failed to parse '{s}' with {s}", .{filename, @errorName(e)});
+            fatalTrace(@errorReturnTrace(), "failed to parse '{s}' with {s}", .{ filename, @errorName(e) });
     };
     defer json_tree.deinit();
     const parse_time = std.time.milliTimestamp() - parse_start;

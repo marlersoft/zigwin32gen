@@ -157,7 +157,7 @@ const Module = struct {
     children: StringPool.HashMap(*Module),
     file: ?SdkFile,
     pub fn alloc(optional_parent: ?*Module, name: StringPool.Val) !*Module {
-        var module = try allocator.create(Module);
+        const module = try allocator.create(Module);
         module.* = Module{
             .optional_parent = optional_parent,
             .name = name,
@@ -328,7 +328,7 @@ pub fn main() !u8 {
     const root_module = try Module.alloc(null, try global_symbol_pool.add("win32"));
 
     {
-        var api_dir = try win32json_dir.openIterableDir("api", .{});
+        var api_dir = try win32json_dir.openDir("api", .{ .iterate = true });
         defer api_dir.close();
 
         var api_list = std.ArrayList([]const u8).init(allocator);
@@ -352,7 +352,7 @@ pub fn main() !u8 {
             //
             // TODO: would things run faster if I just memory mapped the file?
             //
-            var file = try api_dir.dir.openFile(api_json_basename, .{});
+            var file = try api_dir.openFile(api_json_basename, .{});
             defer file.close();
             try readAndGenerateApiFile(root_module, out_win32_dir, api_json_basename, file);
         }
@@ -387,7 +387,7 @@ fn readJson(filename: []const u8) !std.json.ObjectMap {
         break :blk try file.readToEndAlloc(allocator, std.math.maxInt(usize));
     };
 
-    var json_tree = blk: {
+    const json_tree = blk: {
         //var parser = json.Parser.init(allocator, false); // false is copy_strings
         //defer parser.deinit();
 

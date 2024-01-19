@@ -2,7 +2,7 @@ const std = @import("std");
 
 // TODO: should this be in std lib?
 pub fn camelToSnakeAlloc(a: std.mem.Allocator, camel: []const u8) ![]u8 {
-    var snake = try a.alloc(u8, camelToSnakeLen(camel));
+    const snake = try a.alloc(u8, camelToSnakeLen(camel));
     errdefer a.free(snake);
     camelToSnake(snake, camel);
     return snake;
