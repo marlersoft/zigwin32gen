@@ -873,7 +873,7 @@ fn addTypeRefsNoFormatter(sdk_file: *SdkFile, arches: ArchFlags, type_ref: json.
             std.debug.panic("unknown Native type '{s}'", .{name});
         }
     } else if (std.mem.eql(u8, kind, "ApiRef")) {
-        try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8{ "Kind", "Name", "TargetKind", "Api", "Parents" }, sdk_file);
+        try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8{ "Kind", "Name", "TargetKind", "Api", "IsNativeTypedef", "Parents" }, sdk_file);
         const tmp_name = (try jsonObjGetRequired(type_ref, "Name", sdk_file)).string;
         const api = (try jsonObjGetRequired(type_ref, "Api", sdk_file)).string;
         const parents = (try jsonObjGetRequired(type_ref, "Parents", sdk_file)).array;
@@ -992,7 +992,7 @@ fn generateTypeRefRec(sdk_file: *SdkFile, writer: *CodeWriter, self: TypeRefForm
             try writer.writef("{s}", .{nativeTypeToZigType(native_type)}, .{ .start = .any, .nl = false });
         }
     } else if (std.mem.eql(u8, kind, "ApiRef")) {
-        try jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8{ "Kind", "Name", "TargetKind", "Api", "Parents" }, sdk_file);
+        try jsonObjEnforceKnownFieldsOnly(self.type_ref, &[_][]const u8{ "Kind", "Name", "TargetKind", "Api", "IsNativeTypedef", "Parents" }, sdk_file);
         const name = (try jsonObjGetRequired(self.type_ref, "Name", sdk_file)).string;
         const api = (try jsonObjGetRequired(self.type_ref, "Api", sdk_file)).string;
 
@@ -2152,6 +2152,7 @@ fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap
             const method_obj = method_node_ptr.object;
             const method_name = (try jsonObjGetRequired(method_obj, "Name", sdk_file)).string;
             const return_type = (try jsonObjGetRequired(method_obj, "ReturnType", sdk_file)).object;
+            const remap_sig = try shouldRemapSig(return_type, sdk_file);
             const params = (try jsonObjGetRequired(method_obj, "Params", sdk_file)).array;
 
             const count = method_conflicts.get(method_name) orelse 0;
@@ -2195,13 +2196,26 @@ fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap
             try writer.write(") callconv(.Inline) ", .{ .start = .mid, .nl = false });
             try generateTypeRef(sdk_file, writer, return_type_formatter);
             try writer.write(" {", .{ .start = .mid });
-            try writer.writef("            return @as(*const {s}.VTable, @ptrCast(self.vtable)).{s}(@as(*const {0s}, @ptrCast(self))", .{ com_pool_name, std.zig.fmtId(method_name) }, .{ .nl = false });
+            if (remap_sig) {
+                try writer.writef("            var retval: ", .{}, .{ .nl = false });
+                try generateTypeRef(sdk_file, writer, return_type_formatter);
+                try writer.writef(" = undefined;", .{}, .{ .start = .mid, .nl = true });
+                try writer.writef("            @as(*const {s}.VTable, @ptrCast(self.vtable)).{s}(@as(*const {0s}, @ptrCast(self))", .{ com_pool_name, std.zig.fmtId(method_name) }, .{ .nl = false });
+            } else {
+                try writer.writef("            return @as(*const {s}.VTable, @ptrCast(self.vtable)).{s}(@as(*const {0s}, @ptrCast(self))", .{ com_pool_name, std.zig.fmtId(method_name) }, .{ .nl = false });
+            }
             for (params.items) |*param_node_ptr| {
                 const param_obj = param_node_ptr.object;
                 const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).string;
                 try writer.writef(", {s}", .{fmtParamId(param_name, sdk_file.param_names_to_avoid_map_get_fn)}, .{ .start = .mid, .nl = false });
             }
-            try writer.write(");", .{ .start = .any });
+            if (remap_sig) {
+                try writer.writef(", &retval", .{}, .{ .start = .mid, .nl = false });
+                try writer.write(");", .{ .start = .any });
+                try writer.write("            return retval;", .{ .start = .any });
+            } else {
+                try writer.write(");", .{ .start = .any });
+            }
             try writer.line("        }");
         }
     }
@@ -2362,6 +2376,14 @@ const ParamModifierSet = struct {
     params: [max_params]NullModifier = [_]NullModifier{0} ** max_params,
 };
 
+fn shouldRemapSig(
+    return_type: json.ObjectMap,
+    sdk_file: *SdkFile,
+) !bool {
+    const kind = (try jsonObjGetRequired(return_type, "Kind", sdk_file)).string;
+    return std.mem.eql(u8, kind, "ApiRef") and !(try jsonObjGetRequired(return_type, "IsNativeTypedef", sdk_file)).bool;
+}
+
 fn generateFunction(
     sdk_file: *SdkFile,
     writer: *CodeWriter,
@@ -2380,6 +2402,7 @@ fn generateFunction(
     _ = set_last_error; // ignored for now
     const dll_import = if (func_kind == .fixed) (try jsonObjGetRequired(function_obj, "DllImport", sdk_file)).string else "";
     const return_type = (try jsonObjGetRequired(function_obj, "ReturnType", sdk_file)).object;
+    const remap_sig = try shouldRemapSig(return_type, sdk_file);
     const return_attrs = (try jsonObjGetRequired(function_obj, "ReturnAttrs", sdk_file)).array;
     const attrs = (try jsonObjGetRequired(function_obj, "Attrs", sdk_file)).array;
     const params = (try jsonObjGetRequired(function_obj, "Params", sdk_file)).array;
@@ -2490,8 +2513,18 @@ fn generateFunction(
 
     try generateParams(sdk_file, writer, arches, notnull_set, params.items);
 
+    if (remap_sig) {
+        try writer.writef("    retval: *", .{}, .{ .nl = false });
+        const return_options = TypeRefFormatter.Options{ .reason = .var_decl, .anon_types = null, .null_modifier = 0 };
+        const param_type_formatter = try addTypeRefs(sdk_file, arches, return_type, return_options, null);
+        try generateTypeRef(sdk_file, writer, param_type_formatter);
+        try writer.write(",", .{ .start = .mid });
+    }
+
     try writer.writef(") callconv(@import(\"std\").os.windows.WINAPI) ", .{}, .{ .nl = false });
-    if (is_noreturn) {
+    if (remap_sig) {
+        try writer.write("void", .{ .start = .mid, .nl = false });
+    } else if (is_noreturn) {
         try writer.write("noreturn", .{ .start = .mid, .nl = false });
     } else {
         // TODO: set is_const, in and out properly
