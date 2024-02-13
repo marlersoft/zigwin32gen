@@ -49,7 +49,7 @@ pub fn BaseWindow(comptime DERIVED_TYPE: type) type { return struct {
         lpWindowName: [*:0]const u16,
         dwStyle: win32.WINDOW_STYLE,
         options: struct {
-            dwExStyle: win32.WINDOW_EX_STYLE = @enumFromInt(0),
+            dwExStyle: win32.WINDOW_EX_STYLE = .{},
             x: i32 = win32.CW_USEDEFAULT,
             y: i32 = win32.CW_USEDEFAULT,
             nWidth: i32 = win32.CW_USEDEFAULT,
@@ -59,7 +59,7 @@ pub fn BaseWindow(comptime DERIVED_TYPE: type) type { return struct {
         },
     ) win32.BOOL {
         const wc = win32.WNDCLASS {
-            .style = @enumFromInt(0),
+            .style = .{},
             .lpfnWndProc = WindowProc,
             .cbClsExtra = 0,
             .cbWndExtra = 0,

@@ -1,8 +1,7 @@
-//! This example is ported from : https://github.com/microsoft/Windows-classic-samples/blob/master/Samples/Win7Samples/begin/LearnWin32/HelloWorld/cpp/main.cpp
+const std = @import("std");
+const WINAPI = std.os.windows.WINAPI;
+
 pub const UNICODE = true;
-
-const WINAPI = @import("std").os.windows.WINAPI;
-
 const win32 = struct {
     usingnamespace @import("win32").zig;
     usingnamespace @import("win32").foundation;
@@ -11,20 +10,30 @@ const win32 = struct {
     usingnamespace @import("win32").graphics.gdi;
 };
 const L = win32.L;
-const HINSTANCE = win32.HINSTANCE;
-const CW_USEDEFAULT = win32.CW_USEDEFAULT;
-const MSG = win32.MSG;
 const HWND = win32.HWND;
 
-pub export fn wWinMain(hInstance: HINSTANCE, _: ?HINSTANCE, pCmdLine: [*:0]u16, nCmdShow: u32) callconv(WINAPI) c_int
+fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
+    if (std.fmt.allocPrintZ(std.heap.page_allocator, fmt, args)) |msg| {
+        _ = win32.MessageBoxA(null, msg, "Fatal Error", .{});
+    } else |e| switch(e) {
+        error.OutOfMemory => _ = win32.MessageBoxA(null, "Out of memory", "Fatal Error", .{}),
+    }
+    std.os.exit(1);
+}
+
+pub export fn wWinMain(
+    hInstance: win32.HINSTANCE,
+    _: ?win32.HINSTANCE,
+    pCmdLine: [*:0]u16,
+    nCmdShow: u32,
+) callconv(WINAPI) c_int
 {
     _ = pCmdLine;
+    _ = nCmdShow;
 
-    // Register the window class.
     const CLASS_NAME = L("Sample Window Class");
-
     const wc = win32.WNDCLASS {
-        .style = @enumFromInt(0),
+        .style = .{},
         .lpfnWndProc = WindowProc,
         .cbClsExtra = 0,
         .cbWndExtra = 0,
@@ -37,63 +46,52 @@ pub export fn wWinMain(hInstance: HINSTANCE, _: ?HINSTANCE, pCmdLine: [*:0]u16, 
         .lpszClassName = CLASS_NAME,
     };
 
-    _ = win32.RegisterClass(&wc);
-
-    // Create the window.
+    if (0 == win32.RegisterClass(&wc))
+        fatal("RegisterClass failed, error={s}", .{@tagName(win32.GetLastError())});
 
     const hwnd = win32.CreateWindowEx(
-        @enumFromInt(0),                // Optional window styles.
-        CLASS_NAME,                     // Window class
-        L("Learn to Program Windows"),  // Window text
-        win32.WS_OVERLAPPEDWINDOW,      // Window style
-
-        // Size and position
-        CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
-
+        .{},
+        CLASS_NAME,
+        L("Hello Windows"),
+        win32.WS_OVERLAPPEDWINDOW,
+        win32.CW_USEDEFAULT, win32.CW_USEDEFAULT, // Position
+        400, 200,   // Size
         null,       // Parent window
         null,       // Menu
         hInstance,  // Instance handle
         null        // Additional application data
-    );
-    if (hwnd == null)
-    {
-        return 0;
-    }
+    ) orelse fatal("CreateWindow failed, error={s}", .{@tagName(win32.GetLastError())});
 
-    _ = win32.ShowWindow(hwnd, @enumFromInt(nCmdShow));
+    _ = win32.ShowWindow(hwnd, .{ .SHOWNORMAL = 1 });
 
-    // Run the message loop.
-    var msg : MSG = undefined;
-    while (win32.GetMessage(&msg, null, 0, 0) != 0)
-    {
+    var msg : win32.MSG = undefined;
+    while (win32.GetMessage(&msg, null, 0, 0) != 0) {
         _ = win32.TranslateMessage(&msg);
         _ = win32.DispatchMessage(&msg);
     }
-
-    return 0;
+    return @intCast(msg.wParam);
 }
 
-fn WindowProc(hwnd: HWND , uMsg: u32, wParam: win32.WPARAM, lParam: win32.LPARAM) callconv(WINAPI) win32.LRESULT
-{
-    switch (uMsg)
-    {
-        win32.WM_DESTROY =>
-        {
+fn WindowProc(
+    hwnd: HWND ,
+    uMsg: u32,
+    wParam: win32.WPARAM,
+    lParam: win32.LPARAM,
+) callconv(WINAPI) win32.LRESULT {
+    switch (uMsg) {
+        win32.WM_DESTROY => {
             win32.PostQuitMessage(0);
             return 0;
         },
-        win32.WM_PAINT =>
-        {
+        win32.WM_PAINT => {
             var ps: win32.PAINTSTRUCT = undefined;
             const hdc = win32.BeginPaint(hwnd, &ps);
-
-            // All painting occurs here, between BeginPaint and EndPaint.
             _ = win32.FillRect(hdc, &ps.rcPaint, @ptrFromInt(@intFromEnum(win32.COLOR_WINDOW)+1));
+            _ = win32.TextOutA(hdc, 20, 20, "Hello", 5);
             _ = win32.EndPaint(hwnd, &ps);
             return 0;
         },
         else => {},
     }
-
     return win32.DefWindowProc(hwnd, uMsg, wParam, lParam);
 }

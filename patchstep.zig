@@ -1,7 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("std");
-const build = std.build;
-const Step = build.Step;
+const Step = std.Build.Step;
 
 pub const MakeFn = switch (builtin.zig_backend) {
     .stage1 => fn (self: *Step, prog_node: *std.Progress.Node) anyerror!void,

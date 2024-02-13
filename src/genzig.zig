@@ -157,7 +157,7 @@ const Module = struct {
     children: StringPool.HashMap(*Module),
     file: ?SdkFile,
     pub fn alloc(optional_parent: ?*Module, name: StringPool.Val) !*Module {
-        var module = try allocator.create(Module);
+        const module = try allocator.create(Module);
         module.* = Module{
             .optional_parent = optional_parent,
             .name = name,
@@ -328,7 +328,7 @@ pub fn main() !u8 {
     const root_module = try Module.alloc(null, try global_symbol_pool.add("win32"));
 
     {
-        var api_dir = try win32json_dir.openIterableDir("api", .{});
+        var api_dir = try win32json_dir.openDir("api", .{ .iterate = true });
         defer api_dir.close();
 
         var api_list = std.ArrayList([]const u8).init(allocator);
@@ -352,7 +352,7 @@ pub fn main() !u8 {
             //
             // TODO: would things run faster if I just memory mapped the file?
             //
-            var file = try api_dir.dir.openFile(api_json_basename, .{});
+            var file = try api_dir.openFile(api_json_basename, .{});
             defer file.close();
             try readAndGenerateApiFile(root_module, out_win32_dir, api_json_basename, file);
         }
@@ -387,7 +387,7 @@ fn readJson(filename: []const u8) !std.json.ObjectMap {
         break :blk try file.readToEndAlloc(allocator, std.math.maxInt(usize));
     };
 
-    var json_tree = blk: {
+    const json_tree = blk: {
         //var parser = json.Parser.init(allocator, false); // false is copy_strings
         //defer parser.deinit();
 
@@ -1893,6 +1893,38 @@ const EnumValue = struct {
             else => false,
         };
     }
+
+    pub const FlagsValue = union(enum) {
+        zero: void,
+        flag: u8,
+        mask: i64,
+    };
+    pub fn flagsValue(self: EnumValue) FlagsValue {
+        switch (self.value) {
+            .integer => |i| {
+                if (i == 0) return .zero;
+
+                var index: u6 = 0;
+                while (true) : (index += 1) {
+                    if ((@as(i64, 1) << index) == i) return .{ .flag = index };
+                    if (index == 63) break;
+                }
+
+                return .{ .mask = i };
+            },
+            .number_string => |s| {
+                if (std.mem.eql(u8, s, "9223372036854775808"))
+                    return .{ .flag = 63 }; // TODO: verify this is not off-by-one
+                std.debug.panic(
+                    "todo: handle enum flag value json number string '{s}' ('{s}' '{s}')",
+                    .{s, self.pool_name, self.short_name },
+                );
+            },
+            else => {
+                std.debug.panic("todo: flagIndex for json value {s}", .{@tagName(self.value)});
+            },
+        }
+    }
 };
 fn matchLen(a: []const u8, b: []const u8) usize {
     var i: usize = 0;
@@ -1982,12 +2014,15 @@ fn generateEnum(
             }
         }
     }
+    var flag_map = [1]?*EnumValue{ null } ** 64;
 
-    try writer.linef("{s}enum({s}) {{", .{ def_prefix, integer_base });
+    const enum_type = if (flags) "packed struct" else "enum";
+
+    try writer.linef("{s}{s}({s}) {{", .{ def_prefix, enum_type, integer_base });
     if (values.len == 0) {
         // zig doesn't allow empty enums
         try writer.line("    _");
-    } else {
+    } else if (!flags) {
         for (values) |val| {
             if (val.conflict_index) |conflict_index| {
                 try writer.linef("    // {s} = {}, this enum value conflicts with {s}", .{ std.zig.fmtId(val.short_name), fmtJson(val.value), std.zig.fmtId(values[conflict_index].short_name) });
@@ -1995,30 +2030,52 @@ fn generateEnum(
                 try writer.linef("    {s} = {},", .{ std.zig.fmtId(val.short_name), fmtJson(val.value) });
             }
         }
-        if (flags) {
-            try writer.linef("    _,", .{});
-        } else if (non_exhaustive_enums.get(pool_name.slice)) |_| {
+        if (non_exhaustive_enums.get(pool_name.slice)) |_| {
             try writer.linef("    _,", .{});
         }
     }
     if (flags) {
-        try writer.line("    pub fn initFlags(o: struct {");
-        for (values) |val| {
-            if (val.conflict_index == null) {
-                try writer.linef("        {}: u1 = 0,", .{std.zig.fmtId(val.short_name)});
+        for (values) |*val| {
+            if (val.conflict_index) |_| continue;
+            switch (val.flagsValue()) {
+                .zero => {},
+                .flag => |index| {
+                    // should have had a conflict_index
+                    std.debug.assert(flag_map[index] == null);
+                    flag_map[index] = val;
+                },
+                .mask => {},
             }
         }
-        try writer.linef("    }}) {s} {{", .{pool_name});
-        try writer.linef("        return @as({s}, @enumFromInt(", .{pool_name});
-        var prefix: []const u8 = " ";
-        for (values) |val| {
-            if (val.conflict_index == null) {
-                try writer.linef("            {s} (if (o.{s} == 1) @intFromEnum({s}.{1s}) else 0)", .{ prefix, std.zig.fmtId(val.short_name), pool_name });
-                prefix = "|";
+
+        const bit_count: usize = blk: {
+            if (std.mem.eql(u8, integer_base, "u16")) break :blk 16;
+            if (std.mem.eql(u8, integer_base, "i32")) break :blk 32;
+            if (std.mem.eql(u8, integer_base, "u32")) break :blk 32;
+            if (std.mem.eql(u8, integer_base, "u64")) break :blk 64;
+            std.debug.panic("todo: handle integer base '{s}'", .{integer_base});
+        };
+        for (flag_map[0..bit_count], 0..) |maybe_flag, i| {
+            const flag = maybe_flag orelse {
+                try writer.linef("    _{}: u1 = 0,", .{i});
+                continue;
+            };
+            try writer.linef("    {s}: u1 = 0,", .{ std.zig.fmtId(flag.short_name) });
+        }
+        for (flag_map[bit_count..]) |maybe_flag| {
+            if (maybe_flag) |_|
+                jsonPanicMsg("enum value is out-of-range for this flag integer base type", .{});
+        }
+
+        for (values) |*val| {
+            if (val.conflict_index) |conflict_index| {
+                try writer.linef("    // {s} ({}) conflicts with {s}", .{
+                    std.zig.fmtId(val.short_name),
+                    fmtJson(val.value),
+                    std.zig.fmtId(values[conflict_index].short_name),
+                });
             }
         }
-        try writer.line("        ));");
-        try writer.line("    }");
     }
     try writer.linef("}}{s}", .{def_suffix});
 
@@ -2053,7 +2110,37 @@ fn generateEnum(
         try enum_alias_conflicts.put(val.pool_name, pool_name);
         try sdk_file.const_exports.append(val.pool_name);
         const target_short_name = if (val.conflict_index) |i| values[i].short_name else val.short_name;
-        try writer.linef("pub const {} = {}.{};", .{ val.pool_name, pool_name, std.zig.fmtId(target_short_name) });
+        if (flags) switch (val.flagsValue()) {
+            .zero => try writer.linef("pub const {} = {}{{ }};", .{
+                val.pool_name, pool_name
+            }),
+            .flag => try writer.linef("pub const {} = {}{{ .{} = 1 }};", .{
+                val.pool_name, pool_name, std.zig.fmtId(target_short_name)
+            }),
+            .mask => |mask| {
+                try writer.linef("pub const {} = {}{{", .{
+                    val.pool_name, pool_name
+                });
+                var mask_left = mask;
+                var index: u6 = 0;
+                while (true) : (index += 1) {
+                    const next_flag_bit: i64 = (@as(i64, 1) << index);
+                    if (0 != (next_flag_bit & mask)) {
+                        if (flag_map[index]) |flag| {
+                            const flag_target_short_name = if (flag.conflict_index) |i| values[i].short_name else flag.short_name;
+                            try writer.linef("    .{} = 1,", .{std.zig.fmtId(flag_target_short_name)});
+                        } else {
+                            try writer.linef("    ._{} = 1,", .{index});
+                        }
+                        mask_left &= ~next_flag_bit;
+                    }
+                    if (mask_left == 0) break;
+                }
+                try writer.line("};");
+            },
+        } else {
+            try writer.linef("pub const {} = {}.{};", .{ val.pool_name, pool_name, std.zig.fmtId(target_short_name) });
+        }
     }
 }
 
