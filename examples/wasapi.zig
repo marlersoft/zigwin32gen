@@ -85,7 +85,7 @@ pub fn getDefaultDevice() !void {
 }
 
 pub fn main() !u8 {
-    const config_value = win32.COINIT.initFlags(.{.APARTMENTTHREADED = 1, .DISABLE_OLE1DDE = 1});
+    const config_value = win32.COINIT{ .APARTMENTTHREADED = 1, .DISABLE_OLE1DDE = 1 };
     {
         _ = config_value;
         const status = win32.CoInitialize(null); // CoInitializeEx(null, @intToEnum(COINIT, config_value));
