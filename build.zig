@@ -1,12 +1,12 @@
 const builtin = @import("builtin");
 const std = @import("std");
-const Builder = std.build.Builder;
-const Step = std.build.Step;
+const Build = std.Build;
+const Step = std.Build.Step;
 const CrossTarget = std.zig.CrossTarget;
 const GitRepoStep = @import("GitRepoStep.zig");
 const patchstep = @import("patchstep.zig");
 
-pub fn build(b: *Builder) !void {
+pub fn build(b: *Build) !void {
     patchstep.init(b.allocator);
 
     const gen_step = b.step("gen", "Generate and unit test the bindings");
@@ -16,7 +16,6 @@ pub fn build(b: *Builder) !void {
     const test_no_gen_step = b.step("test-no-gen", "Unit test the generated bindings without regenerating them");
     const examples_step = b.step("examples", "Build/run examples. Run 'gen' step first. Use -j1 to run one at a time");
 
-    const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
     const win32json_repo = GitRepoStep.create(b, .{
@@ -30,6 +29,7 @@ pub fn build(b: *Builder) !void {
             .name = "pass1",
             .root_source_file = .{ .path = "src/pass1.zig" },
             .optimize = optimize,
+            .target = b.host,
         });
 
         const run_pass1 = b.addRunArtifact(pass1_exe);
@@ -46,6 +46,7 @@ pub fn build(b: *Builder) !void {
             .name = "genzig",
             .root_source_file = .{ .path = "src/genzig.zig" },
             .optimize = optimize,
+            .target = b.host,
         });
         const run = b.addRunArtifact(exe);
         patchstep.patch(&run.step, runStepMake);
@@ -58,7 +59,7 @@ pub fn build(b: *Builder) !void {
     for ([_]bool{ false, true }) |with_gen| {
         const test_step = b.addTest(.{
             .root_source_file = .{ .path = "zigwin32/win32.zig" },
-            .target = target,
+            .target = b.host,
             .optimize = optimize,
         });
         if (builtin.os.tag != .windows) {
@@ -75,7 +76,7 @@ pub fn build(b: *Builder) !void {
     }
 
     const win32 = b.createModule(.{
-        .source_file = .{ .path = "zigwin32/win32.zig" },
+        .root_source_file = .{ .path = "zigwin32/win32.zig" },
     });
     const arches: []const ?[]const u8 = &[_]?[]const u8{
         null,
@@ -93,7 +94,11 @@ pub fn build(b: *Builder) !void {
     try addExample(b, arches, optimize, win32, "opendialog", .Windows, examples_step);
 }
 
-fn runStepMake(step: *std.build.Step, prog_node: *std.Progress.Node, original_make_fn: patchstep.MakeFn) anyerror!void {
+fn runStepMake(
+    step: *Step,
+    prog_node: *std.Progress.Node,
+    original_make_fn: patchstep.MakeFn
+) anyerror!void {
     original_make_fn(step, prog_node) catch |err| switch (err) {
         // just exit if subprocess failed with error exit code
         error.UnexpectedExitCode => std.os.exit(0xff),
@@ -101,12 +106,12 @@ fn runStepMake(step: *std.build.Step, prog_node: *std.Progress.Node, original_ma
     };
 }
 
-fn concat(b: *Builder, slices: []const []const u8) []u8 {
+fn concat(b: *Build, slices: []const []const u8) []u8 {
     return std.mem.concat(b.allocator, u8, slices) catch unreachable;
 }
 
 fn addExample(
-    b: *Builder,
+    b: *Build,
     arches: []const ?[]const u8,
     optimize: std.builtin.Mode,
     win32: *std.Build.Module,
@@ -119,16 +124,17 @@ fn addExample(
         const name = if (cross_arch_opt) |arch| concat(b, &.{ root, "-", arch}) else root;
 
         const arch_os_abi = if (cross_arch_opt) |arch| concat(b, &.{ arch, "-windows"}) else "native";
-        const target = std.zig.CrossTarget.parse(.{ .arch_os_abi = arch_os_abi }) catch unreachable;
+        const target_query = std.Target.Query.parse(.{ .arch_os_abi = arch_os_abi }) catch unreachable;
+        const target = b.resolveTargetQuery(target_query);
         const exe = b.addExecutable(.{
             .name = name,
             .root_source_file = .{ .path = b.pathJoin(&.{ "examples", basename}) },
             .target = target,
             .optimize = optimize,
+            .single_threaded = true,
         });
-        exe.single_threaded = true;
         exe.subsystem = subsystem;
-        exe.addModule("win32", win32);
+        exe.root_module.addImport("win32", win32);
         examples_step.dependOn(&exe.step);
 
         const desc_suffix: []const u8 = if (cross_arch_opt) |_| "" else " for the native target";

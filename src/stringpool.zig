@@ -47,8 +47,8 @@ pub const StringPool = struct {
         if (self.map.get(s)) |entry| {
             return entry;
         }
-        var newString = try self.allocator.alloc(u8, s.len);
-        std.mem.copy(u8, newString, s);
+        const newString = try self.allocator.alloc(u8, s.len);
+        @memcpy(newString, s);
         const val = Val{ .slice = newString };
         _ = try self.map.put(newString, val);
         return val;
