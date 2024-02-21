@@ -1,5 +1,3 @@
 zig-cache/
 zig-out/
-/out/
-/dep/
 /zigwin32/
