@@ -8,6 +8,12 @@ const patchstep = @import("patchstep.zig");
 pub fn build(b: *Build) !void {
     patchstep.init(b.allocator);
 
+    const maybe_fetch_option = b.option(
+        bool,
+        "fetch",
+        "Controls whether genzig fetches and updates it's local version branch before generating the bindings",
+    );
+
     const gen_step = b.step("gen", "Generate and unit test the bindings");
     b.default_step = gen_step;
     const pass1_step = b.step("pass1", "Only perform pass1 of zig binding generation (generates pass1.json)");
@@ -51,8 +57,11 @@ pub fn build(b: *Build) !void {
         run.step.dependOn(&pass1.run.step);
         run.addDirectoryArg(win32json_dep.path(""));
         run.addFileArg(pass1.out_file);
+        run.addArg(@embedFile("version"));
         run.addDirectoryArg(.{ .path = b.pathFromRoot("src") });
         run.addDirectoryArg(.{ .path = b.pathFromRoot("zigwin32") });
+        const fetch_enabled = if (maybe_fetch_option) |o| o else true;
+        run.addArg(if (fetch_enabled) "fetch" else "nofetch");
         break :blk &run.step;
     };
     gen_no_test_step.dependOn(run_genzig_step);

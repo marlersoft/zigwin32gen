@@ -259,6 +259,7 @@ const SdkFile = struct {
 const notnull_filename: []const u8 = "notnull.json";
 
 const Times = struct {
+    git_fetch_time_millis: u64 = 0,
     parse_time_millis: i64 = 0,
     read_time_millis: i64 = 0,
     generate_time_millis: i64 = 0,
@@ -272,6 +273,7 @@ pub fn main() !u8 {
         if (print_time_summary) {
             var total_millis = std.time.milliTimestamp() - main_start_millis;
             if (total_millis == 0) total_millis = 1; // prevent divide by 0
+            std.debug.print("Git Fetch Time: {} millis ({}%)\n", .{ global_times.git_fetch_time_millis, @divTrunc(100 * global_times.git_fetch_time_millis, @as(u64, @intCast(total_millis))) });
             std.debug.print("Parse Time: {} millis ({}%)\n", .{ global_times.parse_time_millis, @divTrunc(100 * global_times.parse_time_millis, total_millis) });
             std.debug.print("Read Time : {} millis ({}%)\n", .{ global_times.read_time_millis, @divTrunc(100 * global_times.read_time_millis, total_millis) });
             std.debug.print("Gen Time  : {} millis ({}%)\n", .{ global_times.generate_time_millis, @divTrunc(100 * global_times.generate_time_millis, total_millis) });
@@ -285,14 +287,23 @@ pub fn main() !u8 {
     // don't care about freeing args
 
     const cmd_args = all_args[1..];
-    if (cmd_args.len != 4) {
-        std.log.err("expected 4 cmdline arguments but got {}", .{cmd_args.len});
+    if (cmd_args.len != 6) {
+        std.log.err("expected 6 cmdline arguments but got {}", .{cmd_args.len});
         return 1;
     }
     const win32json_path = cmd_args[0];
     const pass1_json = cmd_args[1];
-    const src_path = cmd_args[2];
-    const zigwin32_repo = cmd_args[3];
+    const version = cmd_args[2];
+    const src_path = cmd_args[3];
+    const zigwin32_repo = cmd_args[4];
+    const fetch_enabled_str = cmd_args[5];
+
+    const fetch_enabled = if (std.mem.eql(u8, fetch_enabled_str, "fetch"))
+        true
+    else if (std.mem.eql(u8, fetch_enabled_str, "nofetch"))
+        false
+    else
+        fatal("expected 'fetch' or 'nofetch' but got '{s}'", .{fetch_enabled_str});
 
     var win32json_dir = try std.fs.cwd().openDir(win32json_path, .{});
     defer win32json_dir.close();
@@ -306,12 +317,70 @@ pub fn main() !u8 {
         else => return e,
     };
 
+    try run("git clean", &.{"git", "-C", zigwin32_repo, "clean", "-xffd"});
+    {
+        const result = try std.ChildProcess.run(.{
+            .allocator = allocator,
+            .argv = &.{
+                "git",
+                "-C",
+                zigwin32_repo,
+                "status",
+                "--porcelain",
+            },
+        });
+        defer {
+            allocator.free(result.stderr);
+            allocator.free(result.stdout);
+        }
+        if (result.stderr.len > 0) {
+            std.log.err("stderr output from git status:\n---\n{s}\n---\n", .{result.stderr});
+        }
+        if (result.stdout.len > 0) {
+            std.log.info("TODO: handle non-clean git status:\n---\n{s}\n---\n", .{result.stdout});
+            return error.Todo;
+        }
+    }
+
+    {
+        if (fetch_enabled) {
+            var timer = try std.time.Timer.start();
+            const branch_exists = try gitFetch(zigwin32_repo, version);
+            global_times.git_fetch_time_millis = timer.read() / std.time.ns_per_ms;
+            if (branch_exists) {
+                const origin_branch = try std.fmt.allocPrint(allocator, "origin/{s}", .{version});
+                defer allocator.free(origin_branch);
+                try run("git checkout", &.{"git", "-C", zigwin32_repo, "checkout", origin_branch, "-B", version});
+            } else if (try gitBranchExists(zigwin32_repo, version)) {
+                try run("git checkout", &.{"git", "-C", zigwin32_repo, "checkout", "-B", version});
+            } else {
+                std.log.err(
+                    "there's no local nor remote branch for version '{s}' in the zigwin32 repo.",
+                    .{version},
+                );
+                fatalSuggestNewVersion(version, zigwin32_repo);
+            }
+        } else if (try gitBranchExists(zigwin32_repo, version)) {
+            try run("git checkout", &.{"git", "-C", zigwin32_repo, "checkout", "-B", version});
+        } else {
+            std.log.err(
+                "there's no local branch for version '{s}' in the zigwin32 repo and fetch has been disabled.",
+                .{version},
+            );
+            fatalSuggestNewVersion(version, zigwin32_repo);
+        }
+    }
+
     global_pass1 = try readJson(pass1_json);
     global_notnull = try readJson(notnull_filename);
 
     var out_dir = try std.fs.cwd().openDir(zigwin32_repo, .{});
     defer out_dir.close();
     out_dir.deleteFile("win32.zig") catch |e| switch (e) {
+        error.FileNotFound => {},
+        else => return e,
+    };
+    out_dir.deleteFile("build.zig") catch |e| switch (e) {
         error.FileNotFound => {},
         else => return e,
     };
@@ -375,9 +444,116 @@ pub fn main() !u8 {
         inline for (src_modules) |mod| {
             try src_dir.copyFile(mod ++ ".zig", out_win32_dir, mod ++ ".zig", .{});
         }
+        try src_dir.copyFile("zigwin32.build.zig", out_dir, "build.zig", .{});
     }
     print_time_summary = true;
+
+    try run("git status", &.{"git", "-C", zigwin32_repo, "status"});
+
     return 0;
+}
+
+fn fatalSuggestNewVersion(version: []const u8, zigwin32_repo: []const u8) noreturn {
+    fatal(
+        \\If {s} a new version/branch, create it with:
+        \\    git -C {s} checkout 6f193db913584e59a366d94553d8271a8d160309 -b {0s}
+        \\
+        , .{version, zigwin32_repo},
+    );
+}
+
+fn childProcFailed(term: std.ChildProcess.Term) bool {
+    return switch (term) {
+        .Exited => |code| code != 0,
+        .Signal => true,
+        .Stopped => true,
+        .Unknown => true,
+    };
+}
+const FormatTerm = struct {
+    term: std.ChildProcess.Term,
+    pub fn format(
+        self: @This(),
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = fmt;
+        _ = options;
+        switch (self.term) {
+            .Exited => |code| try writer.print("exited with code {}", .{code}),
+            .Signal => |sig| try writer.print("exited with signal {}", .{sig}),
+            .Stopped => |sig| try writer.print("stopped with signal {}", .{sig}),
+            .Unknown => |sig| try writer.print("terminated abnormally with signal {}", .{sig}),
+        }
+    }
+};
+fn fmtTerm(term: std.ChildProcess.Term) FormatTerm {
+    return .{ .term = term };
+}
+
+const FormatArgv = struct {
+    argv: []const []const u8,
+    pub fn format(
+        self: @This(),
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = fmt;
+        _ = options;
+        var prefix: []const u8 = "";
+        for (self.argv) |arg| {
+            try writer.print("{s}{s}", .{prefix, arg});
+            prefix = " ";
+        }
+    }
+};
+fn fmtArgv(argv: []const []const u8) FormatArgv {
+    return .{ .argv = argv };
+}
+
+fn run(name: []const u8, argv: []const []const u8) !void {
+    var child = std.ChildProcess.init(argv, allocator);
+    std.log.info("{}", .{fmtArgv(child.argv)});
+    try child.spawn();
+    const term = try child.wait();
+    if (childProcFailed(term)) {
+        fatal("{s} {}", .{name, fmtTerm(term)});
+    }
+}
+fn gitFetch(path: []const u8, branch: []const u8) !bool {
+    var child = std.ChildProcess.init(&.{
+        "git",
+        "-C", path,
+        "fetch",
+        "origin",
+        branch,
+    }, allocator);
+    std.log.info("{}", .{fmtArgv(child.argv)});
+    try child.spawn();
+    const term = try child.wait();
+    switch (term) {
+        .Exited => |code| return code == 0,
+        else => fatal("git fetch {}", .{fmtTerm(term)}),
+    }
+}
+
+fn gitBranchExists(path: []const u8, branch: []const u8) !bool {
+    var child = std.ChildProcess.init(&.{
+        "git",
+        "-C", path,
+        "rev-parse",
+        "--verify",
+        branch,
+    }, allocator);
+    std.log.info("{}", .{fmtArgv(child.argv)});
+    try child.spawn();
+    const term = try child.wait();
+    switch (term) {
+        .Exited => |code| return code == 0,
+        else => fatal("git fetch {}", .{fmtTerm(term)}),
+    }
 }
 
 fn readJson(filename: []const u8) !std.json.ObjectMap {
