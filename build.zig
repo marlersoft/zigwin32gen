@@ -32,7 +32,7 @@ pub fn build(b: *Build) !void {
 
         const run = b.addRunArtifact(pass1_exe);
         patchstep.patch(&run.step, runStepMake);
-        run.addDirectoryArg(win32json_dep.path("."));
+        run.addDirectoryArg(win32json_dep.path(""));
         const out_file = run.addOutputFileArg("pass1.json");
 
         pass1_step.dependOn(&run.step);
@@ -49,8 +49,10 @@ pub fn build(b: *Build) !void {
         const run = b.addRunArtifact(exe);
         patchstep.patch(&run.step, runStepMake);
         run.step.dependOn(&pass1.run.step);
-        run.addDirectoryArg(win32json_dep.path("."));
+        run.addDirectoryArg(win32json_dep.path(""));
         run.addFileArg(pass1.out_file);
+        run.addDirectoryArg(.{ .path = b.pathFromRoot("src") });
+        run.addDirectoryArg(.{ .path = b.pathFromRoot("zigwin32") });
         break :blk &run.step;
     };
     gen_no_test_step.dependOn(run_genzig_step);

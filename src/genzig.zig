@@ -285,23 +285,22 @@ pub fn main() !u8 {
     // don't care about freeing args
 
     const cmd_args = all_args[1..];
-    if (cmd_args.len != 2) {
-        std.log.err("expected 2 arguments but got {}", .{cmd_args.len});
+    if (cmd_args.len != 4) {
+        std.log.err("expected 4 cmdline arguments but got {}", .{cmd_args.len});
         return 1;
     }
     const win32json_path = cmd_args[0];
     const pass1_json = cmd_args[1];
+    const src_path = cmd_args[2];
+    const zigwin32_repo = cmd_args[3];
 
     var win32json_dir = try std.fs.cwd().openDir(win32json_path, .{});
     defer win32json_dir.close();
 
-    const cwd = std.fs.cwd();
-
-    const zigwin32_dir_name = "zigwin32";
-    cwd.access(zigwin32_dir_name, .{}) catch |e| switch (e) {
+    std.fs.cwd().access(zigwin32_repo, .{}) catch |e| switch (e) {
         error.FileNotFound => {
-            std.debug.print("error: repository '{s}' does not exist, clone it with:\n", .{zigwin32_dir_name});
-            std.debug.print("    git clone https://github.com/marlersoft/zigwin32 {s}" ++ path_sep ++ zigwin32_dir_name ++ "\n", .{try common.getcwd(allocator)});
+            std.debug.print("error: zigwin32 repository to write generated files to does not exist, clone it with:\n", .{});
+            std.debug.print("    git clone https://github.com/marlersoft/zigwin32 {s}\n", .{zigwin32_repo});
             std.os.exit(0xff);
         },
         else => return e,
@@ -310,7 +309,7 @@ pub fn main() !u8 {
     global_pass1 = try readJson(pass1_json);
     global_notnull = try readJson(notnull_filename);
 
-    var out_dir = try cwd.openDir(zigwin32_dir_name, .{});
+    var out_dir = try std.fs.cwd().openDir(zigwin32_repo, .{});
     defer out_dir.close();
     out_dir.deleteFile("win32.zig") catch |e| switch (e) {
         error.FileNotFound => {},
@@ -371,7 +370,7 @@ pub fn main() !u8 {
 
     // copy zig.zig, missing.zig and windowlongptr.zig modules
     {
-        var src_dir = try cwd.openDir("src", .{});
+        var src_dir = try std.fs.cwd().openDir(src_path, .{});
         defer src_dir.close();
         inline for (src_modules) |mod| {
             try src_dir.copyFile(mod ++ ".zig", out_win32_dir, mod ++ ".zig", .{});
