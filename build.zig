@@ -3,7 +3,6 @@ const std = @import("std");
 const Build = std.Build;
 const Step = std.Build.Step;
 const CrossTarget = std.zig.CrossTarget;
-const GitRepoStep = @import("GitRepoStep.zig");
 const patchstep = @import("patchstep.zig");
 
 pub fn build(b: *Build) !void {
@@ -18,11 +17,7 @@ pub fn build(b: *Build) !void {
 
     const optimize = b.standardOptimizeOption(.{});
 
-    const win32json_repo = GitRepoStep.create(b, .{
-        .url = "https://github.com/marlersoft/win32json",
-        .branch = "21.0.3-preview",
-        .sha = "0337052317c881f541bd992c085347ff612725a8",
-    });
+    const win32json_dep = b.dependency("win32json", .{});
 
     const run_pass1 = blk: {
         const pass1_exe = b.addExecutable(.{
@@ -34,8 +29,7 @@ pub fn build(b: *Build) !void {
 
         const run_pass1 = b.addRunArtifact(pass1_exe);
         patchstep.patch(&run_pass1.step, runStepMake);
-        run_pass1.step.dependOn(&win32json_repo.step);
-        run_pass1.addArg(win32json_repo.getPath(&run_pass1.step));
+        run_pass1.addDirectoryArg(win32json_dep.path("."));
 
         pass1_step.dependOn(&run_pass1.step);
         break :blk run_pass1;
@@ -51,7 +45,7 @@ pub fn build(b: *Build) !void {
         const run = b.addRunArtifact(exe);
         patchstep.patch(&run.step, runStepMake);
         run.step.dependOn(&run_pass1.step);
-        run.addArg(win32json_repo.getPath(&run.step));
+        run.addDirectoryArg(win32json_dep.path("."));
         break :blk &run.step;
     };
     gen_no_test_step.dependOn(run_genzig_step);
