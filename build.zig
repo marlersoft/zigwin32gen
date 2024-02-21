@@ -19,7 +19,10 @@ pub fn build(b: *Build) !void {
 
     const win32json_dep = b.dependency("win32json", .{});
 
-    const run_pass1 = blk: {
+    const pass1: struct {
+        run: *std.Build.Step.Run,
+        out_file: std.Build.LazyPath,
+    } = blk: {
         const pass1_exe = b.addExecutable(.{
             .name = "pass1",
             .root_source_file = .{ .path = "src/pass1.zig" },
@@ -27,12 +30,13 @@ pub fn build(b: *Build) !void {
             .target = b.host,
         });
 
-        const run_pass1 = b.addRunArtifact(pass1_exe);
-        patchstep.patch(&run_pass1.step, runStepMake);
-        run_pass1.addDirectoryArg(win32json_dep.path("."));
+        const run = b.addRunArtifact(pass1_exe);
+        patchstep.patch(&run.step, runStepMake);
+        run.addDirectoryArg(win32json_dep.path("."));
+        const out_file = run.addOutputFileArg("pass1.json");
 
-        pass1_step.dependOn(&run_pass1.step);
-        break :blk run_pass1;
+        pass1_step.dependOn(&run.step);
+        break :blk .{ .run = run, .out_file = out_file };
     };
 
     const run_genzig_step = blk: {
@@ -44,8 +48,9 @@ pub fn build(b: *Build) !void {
         });
         const run = b.addRunArtifact(exe);
         patchstep.patch(&run.step, runStepMake);
-        run.step.dependOn(&run_pass1.step);
+        run.step.dependOn(&pass1.run.step);
         run.addDirectoryArg(win32json_dep.path("."));
+        run.addFileArg(pass1.out_file);
         break :blk &run.step;
     };
     gen_no_test_step.dependOn(run_genzig_step);

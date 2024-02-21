@@ -29,25 +29,15 @@ pub fn main() !u8 {
     // don't care about freeing args
 
     const cmd_args = all_args[1..];
-    if (cmd_args.len != 1) {
-        std.log.err("expected 1 argument (path to the win32json repository) but got {}", .{cmd_args.len});
+    if (cmd_args.len != 2) {
+        std.log.err("expected 2 arguments but got {}", .{cmd_args.len});
         return 1;
     }
     const win32json_path = cmd_args[0];
+    const out_filename = cmd_args[1];
 
     var win32json_dir = try std.fs.cwd().openDir(win32json_path, .{});
     defer win32json_dir.close();
-
-    {
-        const need_update = blk: {
-            const dest_mtime = (try common.getModifyTime(std.fs.cwd(), "pass1.json")) orelse break :blk true;
-            break :blk try common.win32jsonIsNewerThan(win32json_dir, dest_mtime);
-        };
-        if (!need_update) {
-            std.log.info("pass1 is already done", .{});
-            return 0;
-        }
-    }
 
     var api_dir = try win32json_dir.openDir("api", .{ .iterate = true });
     defer api_dir.close();
@@ -64,7 +54,7 @@ pub fn main() !u8 {
     // sort so our data is always in the same order
     std.mem.sort([]const u8, api_list.items, Nothing{}, common.asciiLessThanIgnoreCase);
 
-    const out_file = try std.fs.cwd().createFile("pass1.json.generating", .{});
+    const out_file = try std.fs.cwd().createFile(out_filename, .{});
     defer out_file.close();
     var buffered_writer = BufferedWriter{
         .unbuffered_writer = out_file.writer(),
@@ -86,7 +76,6 @@ pub fn main() !u8 {
 
     try out.writeAll("}\n");
     try buffered_writer.flush();
-    try std.fs.cwd().rename("pass1.json.generating", "pass1.json");
     return 0;
 }
 

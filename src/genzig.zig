@@ -285,11 +285,12 @@ pub fn main() !u8 {
     // don't care about freeing args
 
     const cmd_args = all_args[1..];
-    if (cmd_args.len != 1) {
-        std.log.err("expected 1 argument (path to the win32json repository) but got {}", .{cmd_args.len});
+    if (cmd_args.len != 2) {
+        std.log.err("expected 2 arguments but got {}", .{cmd_args.len});
         return 1;
     }
     const win32json_path = cmd_args[0];
+    const pass1_json = cmd_args[1];
 
     var win32json_dir = try std.fs.cwd().openDir(win32json_path, .{});
     defer win32json_dir.close();
@@ -306,7 +307,7 @@ pub fn main() !u8 {
         else => return e,
     };
 
-    global_pass1 = try readJson("pass1.json");
+    global_pass1 = try readJson(pass1_json);
     global_notnull = try readJson(notnull_filename);
 
     var out_dir = try cwd.openDir(zigwin32_dir_name, .{});
