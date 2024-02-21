@@ -3,8 +3,8 @@
     .version = "0.0.0",
     .dependencies = .{
         .win32json = .{
-            .url = "https://github.com/marlersoft/win32json/archive/685be08fe7691ca9bb5c5a6dd28bf16cd33ba61f.tar.gz",
-            .hash = "1220715c8694774891a8955f3b27d403b80d9427e92730ec0d8b4070810029a0d122",
+            .url = "https://github.com/marlersoft/win32json/archive/5480086296bd893ee23e04df5b6da1b613689904.tar.gz",
+            .hash = "1220663c96a0ec534efff18f9b447e5498e60edfefd9f28e2dee69b7a130feb1d206",
         },
     },
     .paths = .{ "build.zig.zon" },
