@@ -63,3 +63,21 @@ the type unmodified.
 The integer value `1` would modify the first pointer in the type to make it `*?*?*T`.
 The integer value `2` would modify the second pointer in the type to become `?**?*T`.
 The integer value `7` would modify all 3 pointer types to become `***T`.
+
+unionpointers.json
+================================================================================
+Supplemental metadata that identifies parameters/constants as "Union Pointers".
+Union Pointers are pointers that in addition to actual pointer values also
+accept special reserved values that aren't actually pointers.
+
+It's important for Zig to know when this is the case because Zig inserts
+runtime alignment checks when casting non-pointer values to pointers. To address
+this, anytime a pointer type is actually a "union pointer", we annotate that
+pointer type with `align(1)` to ellide this runtime alignment check.  Note that
+the reason for using `align(1)` instead of a union type is because modifying
+a parameter type to be a union instead of a pointer can modify the ABI.
+See https://github.com/dotnet/coreclr/pull/23974#issuecomment-482961995 for an
+example of this.
+
+
+See Issue "CreateWindowEx lpClassName union": https://github.com/microsoft/win32metadata/issues/623
