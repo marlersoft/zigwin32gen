@@ -2287,13 +2287,20 @@ fn generateEnum(
                 jsonPanicMsg("enum value is out-of-range for this flag integer base type", .{});
         }
 
+        // print any flags (only 1-bit values) that had conflicts
         for (values) |*val| {
-            if (val.conflict_index) |conflict_index| {
-                try writer.linef("    // {s} ({}) conflicts with {s}", .{
-                    std.zig.fmtId(val.short_name),
-                    fmtJson(val.value),
-                    std.zig.fmtId(values[conflict_index].short_name),
-                });
+            switch (val.flagsValue()) {
+                .zero => {},
+                .flag => {
+                    if (val.conflict_index) |conflict_index| {
+                        try writer.linef("    // {s} ({}) conflicts with {s}", .{
+                            std.zig.fmtId(val.short_name),
+                            fmtJson(val.value),
+                            std.zig.fmtId(values[conflict_index].short_name),
+                        });
+                    }
+                },
+                .mask => {},
             }
         }
     }
