@@ -57,7 +57,6 @@ pub fn build(b: *Build) !void {
         run.step.dependOn(&pass1.run.step);
         run.addDirectoryArg(win32json_dep.path(""));
         run.addFileArg(pass1.out_file);
-        run.addArg(@embedFile("version"));
         run.addDirectoryArg(.{ .path = b.pathFromRoot("src") });
         run.addDirectoryArg(.{ .path = b.pathFromRoot("zigwin32") });
         const fetch_enabled = if (maybe_fetch_option) |o| o else true;

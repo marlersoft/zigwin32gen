@@ -287,16 +287,15 @@ pub fn main() !u8 {
     // don't care about freeing args
 
     const cmd_args = all_args[1..];
-    if (cmd_args.len != 6) {
-        std.log.err("expected 6 cmdline arguments but got {}", .{cmd_args.len});
+    if (cmd_args.len != 5) {
+        std.log.err("expected 5 cmdline arguments but got {}", .{cmd_args.len});
         return 1;
     }
     const win32json_path = cmd_args[0];
     const pass1_json = cmd_args[1];
-    const version = cmd_args[2];
-    const src_path = cmd_args[3];
-    const zigwin32_repo = cmd_args[4];
-    const fetch_enabled_str = cmd_args[5];
+    const src_path = cmd_args[2];
+    const zigwin32_repo = cmd_args[3];
+    const fetch_enabled_str = cmd_args[4];
 
     const fetch_enabled = if (std.mem.eql(u8, fetch_enabled_str, "fetch"))
         true
@@ -341,6 +340,13 @@ pub fn main() !u8 {
             return error.Todo;
         }
     }
+
+    const version = blk: {
+        const file = try win32json_dir.openFile("version.txt", .{});
+        defer file.close();
+        break :blk try file.reader().readAllAlloc(allocator, 100);
+    };
+    defer allocator.free(version);
 
     {
         if (fetch_enabled) {
