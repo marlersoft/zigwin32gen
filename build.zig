@@ -101,6 +101,7 @@ pub fn build(b: *Build) !void {
     try addExample(b, arches, optimize, win32, "helloworld-window", .Windows, examples_step);
     try addExample(b, arches, optimize, win32, "d2dcircle", .Windows, examples_step);
     try addExample(b, arches, optimize, win32, "opendialog", .Windows, examples_step);
+    try addExample(b, arches, optimize, win32, "unionpointers", .Windows, examples_step);
 }
 
 fn runStepMake(

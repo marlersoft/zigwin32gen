@@ -31,6 +31,7 @@ var global_symbol_None: StringPool.Val = undefined;
 
 var global_pass1: json.ObjectMap = undefined;
 var global_notnull: json.ObjectMap = undefined;
+var global_union_pointers: json.ObjectMap = undefined;
 
 const ValueType = enum {
     Byte,
@@ -230,6 +231,8 @@ const SdkFile = struct {
     param_names_to_avoid_map_get_fn: AvoidLookupFn,
     not_null_funcs: json.ObjectMap,
     not_null_funcs_applied: StringPool.HashMap(Nothing),
+    union_pointer_funcs: json.ObjectMap,
+    union_pointer_funcs_applied: StringPool.HashMap(Nothing),
 
     pub fn getWin32DirImportPrefix(self: SdkFile) []const u8 {
         return import_prefix_table[self.depth];
@@ -257,6 +260,7 @@ const SdkFile = struct {
 };
 
 const notnull_filename: []const u8 = "notnull.json";
+const union_pointers_filename: []const u8 = "unionpointers.json";
 
 const Times = struct {
     git_fetch_time_millis: u64 = 0,
@@ -317,6 +321,7 @@ pub fn main() !u8 {
     };
 
     try run("git clean", &.{"git", "-C", zigwin32_repo, "clean", "-xffd"});
+    try run("git reset", &.{"git", "-C", zigwin32_repo, "reset", "--hard", "HEAD"});
     {
         const result = try std.ChildProcess.run(.{
             .allocator = allocator,
@@ -379,6 +384,7 @@ pub fn main() !u8 {
 
     global_pass1 = try readJson(pass1_json);
     global_notnull = try readJson(notnull_filename);
+    global_union_pointers = try readJson(union_pointers_filename);
 
     var out_dir = try std.fs.cwd().openDir(zigwin32_repo, .{});
     defer out_dir.close();
@@ -793,6 +799,12 @@ fn readAndGenerateApiFile(root_module: *Module, out_dir: std.fs.Dir, json_basena
         try jsonObjEnforceKnownFieldsOnly(api_obj, &[_][]const u8{"Functions"}, notnull_filename);
         not_null_funcs = (try jsonObjGetRequired(api_obj, "Functions", notnull_filename)).object;
     }
+    var union_pointer_funcs = empty_json_object_map;
+    if (global_union_pointers.get(json_name)) |*api_node| {
+        const api_obj = api_node.object;
+        try jsonObjEnforceKnownFieldsOnly(api_obj, &[_][]const u8{"Functions"}, union_pointers_filename);
+        union_pointer_funcs = (try jsonObjGetRequired(api_obj, "Functions", union_pointers_filename)).object;
+    }
 
     module.file = SdkFile{
         .json_basename = json_basename_copy,
@@ -808,6 +820,8 @@ fn readAndGenerateApiFile(root_module: *Module, out_dir: std.fs.Dir, json_basena
         .param_names_to_avoid_map_get_fn = getParamNamesToAvoidMapGetFn(json_name),
         .not_null_funcs = not_null_funcs,
         .not_null_funcs_applied = StringPool.HashMap(Nothing).init(allocator),
+        .union_pointer_funcs = union_pointer_funcs,
+        .union_pointer_funcs_applied = StringPool.HashMap(Nothing).init(allocator),
     };
 
     const generate_start_millis = std.time.milliTimestamp();
@@ -1012,6 +1026,22 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.Parsed(json.
             std.os.exit(0xff);
         }
     }
+    // check that all union_pointer data was applied
+    {
+        var it = sdk_file.union_pointer_funcs.iterator();
+        var error_count: u32 = 0;
+        while (it.next()) |api| {
+            const pool_name = try global_symbol_pool.add(api.key_ptr.*);
+            if (sdk_file.union_pointer_funcs_applied.get(pool_name)) |_| {} else {
+                std.log.err("notnull.json api '{s}' function '{s}' was not applied", .{ sdk_file.json_name, pool_name });
+                error_count += 1;
+            }
+        }
+        sdk_file.union_pointer_funcs_applied.deinit();
+        if (error_count > 0) {
+            std.os.exit(0xff);
+        }
+    }
 }
 
 fn typeIsVoid(type_obj: json.ObjectMap, sdk_file: *SdkFile) !bool {
@@ -1122,7 +1152,7 @@ const TypeRefFormatter = struct {
         in: bool = false,
         out: bool = false,
         optional: bool = false,
-        // TODO: handle this option
+        union_pointer: bool = false,
         not_null_term: bool = false,
         // TODO: handle this option
         null_null_term: bool = true,
@@ -1245,8 +1275,13 @@ fn generateTypeRefRec(sdk_file: *SdkFile, writer: *CodeWriter, self: TypeRefForm
                 // can't put these expressions in the print argument tuple because of https://github.com/ziglang/zig/issues/8036
                 const base_type = if (special == .pstr) "u8" else "u16";
                 const sentinel_suffix = if (self.options.not_null_term) "" else ":0";
+                const align_str = if (self.options.union_pointer) "align(1) " else "";
                 const const_str = if (self.options.is_const) "const " else "";
-                try writer.writef("[*{s}]{s}{s}", .{ sentinel_suffix, const_str, base_type }, .{ .start = .any, .nl = false });
+                try writer.writef(
+                    "[*{s}]{s}{s}{s}",
+                    .{ sentinel_suffix, align_str, const_str, base_type },
+                    .{ .start = .any, .nl = false },
+                );
                 return;
             }
         }
@@ -1267,6 +1302,9 @@ fn generateTypeRefRec(sdk_file: *SdkFile, writer: *CodeWriter, self: TypeRefForm
         }
         child_options.null_modifier = self.options.null_modifier >> 1;
         try writer.write("*", .{ .start = .any, .nl = false });
+        if (self.options.union_pointer) {
+            try writer.write("align(1) ", .{ .start = .any, .nl = false });
+        }
         if (self.options.is_const) {
             child_options.is_const = false; // TODO: is this right?
             try writer.write("const ", .{ .start = .any, .nl = false });
@@ -2442,8 +2480,13 @@ fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap
                 // TODO: set null_modifier properly
                 // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
                 // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                const null_modifier = 0;
-                const param_options = processParamAttrs((try jsonObjGetRequired(param_obj, "Attrs", sdk_file)).array, .var_decl, null_modifier, sdk_file);
+                const modifiers = ParamModifiers{};
+                const param_options = processParamAttrs(
+                    (try jsonObjGetRequired(param_obj, "Attrs", sdk_file)).array,
+                    .var_decl,
+                    modifiers,
+                    sdk_file,
+                );
                 // NOTE: don't need to call addTypeRefs because it was already called in generateFunction above
                 const param_type_formatter = fmtTypeRef(param_type, arches, param_options, null);
                 if (param_options.optional_bytes_param_index) |bytes_param_index| {
@@ -2479,8 +2522,18 @@ fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap
     try writer.line("};");
 }
 
-fn processParamAttrs(attrs: json.Array, reason: TypeRefFormatter.Reason, null_modifier: NullModifier, sdk_file: *const SdkFile) TypeRefFormatter.Options {
-    var opts = TypeRefFormatter.Options{ .reason = reason, .anon_types = null, .null_modifier = null_modifier };
+fn processParamAttrs(
+    attrs: json.Array,
+    reason: TypeRefFormatter.Reason,
+    modifiers: ParamModifiers,
+    sdk_file: *const SdkFile,
+) TypeRefFormatter.Options {
+    var opts = TypeRefFormatter.Options{
+        .reason = reason,
+        .anon_types = null,
+        .union_pointer = modifiers.union_pointer,
+        .null_modifier = modifiers.not_null,
+    };
     for (attrs.items) |*attr_node_ptr| {
         switch (attr_node_ptr.*) {
             .object => |attr_obj| {
@@ -2625,11 +2678,29 @@ fn generateArchSuffix(writer: *CodeWriter) void {
     writer.line("}, else => struct { } };") catch @panic("here");
 }
 
+const ParamModifiers = struct {
+    not_null: NullModifier = 0,
+    union_pointer: bool = false,
+};
 const ParamModifierSet = struct {
     const max_params = 30;
-    ret: NullModifier = 0,
-    params: [max_params]NullModifier = [_]NullModifier{0} ** max_params,
+    ret: ParamModifiers = .{},
+    params: [max_params]ParamModifiers = [_]ParamModifiers{.{}} ** max_params,
 };
+
+fn findParam(
+    sdk_file: *SdkFile,
+    params: []const json.Value,
+    name: []const u8,
+) ?usize {
+    for (params, 0..) |*param_node_ptr, i| {
+        const param_obj = param_node_ptr.object;
+        const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).string;
+        if (std.mem.eql(u8, param_name, name))
+            return i;
+    }
+    return null;
+}
 
 fn generateFunction(
     sdk_file: *SdkFile,
@@ -2653,7 +2724,7 @@ fn generateFunction(
     const attrs = (try jsonObjGetRequired(function_obj, "Attrs", sdk_file)).array;
     const params = (try jsonObjGetRequired(function_obj, "Params", sdk_file)).array;
 
-    var notnull_set = ParamModifierSet{};
+    var modifier_set = ParamModifierSet{};
 
     const func_name_pool = try global_symbol_pool.add(func_name_tmp);
     if (func_kind == .fixed or func_kind == .ptr) {
@@ -2663,11 +2734,26 @@ fn generateFunction(
         if (sdk_file.not_null_funcs.get(func_name_pool.slice)) |notnull_node| {
             try sdk_file.not_null_funcs_applied.put(func_name_pool, .{});
             jsonEnforce(notnull_node.array.items.len > 0);
-            notnull_set.ret = @as(NullModifier, @intCast(notnull_node.array.items[0].integer));
+            modifier_set.ret.not_null = @as(NullModifier, @intCast(notnull_node.array.items[0].integer));
             for (notnull_node.array.items[1..], 0..) |item, i| {
-                jsonEnforce(i < notnull_set.params.len); // if we hit this, increase max param count
+                jsonEnforce(i < modifier_set.params.len); // if we hit this, increase max param count
                 jsonEnforce(i < params.items.len);
-                notnull_set.params[i] = @as(NullModifier, @intCast(item.integer));
+                modifier_set.params[i].not_null = @as(NullModifier, @intCast(item.integer));
+            }
+        }
+        if (sdk_file.union_pointer_funcs.get(func_name_pool.slice)) |union_pointer_node| {
+            try sdk_file.union_pointer_funcs_applied.put(func_name_pool, .{});
+            jsonEnforce(union_pointer_node.array.items.len > 0);
+            for (union_pointer_node.array.items) |name_node| {
+                const name = switch (name_node) {
+                    .string => |name| name,
+                    else => jsonPanic(),
+                };
+                const index = findParam(sdk_file, params.items, name) orelse jsonPanicMsg(
+                    "function '{s}' from unionpointers.json does not have a parameter named '{s}'",
+                    .{ func_name_pool, name },
+                );
+                modifier_set.params[index].union_pointer = true;
             }
         }
     }
@@ -2757,14 +2843,14 @@ fn generateFunction(
         },
     }
 
-    try generateParams(sdk_file, writer, arches, notnull_set, params.items);
+    try generateParams(sdk_file, writer, arches, modifier_set, params.items);
 
     try writer.writef(") callconv(@import(\"std\").os.windows.WINAPI) ", .{}, .{ .nl = false });
     if (is_noreturn) {
         try writer.write("noreturn", .{ .start = .mid, .nl = false });
     } else {
         // TODO: set is_const, in and out properly
-        const return_opts = processParamAttrs(return_attrs, .var_decl, notnull_set.ret, sdk_file);
+        const return_opts = processParamAttrs(return_attrs, .var_decl, modifier_set.ret, sdk_file);
         const return_type_formatter = try addTypeRefs(sdk_file, arches, return_type, return_opts, null);
         try generateTypeRef(sdk_file, writer, return_type_formatter);
     }
@@ -2783,7 +2869,7 @@ fn generateParams(
     sdk_file: *SdkFile,
     writer: *CodeWriter,
     arches: ArchFlags,
-    notnull_set: ParamModifierSet,
+    modifier_set: ParamModifierSet,
     params: []const json.Value,
 ) !void {
     for (params, 0..) |*param_node_ptr, i| {
@@ -2791,8 +2877,8 @@ fn generateParams(
         try jsonObjEnforceKnownFieldsOnly(param_obj, &[_][]const u8{ "Name", "Type", "Attrs" }, sdk_file);
         const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).string;
         const param_type = (try jsonObjGetRequired(param_obj, "Type", sdk_file)).object;
-        const null_modifier = notnull_set.params[i];
-        const param_options = processParamAttrs((try jsonObjGetRequired(param_obj, "Attrs", sdk_file)).array, .var_decl, null_modifier, sdk_file);
+        const modifiers = modifier_set.params[i];
+        const param_options = processParamAttrs((try jsonObjGetRequired(param_obj, "Attrs", sdk_file)).array, .var_decl, modifiers, sdk_file);
         const param_type_formatter = try addTypeRefs(sdk_file, arches, param_type, param_options, null);
         if (param_options.optional_bytes_param_index) |bytes_param_index| {
             try writer.linef("    // TODO: what to do with BytesParamIndex {}?", .{bytes_param_index});

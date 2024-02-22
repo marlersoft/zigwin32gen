@@ -1,0 +1,9 @@
+{
+    "UI.WindowsAndMessaging": {
+        "Functions": {
+            "CreateWindowExA": ["lpClassName"]
+            ,"CreateWindowExW": ["lpClassName"]
+        }
+    }
+}
+
