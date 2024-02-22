@@ -2291,11 +2291,11 @@ fn generateEnum(
         for (values) |*val| {
             switch (val.flagsValue()) {
                 .zero => {},
-                .flag => {
+                .flag => |index| {
                     if (val.conflict_index) |conflict_index| {
-                        try writer.linef("    // {s} ({}) conflicts with {s}", .{
+                        try writer.linef("    // {s} (bit index {}) conflicts with {s}", .{
                             std.zig.fmtId(val.short_name),
-                            fmtJson(val.value),
+                            index,
                             std.zig.fmtId(values[conflict_index].short_name),
                         });
                     }
