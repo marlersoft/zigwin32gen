@@ -233,6 +233,8 @@ const SdkFile = struct {
     not_null_funcs_applied: StringPool.HashMap(Nothing),
     union_pointer_funcs: json.ObjectMap,
     union_pointer_funcs_applied: StringPool.HashMap(Nothing),
+    union_pointer_consts: std.StringArrayHashMap(void),
+    union_pointer_consts_applied: StringPool.HashMap(Nothing),
 
     pub fn getWin32DirImportPrefix(self: SdkFile) []const u8 {
         return import_prefix_table[self.depth];
@@ -315,7 +317,7 @@ pub fn main() !u8 {
         error.FileNotFound => {
             std.debug.print("error: zigwin32 repository to write generated files to does not exist, clone it with:\n", .{});
             std.debug.print("    git clone https://github.com/marlersoft/zigwin32 {s}\n", .{zigwin32_repo});
-            std.os.exit(0xff);
+            std.process.exit(0xff);
         },
         else => return e,
     };
@@ -607,7 +609,7 @@ fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !vo
     var buffered_writer = BufferedWriter{ .unbuffered_writer = everything_file.writer() };
     defer buffered_writer.flush() catch @panic("flush failed");
     const writer = buffered_writer.writer();
-    try writer.writeAll(comptime removeCr(autogen_header ++
+    try writer.writeAll(&comptime removeCr(autogen_header ++
         \\//! This module contains aliases to ALL symbols inside the Win32 SDK.  It allows
         \\//! an application to access any and all symbols through a single import.
         \\
@@ -719,7 +721,7 @@ fn generateContainerModules(dir: std.fs.Dir, module: *Module) anyerror!void {
     }
 
     if (module.file) |_| {} else {
-        try writer.writeAll(comptime removeCr(
+        try writer.writeAll(&comptime removeCr(
             \\test {
             \\    @import("std").testing.refAllDecls(@This());
             \\}
@@ -800,10 +802,16 @@ fn readAndGenerateApiFile(root_module: *Module, out_dir: std.fs.Dir, json_basena
         not_null_funcs = (try jsonObjGetRequired(api_obj, "Functions", notnull_filename)).object;
     }
     var union_pointer_funcs = empty_json_object_map;
+    var union_pointer_consts = std.StringArrayHashMap(void).init(allocator);
     if (global_union_pointers.get(json_name)) |*api_node| {
         const api_obj = api_node.object;
-        try jsonObjEnforceKnownFieldsOnly(api_obj, &[_][]const u8{"Functions"}, union_pointers_filename);
+        try jsonObjEnforceKnownFieldsOnly(api_obj, &[_][]const u8{"Functions", "Constants"}, union_pointers_filename);
         union_pointer_funcs = (try jsonObjGetRequired(api_obj, "Functions", union_pointers_filename)).object;
+
+        const constant_union_pointers = (try jsonObjGetRequired(api_obj, "Constants", union_pointers_filename)).array;
+        for (constant_union_pointers.items) |*constant| {
+            try union_pointer_consts.put(constant.string, {});
+        }
     }
 
     module.file = SdkFile{
@@ -822,6 +830,8 @@ fn readAndGenerateApiFile(root_module: *Module, out_dir: std.fs.Dir, json_basena
         .not_null_funcs_applied = StringPool.HashMap(Nothing).init(allocator),
         .union_pointer_funcs = union_pointer_funcs,
         .union_pointer_funcs_applied = StringPool.HashMap(Nothing).init(allocator),
+        .union_pointer_consts = union_pointer_consts,
+        .union_pointer_consts_applied = StringPool.HashMap(Nothing).init(allocator),
     };
 
     const generate_start_millis = std.time.milliTimestamp();
@@ -984,7 +994,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.Parsed(json.
         }
     }
 
-    try writer.writeBlock(comptime removeCr(
+    try writer.writeBlock(&comptime removeCr(
         \\
         \\test {
         \\
@@ -996,7 +1006,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.Parsed(json.
         }
         try writer.line("");
     }
-    try writer.writeBlock(comptime removeCr(
+    try writer.writeBlock(&comptime removeCr(
         \\    @setEvalBranchQuota(
         \\        comptime @import("std").meta.declarations(@This()).len * 3
         \\    );
@@ -1023,7 +1033,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.Parsed(json.
         }
         sdk_file.not_null_funcs_applied.deinit();
         if (error_count > 0) {
-            std.os.exit(0xff);
+            std.process.exit(0xff);
         }
     }
     // check that all union_pointer data was applied
@@ -1039,7 +1049,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.Parsed(json.
         }
         sdk_file.union_pointer_funcs_applied.deinit();
         if (error_count > 0) {
-            std.os.exit(0xff);
+            std.process.exit(0xff);
         }
     }
 }
@@ -1434,52 +1444,6 @@ const ConstValueFormatter = struct {
 const constants_to_skip = std.ComptimeStringMap(Nothing, .{
     // skip this constant because its name conflicts with the name of a type!
     .{ "PEERDIST_RETRIEVAL_OPTIONS_CONTENTINFO_VERSION", .{} },
-    // skip these because these constants are integer values being cast to string pointers, however,
-    // those string pointers need to be aligned.  The types that accept these constants should probably
-    // be properly declared as union types.
-    .{ "RT_CURSOR", .{} },
-    .{ "RT_BITMAP", .{} },
-    .{ "RT_ICON", .{} },
-    .{ "RT_MENU", .{} },
-    .{ "RT_DIALOG", .{} },
-    .{ "RT_FONTDIR", .{} },
-    .{ "RT_FONT", .{} },
-    .{ "RT_ACCELERATOR", .{} },
-    .{ "RT_MESSAGETABLE", .{} },
-    .{ "RT_VERSION", .{} },
-    .{ "RT_DLGINCLUDE", .{} },
-    .{ "RT_PLUGPLAY", .{} },
-    .{ "RT_VXD", .{} },
-    .{ "RT_ANICURSOR", .{} },
-    .{ "RT_ANIICON", .{} },
-    .{ "RT_HTML", .{} },
-
-    //.{ "IDC_ARROW", .{} }, This one is aligned so we can generate it
-    .{ "IDC_IBEAM", .{} },
-    .{ "IDC_WAIT", .{} },
-    .{ "IDC_CROSS", .{} },
-    .{ "IDC_UPARROW", .{} },
-    .{ "IDC_SIZE", .{} },
-    .{ "IDC_ICON", .{} },
-    .{ "IDC_SIZENWSE", .{} },
-    .{ "IDC_SIZENESW", .{} },
-    .{ "IDC_SIZEWE", .{} },
-    .{ "IDC_SIZENS", .{} },
-    .{ "IDC_SIZEALL", .{} },
-    .{ "IDC_NO", .{} },
-    .{ "IDC_HAND", .{} },
-    .{ "IDC_APPSTARTING", .{} },
-    .{ "IDC_HELP", .{} },
-    .{ "IDC_PIN", .{} },
-    .{ "IDC_PERSON", .{} },
-
-    //.{ "IDI_APPLICATION", .{} }, This one is aligned so we can generate it
-    .{ "IDI_HAND", .{} },
-    .{ "IDI_QUESTION", .{} },
-    .{ "IDI_EXCLAMATION", .{} },
-    .{ "IDI_ASTERISK", .{} },
-    .{ "IDI_WINLOGO", .{} },
-    .{ "IDI_SHIELD", .{} },
 
     // HWND_DESKTOP and HWND_TOP are HWND types, but they are 0 so they need to be ?HWND
     .{ "HWND_DESKTOP", .{} },
@@ -1508,7 +1472,14 @@ fn generateConstant(sdk_file: *SdkFile, writer: *CodeWriter, constant_obj: json.
         try writer.linef("// skipped '{}'", .{name_pool});
         return;
     }
-    const zig_type_formatter = try addTypeRefs(sdk_file, ArchFlags.all, type_ref, .{ .reason = .direct_type_access, .is_const = true, .in = false, .out = false, .anon_types = null, .null_modifier = 0 }, null);
+
+    var options = TypeRefFormatter.Options{ .reason = .direct_type_access, .is_const = true, .in = false, .out = false, .anon_types = null, .null_modifier = 0 };
+    if (sdk_file.union_pointer_consts.get(name_pool.slice)) |_| {
+        try sdk_file.union_pointer_funcs_applied.put(name_pool, .{});
+        options.union_pointer = true;
+    }
+
+    const zig_type_formatter = try addTypeRefs(sdk_file, ArchFlags.all, type_ref, options, null);
 
     const kind = (jsonObjGetRequired(type_ref, "Kind", sdk_file) catch unreachable).string;
     if (std.mem.eql(u8, kind, "Native")) {
@@ -2328,7 +2299,7 @@ fn generateEnum(
             std.debug.print("       add one of the following lines to the suppress_enum_aliases list:\n", .{});
             std.debug.print("    .{{ \"{}\", .{{}} }},\n", .{existing});
             std.debug.print("    .{{ \"{}\", .{{}} }},\n", .{pool_name});
-            std.os.exit(0xff);
+            std.process.exit(0xff);
         }
         if (val.no_alias) {
             continue;
@@ -3158,7 +3129,7 @@ fn cleanDir(dir: std.fs.Dir, sub_path: []const u8) !void {
         dir.makeDir(sub_path) catch |e| switch (e) {
             else => {
                 std.debug.print("[DEBUG] makedir failed with {}\n", .{e});
-                //std.os.exit(0xff);
+                //std.process.exit(0xff);
                 continue;
             },
         };
@@ -3171,7 +3142,7 @@ fn withoutCrLen(s: []const u8) usize {
     return s.len - std.mem.count(u8, s, "\r");
 }
 
-fn removeCr(comptime s: []const u8) *const [withoutCrLen(s):0]u8 {
+fn removeCr(comptime s: []const u8) [withoutCrLen(s):0]u8 {
     comptime {
         const len = withoutCrLen(s);
         var without_cr: [len:0]u8 = undefined;
@@ -3183,6 +3154,6 @@ fn removeCr(comptime s: []const u8) *const [withoutCrLen(s):0]u8 {
             }
         }
         std.debug.assert(i == len);
-        return &without_cr;
+        return without_cr;
     }
 }

@@ -111,7 +111,7 @@ fn runStepMake(
 ) anyerror!void {
     original_make_fn(step, prog_node) catch |err| switch (err) {
         // just exit if subprocess failed with error exit code
-        error.UnexpectedExitCode => std.os.exit(0xff),
+        error.UnexpectedExitCode => std.process.exit(0xff),
         else => |e| return e,
     };
 }

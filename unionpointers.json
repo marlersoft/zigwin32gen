@@ -1,9 +1,67 @@
 {
-    "UI.WindowsAndMessaging": {
-        "Functions": {
-            "CreateWindowExA": ["lpClassName"]
-            ,"CreateWindowExW": ["lpClassName"]
-        }
-    }
+  "System.LibraryLoader": {
+    "Functions": {
+      "ENUMRESLANGPROCW": ["lpType"],
+      "ENUMRESNAMEPROCW": ["lpType"],
+      "EnumResourceLanguagesW": ["lpType"],
+      "EnumResourceLanguagesExW": ["lpType"],
+      "EnumResourceNamesW": ["lpType"],
+      "EnumResourceNamesExW": ["lpType"],
+      "FindResourceW": ["lpType"],
+      "FindResourceExW": ["lpType"],
+      "UpdateResourceW": ["lpType"]
+    },
+    "Constants": []
+  },
+  "UI.WindowsAndMessaging": {
+    "Functions": {
+      "CreateWindowExA": ["lpClassName"],
+      "CreateWindowExW": ["lpClassName"],
+      "LoadCursorW": ["lpCursorName"],
+      "LoadIconW": ["lpIconName"]
+    },
+    "Constants": [
+      "IDC_ARROW",
+      "IDC_IBEAM",
+      "IDC_WAIT",
+      "IDC_CROSS",
+      "IDC_UPARROW",
+      "IDC_SIZE",
+      "IDC_ICON",
+      "IDC_SIZENWSE",
+      "IDC_SIZENESW",
+      "IDC_SIZEWE",
+      "IDC_SIZENS",
+      "IDC_SIZEALL",
+      "IDC_NO",
+      "IDC_HAND",
+      "IDC_APPSTARTING",
+      "IDC_HELP",
+      "IDC_PIN",
+      "IDC_PERSON",
+      "IDI_APPLICATION",
+      "IDI_HAND",
+      "IDI_QUESTION",
+      "IDI_EXCLAMATION",
+      "IDI_ASTERISK",
+      "IDI_WINLOGO",
+      "IDI_SHIELD",
+      "RT_VERSION",
+      "RT_DLGINCLUDE",
+      "RT_PLUGPLAY",
+      "RT_VXD",
+      "RT_ANICURSOR",
+      "RT_ANIICON",
+      "RT_HTML",
+      "RT_CURSOR",
+      "RT_BITMAP",
+      "RT_ICON",
+      "RT_MENU",
+      "RT_DIALOG",
+      "RT_FONTDIR",
+      "RT_FONT",
+      "RT_ACCELERATOR",
+      "RT_MESSAGETABLE"
+    ]
+  }
 }
-

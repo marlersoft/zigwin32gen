@@ -21,7 +21,7 @@ pub fn fatalTrace(trace: ?*std.builtin.StackTrace, comptime fmt: []const u8, arg
     } else {
         std.log.err("no error return trace", .{});
     }
-    std.os.exit(0xff);
+    std.process.exit(0xff);
 }
 
 pub fn main() !u8 {

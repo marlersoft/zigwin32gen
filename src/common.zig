@@ -6,7 +6,7 @@ pub const Nothing = struct {};
 
 pub fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.log.err(fmt, args);
-    std.os.exit(0xff);
+    std.process.exit(0xff);
 }
 
 pub fn getcwd(a: std.mem.Allocator) ![]u8 {
