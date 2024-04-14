@@ -91,7 +91,8 @@ pub export fn wWinMain(
         // Well this sucks...ptr and const cast?
         const old_cursor = win32.SetCursor(@constCast(@ptrCast(win32.IDC_ARROW)));
         defer _ = win32.SetCursor(old_cursor);
-        // TODO: get the other IDC_* constants working
+        _ = win32.SetCursor(@constCast(@ptrCast(win32.IDC_IBEAM)));
+        _ = win32.SetCursor(@constCast(@ptrCast(win32.IDC_WAIT)));
     }
 
 
