@@ -1052,6 +1052,21 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.Parsed(json.
             std.process.exit(0xff);
         }
     }
+    {
+        var it = sdk_file.union_pointer_consts.iterator();
+        var error_count: u32 = 0;
+        while (it.next()) |api| {
+            const pool_name = try global_symbol_pool.add(api.key_ptr.*);
+            if (sdk_file.union_pointer_consts_applied.get(pool_name)) |_| {} else {
+                std.log.err("notnull.json api '{s}' function '{s}' was not applied", .{ sdk_file.json_name, pool_name });
+                error_count += 1;
+            }
+        }
+        sdk_file.union_pointer_consts_applied.deinit();
+        if (error_count > 0) {
+            std.process.exit(0xff);
+        }
+    }
 }
 
 fn typeIsVoid(type_obj: json.ObjectMap, sdk_file: *SdkFile) !bool {
@@ -1475,7 +1490,7 @@ fn generateConstant(sdk_file: *SdkFile, writer: *CodeWriter, constant_obj: json.
 
     var options = TypeRefFormatter.Options{ .reason = .direct_type_access, .is_const = true, .in = false, .out = false, .anon_types = null, .null_modifier = 0 };
     if (sdk_file.union_pointer_consts.get(name_pool.slice)) |_| {
-        try sdk_file.union_pointer_funcs_applied.put(name_pool, .{});
+        try sdk_file.union_pointer_consts_applied.put(name_pool, .{});
         options.union_pointer = true;
     }
 
