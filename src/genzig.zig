@@ -1540,6 +1540,7 @@ const also_usable_type_api_map = std.ComptimeStringMap([]const u8, .{
     .{ "HICON", "UI.WindowsAndMessaging" },
     .{ "HANDLE", "System.SystemServices" },
     .{ "HeapHandle", "System.SystemServices" },
+    .{ "BCRYPT_HANDLE", "Security.Cryptography" },
 });
 
 const Depth = u3;
