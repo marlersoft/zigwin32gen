@@ -13,6 +13,15 @@
     },
     "Constants": []
   },
+  "UI.Controls": {
+    "Functions": {},
+    "Constants": [
+      "TD_WARNING_ICON",
+      "TD_ERROR_ICON",
+      "TD_INFORMATION_ICON",
+      "TD_SHIELD_ICON"
+    ]
+  },
   "UI.WindowsAndMessaging": {
     "Functions": {
       "CreateWindowExA": ["lpClassName"],
