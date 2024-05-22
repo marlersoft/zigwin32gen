@@ -459,6 +459,7 @@ pub fn main() !u8 {
             try src_dir.copyFile(mod ++ ".zig", out_win32_dir, mod ++ ".zig", .{});
         }
         try src_dir.copyFile("zigwin32.build.zig", out_dir, "build.zig", .{});
+        try src_dir.copyFile("zigwin32.build.zig.zon", out_dir, "build.zig.zon", .{});
     }
     print_time_summary = true;
 
