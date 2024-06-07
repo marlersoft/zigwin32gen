@@ -17,7 +17,7 @@ fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     } else |e| switch(e) {
         error.OutOfMemory => _ = win32.MessageBoxA(null, "Out of memory", "Fatal Error", .{}),
     }
-    std.os.exit(1);
+    std.process.exit(1);
 }
 
 pub export fn wWinMain(
