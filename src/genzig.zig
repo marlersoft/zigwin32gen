@@ -1663,7 +1663,7 @@ fn generateType(
     } else if (arches.flags != ArchFlags.all.flags) {
         try addArchSpecific(json.ObjectMap, arch_specific, pool_name, arches, type_obj);
     } else {
-        const def_prefix = try std.fmt.allocPrint(allocator, "pub const {s} = ", .{std.zig.fmtId(tmp_name)});
+        const def_prefix = try std.fmt.allocPrint(allocator, "pub const {p} = ", .{std.zig.fmtId(tmp_name)});
         defer allocator.free(def_prefix);
         try generateTypeDefinition(sdk_file, writer, type_obj, enum_alias_conflicts, arches, kind, pool_name, def_prefix, ";");
     }
@@ -1898,7 +1898,7 @@ fn generateStructOrUnionDef(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: j
             try anon_types.types.put(pool_name, nested_type_obj);
         } else {
             // TODO: I don't know why this isn't working!!!
-            //const def_prefix = try std.fmt.allocPrint(allocator, "pub const {s} = ", .{std.zig.fmtId(pool_name)});
+            //const def_prefix = try std.fmt.allocPrint(allocator, "pub const {p} = ", .{std.zig.fmtId(pool_name)});
             //defer allocator.free(def_prefix);
             try writer.writef("pub const {s} = ", .{pool_name}, .{ .nl = false });
             if (std.mem.eql(u8, nested_kind, "Union")) {
@@ -1942,7 +1942,7 @@ fn generateStructOrUnionDef(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: j
                 }
             }
             const field_type_formatter = try addTypeRefs(sdk_file, arches, field_type, field_options, this_nested_context);
-            try writer.writef("{}: ", .{std.zig.fmtId(field_name)}, .{ .nl = false });
+            try writer.writef("{p}: ", .{std.zig.fmtId(field_name)}, .{ .nl = false });
             try generateTypeRef(sdk_file, writer, field_type_formatter);
             if (struct_packing_size >= 1) {
                 try writer.writef(" align({})", .{struct_packing_size}, .{ .start = .mid, .nl = false });
@@ -2232,9 +2232,9 @@ fn generateEnum(
     } else if (!flags) {
         for (values) |val| {
             if (val.conflict_index) |conflict_index| {
-                try writer.linef("    // {s} = {}, this enum value conflicts with {s}", .{ std.zig.fmtId(val.short_name), fmtJson(val.value), std.zig.fmtId(values[conflict_index].short_name) });
+                try writer.linef("    // {p} = {}, this enum value conflicts with {p}", .{ std.zig.fmtId(val.short_name), fmtJson(val.value), std.zig.fmtId(values[conflict_index].short_name) });
             } else {
-                try writer.linef("    {s} = {},", .{ std.zig.fmtId(val.short_name), fmtJson(val.value) });
+                try writer.linef("    {p} = {},", .{ std.zig.fmtId(val.short_name), fmtJson(val.value) });
             }
         }
         if (non_exhaustive_enums.get(pool_name.slice)) |_| {
@@ -2267,7 +2267,7 @@ fn generateEnum(
                 try writer.linef("    _{}: u1 = 0,", .{i});
                 continue;
             };
-            try writer.linef("    {s}: u1 = 0,", .{ std.zig.fmtId(flag.short_name) });
+            try writer.linef("    {p}: u1 = 0,", .{ std.zig.fmtId(flag.short_name) });
         }
         for (flag_map[bit_count..]) |maybe_flag| {
             if (maybe_flag) |_|
@@ -2280,7 +2280,7 @@ fn generateEnum(
                 .zero => {},
                 .flag => |index| {
                     if (val.conflict_index) |conflict_index| {
-                        try writer.linef("    // {s} (bit index {}) conflicts with {s}", .{
+                        try writer.linef("    // {p} (bit index {}) conflicts with {p}", .{
                             std.zig.fmtId(val.short_name),
                             index,
                             std.zig.fmtId(values[conflict_index].short_name),
@@ -2328,7 +2328,7 @@ fn generateEnum(
             .zero => try writer.linef("pub const {} = {}{{ }};", .{
                 val.pool_name, pool_name
             }),
-            .flag => try writer.linef("pub const {} = {}{{ .{} = 1 }};", .{
+            .flag => try writer.linef("pub const {} = {}{{ .{p} = 1 }};", .{
                 val.pool_name, pool_name, std.zig.fmtId(target_short_name)
             }),
             .mask => |mask| {
@@ -2342,7 +2342,7 @@ fn generateEnum(
                     if (0 != (next_flag_bit & mask)) {
                         if (flag_map[index]) |flag| {
                             const flag_target_short_name = if (flag.conflict_index) |i| values[i].short_name else flag.short_name;
-                            try writer.linef("    .{} = 1,", .{std.zig.fmtId(flag_target_short_name)});
+                            try writer.linef("    .{p} = 1,", .{std.zig.fmtId(flag_target_short_name)});
                         } else {
                             try writer.linef("    ._{} = 1,", .{index});
                         }
@@ -2353,7 +2353,7 @@ fn generateEnum(
                 try writer.line("};");
             },
         } else {
-            try writer.linef("pub const {} = {}.{};", .{ val.pool_name, pool_name, std.zig.fmtId(target_short_name) });
+            try writer.linef("pub const {} = {}.{p};", .{ val.pool_name, pool_name, std.zig.fmtId(target_short_name) });
         }
     }
 }
@@ -2501,7 +2501,7 @@ fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap
             try writer.write(") callconv(.Inline) ", .{ .start = .mid, .nl = false });
             try generateTypeRef(sdk_file, writer, return_type_formatter);
             try writer.write(" {", .{ .start = .mid });
-            try writer.writef("            return @as(*const {s}.VTable, @ptrCast(self.vtable)).{s}(@as(*const {0s}, @ptrCast(self))", .{ com_pool_name, std.zig.fmtId(method_name) }, .{ .nl = false });
+            try writer.writef("            return @as(*const {s}.VTable, @ptrCast(self.vtable)).{p}(@as(*const {0s}, @ptrCast(self))", .{ com_pool_name, std.zig.fmtId(method_name) }, .{ .nl = false });
             for (params.items) |*param_node_ptr| {
                 const param_obj = param_node_ptr.object;
                 const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).string;
@@ -2791,7 +2791,7 @@ fn generateFunction(
             // we modify the dll_import to be lowercase because zig generates
             // the .lib files using lowercase since that's what mingw uses.
             // note the casing only matters on case-sensitive filesystems
-            try writer.linef("pub extern \"{s}\" fn {s}(", .{ fmtLower(dll_import, 100), std.zig.fmtId(func_name_tmp) });
+            try writer.linef("pub extern \"{s}\" fn {p}(", .{ fmtLower(dll_import, 100), std.zig.fmtId(func_name_tmp) });
         },
         .ptr => |ptr_data_union| switch (ptr_data_union) {
             .stage1 => try writer.line(".stage1 => fn("),
@@ -2821,7 +2821,7 @@ fn generateFunction(
                         if (com_data.symbol_suffix) |s| {
                             try writer.writef("{s}{}", .{ func_name_tmp, s }, .{ .nl = false });
                         } else {
-                            try writer.writef("{s}", .{std.zig.fmtId(func_name_tmp)}, .{ .nl = false });
+                            try writer.writef("{p}", .{std.zig.fmtId(func_name_tmp)}, .{ .nl = false });
                         }
                         try writer.write(": switch (@import(\"builtin\").zig_backend) {", .{ .start = .mid });
                         writer.depth += 1;
@@ -2877,7 +2877,7 @@ fn generateParams(
         if (param_options.optional_bytes_param_index) |bytes_param_index| {
             try writer.linef("    // TODO: what to do with BytesParamIndex {}?", .{bytes_param_index});
         }
-        try writer.writef("    {s}: ", .{std.zig.fmtId(param_name)}, .{ .nl = false });
+        try writer.writef("    {p}: ", .{std.zig.fmtId(param_name)}, .{ .nl = false });
         try generateTypeRef(sdk_file, writer, param_type_formatter);
         try writer.write(",", .{ .start = .mid });
     }
@@ -3101,7 +3101,7 @@ pub const FmtParamId = struct {
         } else if (isBuiltinId(self.s)) {
             try writer.print("{s}_", .{self.s});
         } else {
-            try writer.print("{}", .{std.zig.fmtId(self.s)});
+            try writer.print("{p}", .{std.zig.fmtId(self.s)});
         }
     }
 };
