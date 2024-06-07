@@ -355,6 +355,9 @@ pub fn main() !u8 {
     };
     defer allocator.free(version);
 
+    _ = std.SemanticVersion.parse(version) catch |err|
+        fatal("version '{s}' is not a valid semantic version: {s}", .{version, @errorName(err)});
+
     {
         if (fetch_enabled) {
             var timer = try std.time.Timer.start();
@@ -459,7 +462,28 @@ pub fn main() !u8 {
             try src_dir.copyFile(mod ++ ".zig", out_win32_dir, mod ++ ".zig", .{});
         }
         try src_dir.copyFile("zigwin32.build.zig", out_dir, "build.zig", .{});
-        try src_dir.copyFile("zigwin32.build.zig.zon", out_dir, "build.zig.zon", .{});
+
+        {
+            var zon = try out_dir.createFile("build.zig.zon", .{});
+            defer zon.close();
+            try zon.writer().print(
+                \\.{{
+                \\    .name = "zigwin32",
+                \\    .version = "{s}",
+                \\    .minimum_zig_version = "0.12.0",
+                \\    .paths = .{{
+                \\        "build.zig",
+                \\        "build.zig.zon",
+                \\        "win32",
+                \\        "win32.zig",
+                \\        "LICENSE",
+                \\        "README.md",
+                \\    }},
+                \\}}
+                \\
+                , .{ version }
+            );
+        }
     }
     print_time_summary = true;
 
