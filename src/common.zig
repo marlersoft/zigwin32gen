@@ -2,8 +2,6 @@ const std = @import("std");
 
 const path_sep = std.fs.path.sep_str;
 
-pub const Nothing = struct {};
-
 pub fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.log.err(fmt, args);
     std.process.exit(0xff);
@@ -28,7 +26,7 @@ pub fn readApiList(api_dir: std.fs.Dir, api_list: *std.ArrayList([]const u8)) !v
     }
 }
 
-pub fn asciiLessThanIgnoreCase(_: Nothing, lhs: []const u8, rhs: []const u8) bool {
+pub fn asciiLessThanIgnoreCase(_: void, lhs: []const u8, rhs: []const u8) bool {
     return std.ascii.lessThanIgnoreCase(lhs, rhs);
 }
 

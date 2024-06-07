@@ -3,7 +3,6 @@ const json = std.json;
 
 const common = @import("common.zig");
 const fatal = common.fatal;
-const Nothing = common.Nothing;
 const jsonPanicMsg = common.jsonPanicMsg;
 const jsonObjEnforceKnownFieldsOnly = common.jsonObjEnforceKnownFieldsOnly;
 const fmtJson = common.fmtJson;
@@ -52,7 +51,7 @@ pub fn main() !u8 {
     try common.readApiList(api_dir, &api_list);
 
     // sort so our data is always in the same order
-    std.mem.sort([]const u8, api_list.items, Nothing{}, common.asciiLessThanIgnoreCase);
+    std.mem.sort([]const u8, api_list.items, {}, common.asciiLessThanIgnoreCase);
 
     const out_file = try std.fs.cwd().createFile(out_filename, .{});
     defer out_file.close();
@@ -133,13 +132,13 @@ fn pass1OnJson(out: OutWriter, filename: []const u8, root_obj: json.ObjectMap) !
     }
 }
 
-const native_integral_types = std.ComptimeStringMap(Nothing, .{
-    .{ "Byte", .{} },
-    .{ "Int32", .{} },
-    .{ "UInt32", .{} },
-    .{ "UInt64", .{} },
-    .{ "IntPtr", .{} },
-    .{ "UIntPtr", .{} },
+const native_integral_types = std.StaticStringMap(void).initComptime(.{
+    .{ "Byte" },
+    .{ "Int32" },
+    .{ "UInt32" },
+    .{ "UInt64" },
+    .{ "IntPtr" },
+    .{ "UIntPtr" },
 });
 
 fn generateNativeTypedef(

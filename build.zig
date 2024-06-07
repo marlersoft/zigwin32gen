@@ -31,7 +31,7 @@ pub fn build(b: *Build) !void {
     } = blk: {
         const pass1_exe = b.addExecutable(.{
             .name = "pass1",
-            .root_source_file = .{ .path = "src/pass1.zig" },
+            .root_source_file = b.path("src/pass1.zig" ),
             .optimize = optimize,
             .target = b.host,
         });
@@ -48,7 +48,7 @@ pub fn build(b: *Build) !void {
     const run_genzig_step = blk: {
         const exe = b.addExecutable(.{
             .name = "genzig",
-            .root_source_file = .{ .path = "src/genzig.zig" },
+            .root_source_file = b.path("src/genzig.zig"),
             .optimize = optimize,
             .target = b.host,
         });
@@ -57,8 +57,8 @@ pub fn build(b: *Build) !void {
         run.step.dependOn(&pass1.run.step);
         run.addDirectoryArg(win32json_dep.path(""));
         run.addFileArg(pass1.out_file);
-        run.addDirectoryArg(.{ .path = b.pathFromRoot("src") });
-        run.addDirectoryArg(.{ .path = b.pathFromRoot("zigwin32") });
+        run.addDirectoryArg(b.path("src"));
+        run.addDirectoryArg(b.path("zigwin32"));
         const fetch_enabled = if (maybe_fetch_option) |o| o else true;
         run.addArg(if (fetch_enabled) "fetch" else "nofetch");
         break :blk &run.step;
@@ -67,7 +67,7 @@ pub fn build(b: *Build) !void {
 
     for ([_]bool{ false, true }) |with_gen| {
         const test_step = b.addTest(.{
-            .root_source_file = .{ .path = "zigwin32/win32.zig" },
+            .root_source_file = b.path("zigwin32/win32.zig"),
             .target = b.host,
             .optimize = optimize,
         });
@@ -85,7 +85,7 @@ pub fn build(b: *Build) !void {
     }
 
     const win32 = b.createModule(.{
-        .root_source_file = .{ .path = "zigwin32/win32.zig" },
+        .root_source_file = b.path("zigwin32/win32.zig"),
     });
     const arches: []const ?[]const u8 = &[_]?[]const u8{
         null,
@@ -106,7 +106,7 @@ pub fn build(b: *Build) !void {
 
 fn runStepMake(
     step: *Step,
-    prog_node: *std.Progress.Node,
+    prog_node: std.Progress.Node,
     original_make_fn: patchstep.MakeFn
 ) anyerror!void {
     original_make_fn(step, prog_node) catch |err| switch (err) {
@@ -138,7 +138,7 @@ fn addExample(
         const target = b.resolveTargetQuery(target_query);
         const exe = b.addExecutable(.{
             .name = name,
-            .root_source_file = .{ .path = b.pathJoin(&.{ "examples", basename}) },
+            .root_source_file = b.path(b.pathJoin(&.{ "examples", basename})),
             .target = target,
             .optimize = optimize,
             .single_threaded = true,

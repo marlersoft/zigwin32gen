@@ -10,7 +10,6 @@ const cameltosnake = @import("cameltosnake.zig");
 
 const common = @import("common.zig");
 const fatal = common.fatal;
-const Nothing = common.Nothing;
 const jsonPanic = common.jsonPanic;
 const jsonPanicMsg = common.jsonPanicMsg;
 const jsonEnforce = common.jsonEnforce;
@@ -45,7 +44,7 @@ const ValueType = enum {
     String,
     PropertyKey,
 };
-const global_value_type_map = std.ComptimeStringMap(ValueType, .{
+const global_value_type_map = std.StaticStringMap(ValueType).initComptime(.{
     .{ "Byte", ValueType.Byte },
     .{ "UInt16", ValueType.UInt16 },
     .{ "Int32", ValueType.Int32 },
@@ -73,7 +72,7 @@ fn valueTypeToZigType(t: ValueType) []const u8 {
 }
 
 const Pass1TypeKindCategory = enum { default, ptr, com };
-const pass1_type_kind_info = std.ComptimeStringMap(Pass1TypeKindCategory, .{
+const pass1_type_kind_info = std.StaticStringMap(Pass1TypeKindCategory).initComptime(.{
     .{ "Integral", .default },
     .{ "Enum", .default },
     .{ "Struct", .default },
@@ -101,7 +100,7 @@ const NativeType = enum {
     UIntPtr,
     Guid,
 };
-const global_native_type_map = std.ComptimeStringMap(NativeType, .{
+const global_native_type_map = std.StaticStringMap(NativeType).initComptime(.{
     .{ "Boolean", NativeType.Boolean },
     .{ "SByte", NativeType.SByte },
     .{ "Byte", NativeType.Byte },
@@ -145,7 +144,7 @@ const TargetKind = enum {
     FunctionPointer,
     Com,
 };
-const target_kind_map = std.ComptimeStringMap(TargetKind, .{
+const target_kind_map = std.StaticStringMap(TargetKind).initComptime(.{
     .{ "Default", TargetKind.Default },
     .{ "FunctionPointer", TargetKind.FunctionPointer },
     .{ "Com", TargetKind.Com },
@@ -209,11 +208,6 @@ fn StringPoolArrayHashMap(comptime T: type) type {
     return std.ArrayHashMap(StringPool.Val, T, StringPool.ArrayHashContext, false);
 }
 
-const AvoidLookupFn = switch (builtin.zig_backend) {
-    .stage1 => fn (s: []const u8) ?Nothing,
-    else => *const fn (s: []const u8) ?Nothing,
-};
-
 const SdkFile = struct {
     json_basename: []const u8,
     json_name: []const u8,
@@ -223,18 +217,18 @@ const SdkFile = struct {
     uses_guid: bool,
     top_level_api_imports: StringPool.HashMap(ApiImport),
     // maintin insertion order so they appear in the same order in everything.zig
-    type_exports: StringPoolArrayHashMap(Nothing),
+    type_exports: StringPoolArrayHashMap(void),
     // maintin insertion order so they appear in the same order in everything.zig
-    func_exports: StringPoolArrayHashMap(Nothing),
+    func_exports: StringPoolArrayHashMap(void),
     // this field is only needed to workaround: https://github.com/ziglang/zig/issues/4476
     tmp_func_ptr_workaround_list: ArrayList(StringPool.Val),
-    param_names_to_avoid_map_get_fn: AvoidLookupFn,
+    param_names_to_avoid_map_get_fn: std.StaticStringMap(void),
     not_null_funcs: json.ObjectMap,
-    not_null_funcs_applied: StringPool.HashMap(Nothing),
+    not_null_funcs_applied: StringPool.HashMap(void),
     union_pointer_funcs: json.ObjectMap,
-    union_pointer_funcs_applied: StringPool.HashMap(Nothing),
+    union_pointer_funcs_applied: StringPool.HashMap(void),
     union_pointer_consts: std.StringArrayHashMap(void),
-    union_pointer_consts_applied: StringPool.HashMap(Nothing),
+    union_pointer_consts_applied: StringPool.HashMap(void),
 
     pub fn getWin32DirImportPrefix(self: SdkFile) []const u8 {
         return import_prefix_table[self.depth];
@@ -325,7 +319,7 @@ pub fn main() !u8 {
     try run("git clean", &.{"git", "-C", zigwin32_repo, "clean", "-xffd"});
     try run("git reset", &.{"git", "-C", zigwin32_repo, "reset", "--hard", "HEAD"});
     {
-        const result = try std.ChildProcess.run(.{
+        const result = try std.process.Child.run(.{
             .allocator = allocator,
             .argv = &.{
                 "git",
@@ -427,7 +421,7 @@ pub fn main() !u8 {
         try common.readApiList(api_dir, &api_list);
 
         // sort the list of APIs so our api order is not dependent on the file-system ordering
-        std.mem.sort([]const u8, api_list.items, Nothing{}, common.asciiLessThanIgnoreCase);
+        std.mem.sort([]const u8, api_list.items, {}, common.asciiLessThanIgnoreCase);
 
         std.debug.print("-----------------------------------------------------------------------\n", .{});
         std.debug.print("loading {} api json files...\n", .{api_list.items.len});
@@ -501,7 +495,7 @@ fn fatalSuggestNewVersion(version: []const u8, zigwin32_repo: []const u8) noretu
     );
 }
 
-fn childProcFailed(term: std.ChildProcess.Term) bool {
+fn childProcFailed(term: std.process.Child.Term) bool {
     return switch (term) {
         .Exited => |code| code != 0,
         .Signal => true,
@@ -510,7 +504,7 @@ fn childProcFailed(term: std.ChildProcess.Term) bool {
     };
 }
 const FormatTerm = struct {
-    term: std.ChildProcess.Term,
+    term: std.process.Child.Term,
     pub fn format(
         self: @This(),
         comptime fmt: []const u8,
@@ -527,7 +521,7 @@ const FormatTerm = struct {
         }
     }
 };
-fn fmtTerm(term: std.ChildProcess.Term) FormatTerm {
+fn fmtTerm(term: std.process.Child.Term) FormatTerm {
     return .{ .term = term };
 }
 
@@ -553,7 +547,7 @@ fn fmtArgv(argv: []const []const u8) FormatArgv {
 }
 
 fn run(name: []const u8, argv: []const []const u8) !void {
-    var child = std.ChildProcess.init(argv, allocator);
+    var child = std.process.Child.init(argv, allocator);
     std.log.info("{}", .{fmtArgv(child.argv)});
     try child.spawn();
     const term = try child.wait();
@@ -562,7 +556,7 @@ fn run(name: []const u8, argv: []const []const u8) !void {
     }
 }
 fn gitFetch(path: []const u8, branch: []const u8) !bool {
-    var child = std.ChildProcess.init(&.{
+    var child = std.process.Child.init(&.{
         "git",
         "-C", path,
         "fetch",
@@ -579,7 +573,7 @@ fn gitFetch(path: []const u8, branch: []const u8) !bool {
 }
 
 fn gitBranchExists(path: []const u8, branch: []const u8) !bool {
-    var child = std.ChildProcess.init(&.{
+    var child = std.process.Child.init(&.{
         "git",
         "-C", path,
         "rev-parse",
@@ -847,16 +841,16 @@ fn readAndGenerateApiFile(root_module: *Module, out_dir: std.fs.Dir, json_basena
         .const_exports = ArrayList(StringPool.Val).init(allocator),
         .uses_guid = false,
         .top_level_api_imports = StringPool.HashMap(ApiImport).init(allocator),
-        .type_exports = StringPoolArrayHashMap(Nothing).init(allocator),
-        .func_exports = StringPoolArrayHashMap(Nothing).init(allocator),
+        .type_exports = StringPoolArrayHashMap(void).init(allocator),
+        .func_exports = StringPoolArrayHashMap(void).init(allocator),
         .tmp_func_ptr_workaround_list = ArrayList(StringPool.Val).init(allocator),
         .param_names_to_avoid_map_get_fn = getParamNamesToAvoidMapGetFn(json_name),
         .not_null_funcs = not_null_funcs,
-        .not_null_funcs_applied = StringPool.HashMap(Nothing).init(allocator),
+        .not_null_funcs_applied = StringPool.HashMap(void).init(allocator),
         .union_pointer_funcs = union_pointer_funcs,
-        .union_pointer_funcs_applied = StringPool.HashMap(Nothing).init(allocator),
+        .union_pointer_funcs_applied = StringPool.HashMap(void).init(allocator),
         .union_pointer_consts = union_pointer_consts,
-        .union_pointer_consts_applied = StringPool.HashMap(Nothing).init(allocator),
+        .union_pointer_consts_applied = StringPool.HashMap(void).init(allocator),
     };
 
     const generate_start_millis = std.time.milliTimestamp();
@@ -864,7 +858,7 @@ fn readAndGenerateApiFile(root_module: *Module, out_dir: std.fs.Dir, json_basena
     global_times.generate_time_millis += std.time.milliTimestamp() - generate_start_millis;
 }
 
-pub fn EmptyComptimeStringMap(comptime V: type) type {
+pub fn EmptyStaticStringMap(comptime V: type) type {
     return struct {
         pub fn get(str: []const u8) ?V {
             _ = str;
@@ -965,7 +959,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.Parsed(json.
         const NamedApiImport = struct {
             name: StringPool.Val,
             import: ApiImport,
-            pub fn asciiLessThanIgnoreCase(_: Nothing, lhs: @This(), rhs: @This()) bool {
+            pub fn asciiLessThanIgnoreCase(_: void, lhs: @This(), rhs: @This()) bool {
                 return std.ascii.lessThanIgnoreCase(lhs.name.slice, rhs.name.slice);
             }
         };
@@ -977,7 +971,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.Parsed(json.
                 try sorted_imports.append(.{ .name = entry.key_ptr.*, .import = entry.value_ptr.* });
             }
         }
-        std.mem.sort(NamedApiImport, sorted_imports.items, Nothing{}, NamedApiImport.asciiLessThanIgnoreCase);
+        std.mem.sort(NamedApiImport, sorted_imports.items, {}, NamedApiImport.asciiLessThanIgnoreCase);
 
         // print the arch-agnostic imports first
         for (sorted_imports.items) |import| {
@@ -1481,16 +1475,16 @@ const ConstValueFormatter = struct {
     }
 };
 
-const constants_to_skip = std.ComptimeStringMap(Nothing, .{
+const constants_to_skip = std.StaticStringMap(void).initComptime(.{
     // skip this constant because its name conflicts with the name of a type!
-    .{ "PEERDIST_RETRIEVAL_OPTIONS_CONTENTINFO_VERSION", .{} },
+    .{ "PEERDIST_RETRIEVAL_OPTIONS_CONTENTINFO_VERSION" },
 
     // HWND_DESKTOP and HWND_TOP are HWND types, but they are 0 so they need to be ?HWND
-    .{ "HWND_DESKTOP", .{} },
-    .{ "HWND_TOP", .{} },
+    .{ "HWND_DESKTOP" },
+    .{ "HWND_TOP" },
 
     // This is both a constant and a type definition in Networking.HttpServer
-    .{ "HTTP_VERSION", .{} },
+    .{ "HTTP_VERSION" },
 });
 fn generateConstant(sdk_file: *SdkFile, writer: *CodeWriter, constant_obj: json.ObjectMap) !void {
     try jsonObjEnforceKnownFieldsOnly(constant_obj, &[_][]const u8{ "Name", "Type", "Value", "ValueType", "Attrs" }, sdk_file);
@@ -1515,7 +1509,7 @@ fn generateConstant(sdk_file: *SdkFile, writer: *CodeWriter, constant_obj: json.
 
     var options = TypeRefFormatter.Options{ .reason = .direct_type_access, .is_const = true, .in = false, .out = false, .anon_types = null, .null_modifier = 0 };
     if (sdk_file.union_pointer_consts.get(name_pool.slice)) |_| {
-        try sdk_file.union_pointer_consts_applied.put(name_pool, .{});
+        try sdk_file.union_pointer_consts_applied.put(name_pool, {});
         options.union_pointer = true;
     }
 
@@ -1559,7 +1553,7 @@ fn generateConstant(sdk_file: *SdkFile, writer: *CodeWriter, constant_obj: json.
 }
 
 // workaround https://github.com/microsoft/win32metadata/issues/389
-const also_usable_type_api_map = std.ComptimeStringMap([]const u8, .{
+const also_usable_type_api_map = std.StaticStringMap([]const u8).initComptime(.{
     .{ "HDC", "Graphics.Gdi" },
     .{ "HGDIOBJ", "Graphics.Gdi" },
     .{ "HICON", "UI.WindowsAndMessaging" },
@@ -1674,7 +1668,7 @@ fn generateType(
     if (arches.flags == ArchFlags.all.flags) {
         std.debug.assert(sdk_file.type_exports.get(pool_name) == null);
     }
-    try sdk_file.type_exports.put(pool_name, .{});
+    try sdk_file.type_exports.put(pool_name, {});
 
     if (types_that_conflict_with_consts.get(tmp_name)) |_| {
         try writer.line("// WARNING: this type symbol conflicts with a const!");
@@ -1819,44 +1813,44 @@ fn generateTypeDefinition(
     }
 }
 
-const types_to_skip = std.ComptimeStringMap([]const u8, .{
+const types_to_skip = std.StaticStringMap([]const u8).initComptime(.{
     .{ "FILEGROUPDESCRIPTORA", "array of 'win32.ui.shell.FILEDESCRIPTORA' not allowed in packed struct due to padding bits" },
 });
-const types_that_conflict_with_consts = std.ComptimeStringMap(Nothing, .{
+const types_that_conflict_with_consts = std.StaticStringMap(void).initComptime(.{
     // This symbol conflicts with a constant with the exact same name
-    .{ "AE_SRVSTATUS", .{} },
-    .{ "AE_SESSLOGON", .{} },
-    .{ "AE_SESSLOGOFF", .{} },
-    .{ "AE_SESSPWERR", .{} },
-    .{ "AE_CONNSTART", .{} },
-    .{ "AE_CONNSTOP", .{} },
-    .{ "AE_CONNREJ", .{} },
-    .{ "AE_RESACCESS", .{} },
-    .{ "AE_RESACCESSREJ", .{} },
-    .{ "AE_CLOSEFILE", .{} },
-    .{ "AE_SERVICESTAT", .{} },
-    .{ "AE_ACLMOD", .{} },
-    .{ "AE_UASMOD", .{} },
-    .{ "AE_NETLOGON", .{} },
-    .{ "AE_NETLOGOFF", .{} },
-    .{ "AE_LOCKOUT", .{} },
+    .{ "AE_SRVSTATUS" },
+    .{ "AE_SESSLOGON" },
+    .{ "AE_SESSLOGOFF" },
+    .{ "AE_SESSPWERR" },
+    .{ "AE_CONNSTART" },
+    .{ "AE_CONNSTOP" },
+    .{ "AE_CONNREJ" },
+    .{ "AE_RESACCESS" },
+    .{ "AE_RESACCESSREJ" },
+    .{ "AE_CLOSEFILE" },
+    .{ "AE_SERVICESTAT" },
+    .{ "AE_ACLMOD" },
+    .{ "AE_UASMOD" },
+    .{ "AE_NETLOGON" },
+    .{ "AE_NETLOGOFF" },
+    .{ "AE_LOCKOUT" },
 });
-const types_that_conflict_with_something = std.ComptimeStringMap(Nothing, .{
+const types_that_conflict_with_something = std.StaticStringMap(void).initComptime(.{
     // https://github.com/microsoft/win32metadata/issues/632
     // There's something weird going on with these types.  The types are empty
     // but they are also defined as nested types inside the other types that use them.
     // The reason they must be skipped right now is they are causing name conflict errors
     // becuase they are duplicated.
-    .{ "DHCP_SUBNET_ELEMENT_UNION", .{} },
-    .{ "DHCP_OPTION_ELEMENT_UNION", .{} },
-    .{ "DHCP_OPTION_SCOPE_UNION6", .{} },
-    .{ "DHCP_CLIENT_SEARCH_UNION", .{} },
-    .{ "DHCP_SUBNET_ELEMENT_UNION_V4", .{} },
-    .{ "DHCP_SUBNET_ELEMENT_UNION_V6", .{} },
+    .{ "DHCP_SUBNET_ELEMENT_UNION" },
+    .{ "DHCP_OPTION_ELEMENT_UNION" },
+    .{ "DHCP_OPTION_SCOPE_UNION6" },
+    .{ "DHCP_CLIENT_SEARCH_UNION" },
+    .{ "DHCP_SUBNET_ELEMENT_UNION_V4" },
+    .{ "DHCP_SUBNET_ELEMENT_UNION_V6" },
 });
 
-const com_types_to_skip = std.ComptimeStringMap(Nothing, .{
-    .{ "placeholder_ignore_me", .{} },
+const com_types_to_skip = std.StaticStringMap(void).initComptime(.{
+    .{ "placeholder_ignore_me" },
 });
 
 fn generatePlatformComment(writer: *CodeWriter, platform_node: std.json.Value) !void {
@@ -1980,13 +1974,13 @@ fn generateStructOrUnionDef(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: j
 // Not sure whether enums should be exhaustive or not, for now
 // I'll default to all of them being exhaustive except the ones
 // in this list that I know are currently not exhaustive.
-const non_exhaustive_enums = std.ComptimeStringMap(Nothing, .{
+const non_exhaustive_enums = std.StaticStringMap(void).initComptime(.{
     // This enum is not exhaustive because it is missing a value, see
     //     https://github.com/microsoft/win32metadata/issues/203
-    .{ "CLSCTX", .{} },
+    .{ "CLSCTX" },
     // SEND_FLAGS is missing the value 0
-    .{ "SEND_FLAGS", .{} },
-    .{ "WINDOW_LONG_PTR_INDEX", .{} },
+    .{ "SEND_FLAGS" },
+    .{ "WINDOW_LONG_PTR_INDEX" },
 });
 
 fn shortEnumValueName(enum_type_name: []const u8, full_value_name: []const u8) []const u8 {
@@ -2013,103 +2007,103 @@ fn shortEnumValueName(enum_type_name: []const u8, full_value_name: []const u8) [
 // TODO: this is a set of enums whose value symbols conflict with other symbols
 const suppress_enum_aliases = blk: {
     @setEvalBranchQuota(3000);
-    break :blk std.ComptimeStringMap(Nothing, .{
+    break :blk std.StaticStringMap(void).initComptime(.{
 
         // suppress this one because the CFE_UNDERLINE enum value alias conflicts with the name of an enum type
-        .{ "CFE_EFFECTS", .{} },
+        .{ "CFE_EFFECTS" },
         // these types have values that conflict with their own enum type name
-        .{ "INTERNET_DEFAULT_PORT", .{} },
-        .{ "PDH_VERSION", .{} },
-        .{ "POWER_PLATFORM_ROLE_VERSION", .{} },
+        .{ "INTERNET_DEFAULT_PORT" },
+        .{ "PDH_VERSION" },
+        .{ "POWER_PLATFORM_ROLE_VERSION" },
         // --------------------------------------------------------------------------------
         // suppress these enum value aliases because there is already a constant with the same name
         // --------------------------------------------------------------------------------
-        .{ "JsRuntimeVersion", .{} },
-        .{ "GetIconInfo_hicon", .{} },
-        .{ "PFN_WdsCliCallback_dwMessageIdFlags", .{} },
-        .{ "MIB_IPFORWARD_TYPE", .{} },
-        .{ "OLEMISC", .{} },
-        .{ "IMAGEHLP_CBA_EVENT_SEVERITY", .{} },
-        .{ "PFN_WDS_CLI_CALLBACK_MESSAGE_ID", .{} },
+        .{ "JsRuntimeVersion" },
+        .{ "GetIconInfo_hicon" },
+        .{ "PFN_WdsCliCallback_dwMessageIdFlags" },
+        .{ "MIB_IPFORWARD_TYPE" },
+        .{ "OLEMISC" },
+        .{ "IMAGEHLP_CBA_EVENT_SEVERITY" },
+        .{ "PFN_WDS_CLI_CALLBACK_MESSAGE_ID" },
         // --------------------------------------------------------------------------------
         // suppress the rest because there is another enum with the same enum value alias
         // --------------------------------------------------------------------------------
         // Security
-        .{ "NCrypt_dwFlags", .{} },
-        .{ "IAzClientContext3_GetGroups_ulOptionsFlags", .{} },
-        .{ "NCryptNotifyChangeKey_dwFlags", .{} },
-        .{ "SECPKG_ATTR_1", .{} },
-        .{ "CryptImportPKCS8_dwFlags", .{} },
-        .{ "NCryptDecrypt_dwFlags", .{} },
-        .{ "KERB_CERTIFICATE_LOGON_MessageTypeFlags", .{} },
-        .{ "SC_ACTION_TypeFlags", .{} },
-        .{ "IIdentityProvider_Advise_dwIdentityUpdateEventsFlags", .{} },
-        .{ "CRYPT_KEY_PROV_FLAGS", .{} },
+        .{ "NCrypt_dwFlags" },
+        .{ "IAzClientContext3_GetGroups_ulOptionsFlags" },
+        .{ "NCryptNotifyChangeKey_dwFlags" },
+        .{ "SECPKG_ATTR_1" },
+        .{ "CryptImportPKCS8_dwFlags" },
+        .{ "NCryptDecrypt_dwFlags" },
+        .{ "KERB_CERTIFICATE_LOGON_MessageTypeFlags" },
+        .{ "SC_ACTION_TypeFlags" },
+        .{ "IIdentityProvider_Advise_dwIdentityUpdateEventsFlags" },
+        .{ "CRYPT_KEY_PROV_FLAGS" },
         // WindowsProgramming
-        .{ "VER_MASK", .{} },
-        .{ "SetHandleInformation_dwFlags", .{} },
-        .{ "DuplicateHandle_dwOptionsFlags", .{} },
-        .{ "REG_OPEN_CREATE_OPTIONS", .{} },
+        .{ "VER_MASK" },
+        .{ "SetHandleInformation_dwFlags" },
+        .{ "DuplicateHandle_dwOptionsFlags" },
+        .{ "REG_OPEN_CREATE_OPTIONS" },
         // SystemServices
-        .{ "QueryInformationJobObject_JobObjectInformationClassFlags", .{} },
-        .{ "HeapSetInformation_HeapInformationClassFlags", .{} },
-        .{ "JOBOBJECT_NOTIFICATION_LIMIT_INFORMATION_2_IoRateControlToleranceInterval", .{} },
-        .{ "JOBOBJECT_RATE_CONTROL_TOLERANCE_INTERVAL", .{} },
-        .{ "JOBOBJECT_LIMIT_VIOLATION_INFORMATION_2_RateControlTolerance", .{} },
-        .{ "JOBOBJECT_IO_RATE_CONTROL_INFORMATIONFlags", .{} },
-        .{ "CreateFileMapping_flProtect", .{} },
-        .{ "PFM_FLAGS", .{} },
-        .{ "JOBOBJECT_BASIC_LIMIT_INFORMATIONFlags", .{} },
-        .{ "JOBOBJECT_SECURITY_LIMIT_INFORMATIONFlags", .{} },
-        .{ "JOBOBJECT_BASIC_UI_RESTRICTIONS_UIRestrictionsClassFlags", .{} },
+        .{ "QueryInformationJobObject_JobObjectInformationClassFlags" },
+        .{ "HeapSetInformation_HeapInformationClassFlags" },
+        .{ "JOBOBJECT_NOTIFICATION_LIMIT_INFORMATION_2_IoRateControlToleranceInterval" },
+        .{ "JOBOBJECT_RATE_CONTROL_TOLERANCE_INTERVAL" },
+        .{ "JOBOBJECT_LIMIT_VIOLATION_INFORMATION_2_RateControlTolerance" },
+        .{ "JOBOBJECT_IO_RATE_CONTROL_INFORMATIONFlags" },
+        .{ "CreateFileMapping_flProtect" },
+        .{ "PFM_FLAGS" },
+        .{ "JOBOBJECT_BASIC_LIMIT_INFORMATIONFlags" },
+        .{ "JOBOBJECT_SECURITY_LIMIT_INFORMATIONFlags" },
+        .{ "JOBOBJECT_BASIC_UI_RESTRICTIONS_UIRestrictionsClassFlags" },
         // NetManagement
-        .{ "NetWkstaSetInfo_levelFlags", .{} },
+        .{ "NetWkstaSetInfo_levelFlags" },
         // ComponentServices
-        .{ "ICOMAdminCatalog2_IsSafeToDelete_pCOMAdminInUseFlags", .{} },
-        .{ "ImportUnconfiguredComponents_pVarComponentType", .{} },
-        .{ "ICOMAdminCatalog_InstallApplication_lOptionsFlags", .{} },
-        .{ "ICOMAdminCatalog_ExportApplication_lOptionsFlags", .{} },
-        .{ "WerRegisterFile_regFileTypeFlags", .{} },
-        .{ "WerReportSubmit_pSubmitResultFlags", .{} },
-        .{ "WerReportCreate_repTypeFlags", .{} },
-        .{ "WerReportSubmit_consentFlags", .{} },
+        .{ "ICOMAdminCatalog2_IsSafeToDelete_pCOMAdminInUseFlags" },
+        .{ "ImportUnconfiguredComponents_pVarComponentType" },
+        .{ "ICOMAdminCatalog_InstallApplication_lOptionsFlags" },
+        .{ "ICOMAdminCatalog_ExportApplication_lOptionsFlags" },
+        .{ "WerRegisterFile_regFileTypeFlags" },
+        .{ "WerReportSubmit_pSubmitResultFlags" },
+        .{ "WerReportCreate_repTypeFlags" },
+        .{ "WerReportSubmit_consentFlags" },
         // FileSystem
-        .{ "DefineDosDevice_dwFlags", .{} },
-        .{ "CreateFile_dwShareMode", .{} },
-        .{ "CreateLogFile_fCreateDispositionFlags", .{} },
-        .{ "ReOpenFile_dwFlagsAndAttributes", .{} },
+        .{ "DefineDosDevice_dwFlags" },
+        .{ "CreateFile_dwShareMode" },
+        .{ "CreateLogFile_fCreateDispositionFlags" },
+        .{ "ReOpenFile_dwFlagsAndAttributes" },
         // Parental Controls
-        .{ "IWindowsParentalControlsCore_GetVisibility_peVisibilityFlags", .{} },
-        .{ "GetRestrictions_pdwRestrictions", .{} },
-        .{ "IWPCWebSettings_GetSettings_pdwSettingsFlags", .{} },
+        .{ "IWindowsParentalControlsCore_GetVisibility_peVisibilityFlags" },
+        .{ "GetRestrictions_pdwRestrictions" },
+        .{ "IWPCWebSettings_GetSettings_pdwSettingsFlags" },
         // Gdi
-        .{ "CombineRgn_iMode", .{} },
-        .{ "CreateDIBitmap_iUsage", .{} },
-        .{ "PatBlt_ropFlags", .{} },
-        .{ "GetCurrentObject_typeFlags", .{} },
-        .{ "SetROP2_rop2Flags", .{} },
+        .{ "CombineRgn_iMode" },
+        .{ "CreateDIBitmap_iUsage" },
+        .{ "PatBlt_ropFlags" },
+        .{ "GetCurrentObject_typeFlags" },
+        .{ "SetROP2_rop2Flags" },
         // MachineLearning
-        .{ "MLOperatorTensorDataType", .{} },
-        .{ "MLOperatorExecutionType", .{} },
-        .{ "MLOperatorEdgeType", .{} },
+        .{ "MLOperatorTensorDataType" },
+        .{ "MLOperatorExecutionType" },
+        .{ "MLOperatorEdgeType" },
         // Com
-        .{ "IPropertyPageSite_OnStatusChangeFlags", .{} },
-        .{ "IOleControlSite_TransformCoordsFlags", .{} },
+        .{ "IPropertyPageSite_OnStatusChangeFlags" },
+        .{ "IOleControlSite_TransformCoordsFlags" },
         // ApplicationInstallationAndServicing
-        .{ "LPDISPLAYVAL_uiTypeFlags", .{} },
-        .{ "MsiSourceList_dwContext", .{} },
-        .{ "MsiAdvertiseScript_dwFlags", .{} },
-        .{ "MsiViewModify_eModifyModeFlags", .{} },
-        .{ "MsiCreateTransformSummaryInfo_iErrorConditions", .{} },
-        .{ "MsiCreateTransformSummaryInfo_iValidation", .{} },
-        .{ "MsiEnumClientsEx_dwContext", .{} },
+        .{ "LPDISPLAYVAL_uiTypeFlags" },
+        .{ "MsiSourceList_dwContext" },
+        .{ "MsiAdvertiseScript_dwFlags" },
+        .{ "MsiViewModify_eModifyModeFlags" },
+        .{ "MsiCreateTransformSummaryInfo_iErrorConditions" },
+        .{ "MsiCreateTransformSummaryInfo_iValidation" },
+        .{ "MsiEnumClientsEx_dwContext" },
         // WindowsAndMessaging
-        .{ "DrawIconEx_diFlags", .{} },
+        .{ "DrawIconEx_diFlags" },
         // Debug
-        .{ "SymGetHomeDirectory_type", .{} },
-        .{ "SymGetSymbolFile_Type", .{} },
+        .{ "SymGetHomeDirectory_type" },
+        .{ "SymGetSymbolFile_Type" },
         // Multimedia
-        .{ "MIDI_OPEN_TYPE", .{} },
+        .{ "MIDI_OPEN_TYPE" },
     });
 };
 
@@ -2605,64 +2599,64 @@ fn funcPtrHasDependencyLoop(name: []const u8) bool {
     if (std.mem.startsWith(u8, name, "LPDDHAL")) return std.mem.startsWith(u8, name, "LPDDHAL_") or std.mem.startsWith(u8, name, "LPDDHALSURFCB_") or std.mem.startsWith(u8, name, "LPDDHALPALCB_") or std.mem.startsWith(u8, name, "LPDDHALVPORTCB_") or std.mem.startsWith(u8, name, "LPDDHALCOLORCB_") or std.mem.startsWith(u8, name, "LPDDHALMOCOMPCB_");
     return std.mem.startsWith(u8, name, "UText") or std.mem.startsWith(u8, name, "UCharIterator");
 }
-const func_ptr_dependency_loop_problems = std.ComptimeStringMap(Nothing, .{
-    .{ "FREEOBJPROC", .{} },
-    .{ "LPEXCEPFINO_DEFERRED_FILLIN", .{} },
-    .{ "LPDDENUMSURFACESCALLBACK", .{} },
-    .{ "LPDDENUMSURFACESCALLBACK2", .{} },
-    .{ "LPDDENUMSURFACESCALLBACK7", .{} },
-    .{ "OEMCUIPCALLBACK", .{} },
-    .{ "PAudioStateMonitorCallback", .{} },
-    .{ "PFN_IO_COMPLETION", .{} },
-    .{ "PFN_RPCNOTIFICATION_ROUTINE", .{} },
-    .{ "PFNFILLTEXTBUFFER", .{} },
-    .{ "WSD_STUB_FUNCTION", .{} },
-    .{ "PWSD_SOAP_MESSAGE_HANDLER", .{} },
-    .{ "WS_ASYNC_FUNCTION", .{} },
-    .{ "CALLERRELEASE", .{} },
-    .{ "PIO_IRP_EXT_PROCESS_TRACKED_OFFSET_CALLBACK", .{} },
-    .{ "MI_MethodDecl_Invoke", .{} },
-    .{ "MI_ProviderFT_GetInstance", .{} },
-    .{ "MI_ProviderFT_CreateInstance", .{} },
-    .{ "MI_ProviderFT_ModifyInstance", .{} },
-    .{ "MI_ProviderFT_DeleteInstance", .{} },
-    .{ "MI_ProviderFT_AssociatorInstances", .{} },
-    .{ "MI_ProviderFT_ReferenceInstances", .{} },
-    .{ "MI_ProviderFT_Invoke", .{} },
-    .{ "PCMSCALLBACKW", .{} },
-    .{ "PCMSCALLBACKA", .{} },
-    .{ "PEVENT_TRACE_BUFFER_CALLBACKW", .{} },
-    .{ "PEVENT_TRACE_BUFFER_CALLBACKA", .{} },
-    .{ "EXPR_EVAL", .{} },
-    .{ "XMIT_HELPER_ROUTINE", .{} },
+const func_ptr_dependency_loop_problems = std.StaticStringMap(void).initComptime(.{
+    .{ "FREEOBJPROC" },
+    .{ "LPEXCEPFINO_DEFERRED_FILLIN" },
+    .{ "LPDDENUMSURFACESCALLBACK" },
+    .{ "LPDDENUMSURFACESCALLBACK2" },
+    .{ "LPDDENUMSURFACESCALLBACK7" },
+    .{ "OEMCUIPCALLBACK" },
+    .{ "PAudioStateMonitorCallback" },
+    .{ "PFN_IO_COMPLETION" },
+    .{ "PFN_RPCNOTIFICATION_ROUTINE" },
+    .{ "PFNFILLTEXTBUFFER" },
+    .{ "WSD_STUB_FUNCTION" },
+    .{ "PWSD_SOAP_MESSAGE_HANDLER" },
+    .{ "WS_ASYNC_FUNCTION" },
+    .{ "CALLERRELEASE" },
+    .{ "PIO_IRP_EXT_PROCESS_TRACKED_OFFSET_CALLBACK" },
+    .{ "MI_MethodDecl_Invoke" },
+    .{ "MI_ProviderFT_GetInstance" },
+    .{ "MI_ProviderFT_CreateInstance" },
+    .{ "MI_ProviderFT_ModifyInstance" },
+    .{ "MI_ProviderFT_DeleteInstance" },
+    .{ "MI_ProviderFT_AssociatorInstances" },
+    .{ "MI_ProviderFT_ReferenceInstances" },
+    .{ "MI_ProviderFT_Invoke" },
+    .{ "PCMSCALLBACKW" },
+    .{ "PCMSCALLBACKA" },
+    .{ "PEVENT_TRACE_BUFFER_CALLBACKW" },
+    .{ "PEVENT_TRACE_BUFFER_CALLBACKA" },
+    .{ "EXPR_EVAL" },
+    .{ "XMIT_HELPER_ROUTINE" },
 });
 
-const funcs_with_issues = std.ComptimeStringMap(Nothing, .{
+const funcs_with_issues = std.StaticStringMap(void).initComptime(.{
     // These functions don't work yet because Zig doesn't support the 16-byte Guid struct in the C ABI yet
     // See: https://github.com/ziglang/zig/issues/1481
-    .{ "CorePrinterDriverInstalledA", .{} },
-    .{ "CorePrinterDriverInstalledW", .{} },
+    .{ "CorePrinterDriverInstalledA" },
+    .{ "CorePrinterDriverInstalledW" },
     // workaround https://github.com/microsoft/win32metadata/issues/520
-    .{ "AuthzInitializeResourceManagerEx", .{} },
+    .{ "AuthzInitializeResourceManagerEx" },
     // The 3rd parameter "ObjectType" is "Optional" but is typed as an enum?
     // but the docs says it's a pointer?? wtf is going on with this one?
-    .{ "BuildTrusteeWithObjectsAndNameA", .{} },
-    .{ "BuildTrusteeWithObjectsAndNameW", .{} },
+    .{ "BuildTrusteeWithObjectsAndNameA" },
+    .{ "BuildTrusteeWithObjectsAndNameW" },
     // these functions contain invalid optional types (https://github.com/microsoft/win32metadata/issues/519)
-    .{ "NCryptOpenKey", .{} },
-    .{ "NCryptTranslateHandle", .{} },
-    .{ "CryptSignAndEncodeCertificate", .{} },
-    .{ "MFPCreateMediaPlayer", .{} },
-    .{ "QOSRemoveSocketFromFlow", .{} },
-    .{ "PrjUpdateFileIfNeeded", .{} },
-    .{ "PrjDeleteFile", .{} },
-    .{ "JetSetSystemParameterA", .{} },
-    .{ "JetSetSystemParameterW", .{} },
-    .{ "MsiGetComponentPathExA", .{} },
-    .{ "MsiGetComponentPathExW", .{} },
-    .{ "SymLoadModuleEx", .{} },
-    .{ "SymLoadModuleExW", .{} },
-    .{ "PssDuplicateSnapshot", .{} },
+    .{ "NCryptOpenKey" },
+    .{ "NCryptTranslateHandle" },
+    .{ "CryptSignAndEncodeCertificate" },
+    .{ "MFPCreateMediaPlayer" },
+    .{ "QOSRemoveSocketFromFlow" },
+    .{ "PrjUpdateFileIfNeeded" },
+    .{ "PrjDeleteFile" },
+    .{ "JetSetSystemParameterA" },
+    .{ "JetSetSystemParameterW" },
+    .{ "MsiGetComponentPathExA" },
+    .{ "MsiGetComponentPathExW" },
+    .{ "SymLoadModuleEx" },
+    .{ "SymLoadModuleExW" },
+    .{ "PssDuplicateSnapshot" },
 });
 
 const ArchCaseContext = enum { outside_arch_case, inside_arch_case };
@@ -2748,10 +2742,10 @@ fn generateFunction(
     const func_name_pool = try global_symbol_pool.add(func_name_tmp);
     if (func_kind == .fixed or func_kind == .ptr) {
         if (func_kind == .fixed) {
-            try sdk_file.func_exports.put(func_name_pool, .{});
+            try sdk_file.func_exports.put(func_name_pool, {});
         }
         if (sdk_file.not_null_funcs.get(func_name_pool.slice)) |notnull_node| {
-            try sdk_file.not_null_funcs_applied.put(func_name_pool, .{});
+            try sdk_file.not_null_funcs_applied.put(func_name_pool, {});
             jsonEnforce(notnull_node.array.items.len > 0);
             modifier_set.ret.not_null = @as(NullModifier, @intCast(notnull_node.array.items[0].integer));
             for (notnull_node.array.items[1..], 0..) |item, i| {
@@ -2761,7 +2755,7 @@ fn generateFunction(
             }
         }
         if (sdk_file.union_pointer_funcs.get(func_name_pool.slice)) |union_pointer_node| {
-            try sdk_file.union_pointer_funcs_applied.put(func_name_pool, .{});
+            try sdk_file.union_pointer_funcs_applied.put(func_name_pool, {});
             jsonEnforce(union_pointer_node.array.items.len > 0);
             for (union_pointer_node.array.items) |name_node| {
                 const name = switch (name_node) {
@@ -2934,7 +2928,7 @@ fn generateUnicodeAliases(sdk_file: *SdkFile, writer: *CodeWriter, unicode_alias
 }
 
 const Arch = enum { X86, X64, Arm64 };
-const arch_name_map = std.ComptimeStringMap(Arch, .{
+const arch_name_map = std.StaticStringMap(Arch).initComptime(.{
     .{ "X86", Arch.X86 },
     .{ "X64", Arch.X64 },
     .{ "Arm64", Arch.Arm64 },
@@ -3045,8 +3039,8 @@ pub fn jsonEql(a: json.Value, b: json.Value) bool {
 }
 
 // TODO: would be nice to have isBuiltinId in the std lib
-const builtin_ids = std.ComptimeStringMap(Nothing, .{
-    .{ "type", .{} },
+const builtin_ids = std.StaticStringMap(void).initComptime(.{
+    .{ "type" },
 });
 pub fn isBuiltinId(s: []const u8) bool {
     if (builtin_ids.get(s)) |_| return true;
@@ -3062,57 +3056,57 @@ pub fn isBuiltinId(s: []const u8) bool {
 }
 
 // NOTE: this data could be generated automatically by doing a first pass
-fn getParamNamesToAvoidMapGetFn(json_name: []const u8) AvoidLookupFn {
-    if (std.mem.eql(u8, json_name, "System.Mmc")) return std.ComptimeStringMap(Nothing, .{
-        .{ "Node", .{} },
-        .{ "Nodes", .{} },
-        .{ "Frame", .{} },
-        .{ "Column", .{} },
-        .{ "Columns", .{} },
-        .{ "ScopeNamespace", .{} },
-        .{ "SnapIn", .{} },
-        .{ "Extension", .{} },
-        .{ "View", .{} },
-        .{ "Document", .{} },
-        .{ "MenuItem", .{} },
-        .{ "Views", .{} },
-        .{ "SnapIns", .{} },
-        .{ "Property", .{} },
-        .{ "Properties", .{} },
-        .{ "Extensions", .{} },
-        .{ "ContextMenu", .{} },
-        .{ "Guid", .{} },
-    }).get;
-    if (std.mem.eql(u8, json_name, "UI.TabletPC")) return std.ComptimeStringMap(Nothing, .{
-        .{ "EventMask", .{} },
-        .{ "InkDisplayMode", .{} },
-        .{ "Guid", .{} },
-    }).get;
-    if (std.mem.eql(u8, json_name, "UI.Shell")) return std.ComptimeStringMap(Nothing, .{
-        .{ "Folder", .{} },
-    }).get;
-    if (std.mem.eql(u8, json_name, "Media.DirectShow")) return std.ComptimeStringMap(Nothing, .{
-        .{ "Quality", .{} },
-        .{ "ScanModulationTypes", .{} },
-        .{ "AnalogVideoStandard", .{} },
-        .{ "Guid", .{} },
-    }).get;
-    if (std.mem.eql(u8, json_name, "Media.Speech")) return std.ComptimeStringMap(Nothing, .{
-        .{ "Guid", .{} },
-    }).get;
-    if (std.mem.eql(u8, json_name, "Media.MediaFoundation")) return std.ComptimeStringMap(Nothing, .{
-        .{ "Guid", .{} },
-    }).get;
-    if (std.mem.eql(u8, json_name, "System.Diagnostics.Debug")) return std.ComptimeStringMap(Nothing, .{
-        .{ "Guid", .{} },
-        .{ "Symbol", .{} },
-    }).get;
-    return EmptyComptimeStringMap(Nothing).get;
+fn getParamNamesToAvoidMapGetFn(json_name: []const u8) std.StaticStringMap(void) {
+    if (std.mem.eql(u8, json_name, "System.Mmc")) return std.StaticStringMap(void).initComptime(.{
+        .{ "Node" },
+        .{ "Nodes" },
+        .{ "Frame" },
+        .{ "Column" },
+        .{ "Columns" },
+        .{ "ScopeNamespace" },
+        .{ "SnapIn" },
+        .{ "Extension" },
+        .{ "View" },
+        .{ "Document" },
+        .{ "MenuItem" },
+        .{ "Views" },
+        .{ "SnapIns" },
+        .{ "Property" },
+        .{ "Properties" },
+        .{ "Extensions" },
+        .{ "ContextMenu" },
+        .{ "Guid" },
+    });
+    if (std.mem.eql(u8, json_name, "UI.TabletPC")) return std.StaticStringMap(void).initComptime(.{
+        .{ "EventMask" },
+        .{ "InkDisplayMode" },
+        .{ "Guid" },
+    });
+    if (std.mem.eql(u8, json_name, "UI.Shell")) return std.StaticStringMap(void).initComptime(.{
+        .{ "Folder" },
+    });
+    if (std.mem.eql(u8, json_name, "Media.DirectShow")) return std.StaticStringMap(void).initComptime(.{
+        .{ "Quality" },
+        .{ "ScanModulationTypes" },
+        .{ "AnalogVideoStandard" },
+        .{ "Guid" },
+    });
+    if (std.mem.eql(u8, json_name, "Media.Speech")) return std.StaticStringMap(void).initComptime(.{
+        .{ "Guid" },
+    });
+    if (std.mem.eql(u8, json_name, "Media.MediaFoundation")) return std.StaticStringMap(void).initComptime(.{
+        .{ "Guid" },
+    });
+    if (std.mem.eql(u8, json_name, "System.Diagnostics.Debug")) return std.StaticStringMap(void).initComptime(.{
+        .{ "Guid" },
+        .{ "Symbol" },
+    });
+    return std.StaticStringMap(void).initComptime(.{});
 }
 
 pub const FmtParamId = struct {
     s: []const u8,
-    avoid_lookup: AvoidLookupFn,
+    avoid_map: std.StaticStringMap(void),
     pub fn format(
         self: @This(),
         comptime fmt: []const u8,
@@ -3121,7 +3115,7 @@ pub const FmtParamId = struct {
     ) !void {
         _ = fmt;
         _ = options;
-        if (self.avoid_lookup(self.s)) |_| {
+        if (self.avoid_map.get(self.s)) |_| {
             try writer.print("_param_{s}", .{self.s});
         } else if (isBuiltinId(self.s)) {
             try writer.print("{s}_", .{self.s});
@@ -3130,8 +3124,8 @@ pub const FmtParamId = struct {
         }
     }
 };
-pub fn fmtParamId(s: []const u8, avoid_lookup: AvoidLookupFn) FmtParamId {
-    return FmtParamId{ .s = s, .avoid_lookup = avoid_lookup };
+pub fn fmtParamId(s: []const u8, avoid_map: std.StaticStringMap(void)) FmtParamId {
+    return FmtParamId{ .s = s, .avoid_map = avoid_map };
 }
 
 pub fn FmtLower(comptime buffer_size: comptime_int) type {
