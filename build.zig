@@ -5,6 +5,14 @@ const Step = std.Build.Step;
 const CrossTarget = std.zig.CrossTarget;
 const patchstep = @import("patchstep.zig");
 
+comptime {
+    const required_zig = "0.13.0";
+    const v = std.SemanticVersion.parse(required_zig) catch unreachable;
+    if (builtin.zig_version.order(v) != .eq) @compileError(
+        "zig version " ++ required_zig ++ " is required to ensure zigwin32 output is always the same",
+    );
+}
+
 pub fn build(b: *Build) !void {
     patchstep.init(b.allocator);
 
