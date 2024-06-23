@@ -16,27 +16,19 @@ comptime {
 pub fn build(b: *Build) !void {
     patchstep.init(b.allocator);
 
-    const maybe_fetch_option = b.option(
-        bool,
-        "fetch",
-        "Controls whether genzig fetches and updates it's local version branch before generating the bindings",
-    );
-
-    const gen_step = b.step("gen", "Generate and unit test the bindings");
-    b.default_step = gen_step;
     const pass1_step = b.step("pass1", "Only perform pass1 of zig binding generation (generates pass1.json)");
-    const gen_no_test_step = b.step("gen-no-test", "Generate the bindings but don't unit test them");
-    const test_no_gen_step = b.step("test-no-gen", "Unit test the generated bindings without regenerating them");
-    const examples_step = b.step("examples", "Build/run examples. Run 'gen' step first. Use -j1 to run one at a time");
-
+    const gen_step = b.step("gen", "Generate the bindings");
+    const unittest_step = b.step("unittest", "Unit test the generated bindings");
+    b.default_step = unittest_step;
+    const examples_step = b.step("examples", "Build/run examples. Use -j1 to run one at a time");
     const optimize = b.standardOptimizeOption(.{});
+    const release_step = b.step("release", "Generate the bindings and run tests for a release");
+
+    release_step.dependOn(unittest_step);
 
     const win32json_dep = b.dependency("win32json", .{});
 
-    const pass1: struct {
-        run: *std.Build.Step.Run,
-        out_file: std.Build.LazyPath,
-    } = blk: {
+    const pass1_out_file = blk: {
         const pass1_exe = b.addExecutable(.{
             .name = "pass1",
             .root_source_file = b.path("src/pass1.zig" ),
@@ -50,10 +42,10 @@ pub fn build(b: *Build) !void {
         const out_file = run.addOutputFileArg("pass1.json");
 
         pass1_step.dependOn(&run.step);
-        break :blk .{ .run = run, .out_file = out_file };
+        break :blk out_file;
     };
 
-    const run_genzig_step = blk: {
+    const gen_out_dir = blk: {
         const exe = b.addExecutable(.{
             .name = "genzig",
             .root_source_file = b.path("src/genzig.zig"),
@@ -62,38 +54,47 @@ pub fn build(b: *Build) !void {
         });
         const run = b.addRunArtifact(exe);
         patchstep.patch(&run.step, runStepMake);
-        run.step.dependOn(&pass1.run.step);
         run.addDirectoryArg(win32json_dep.path(""));
-        run.addFileArg(pass1.out_file);
-        run.addDirectoryArg(b.path("src"));
-        run.addDirectoryArg(b.path("zigwin32"));
-        const fetch_enabled = if (maybe_fetch_option) |o| o else true;
-        run.addArg(if (fetch_enabled) "fetch" else "nofetch");
-        break :blk &run.step;
+        run.addFileArg(pass1_out_file);
+        const out_dir = run.addOutputDirectoryArg(".");
+        gen_step.dependOn(&run.step);
+        break :blk out_dir;
     };
-    gen_no_test_step.dependOn(run_genzig_step);
 
-    for ([_]bool{ false, true }) |with_gen| {
+    b.step(
+        "show-path",
+        "Print the zigwin32 cache directory",
+    ).dependOn(
+        &PrintLazyPath.create(b, gen_out_dir).step
+    );
+
+    // Not meant to be added to the default install step, only
+    // meant to install just the zigwin32 bindings using a
+    // custom install directory.
+    {
+        const install = b.addInstallDirectory(.{
+            .source_dir = gen_out_dir,
+            .install_dir = .prefix,
+            .install_subdir = ".",
+        });
+        b.step(
+            "install-zigwin32",
+            "Install Generated Zigwin32 Bindings",
+        ).dependOn(&install.step);
+        release_step.dependOn(&install.step);
+    }
+
+    {
         const test_step = b.addTest(.{
-            .root_source_file = b.path("zigwin32/win32.zig"),
+            .root_source_file = gen_out_dir.path(b, "win32.zig"),
             .target = b.host,
             .optimize = optimize,
         });
-        if (builtin.os.tag != .windows) {
-            // code that depends on DLL's must be PIC, windows does this by default so this
-            // makes things work on other platforms
-            test_step.force_pic = true;
-        }
-        if (with_gen) {
-            test_step.step.dependOn(run_genzig_step);
-            gen_step.dependOn(&test_step.step);
-        } else {
-            test_no_gen_step.dependOn(&test_step.step);
-        }
+        unittest_step.dependOn(&test_step.step);
     }
 
     const win32 = b.createModule(.{
-        .root_source_file = b.path("zigwin32/win32.zig"),
+        .root_source_file = gen_out_dir.path(b, "win32.zig"),
     });
     const arches: []const ?[]const u8 = &[_]?[]const u8{
         null,
@@ -111,6 +112,35 @@ pub fn build(b: *Build) !void {
     try addExample(b, arches, optimize, win32, "opendialog", .Windows, examples_step);
     try addExample(b, arches, optimize, win32, "unionpointers", .Windows, examples_step);
 }
+
+const PrintLazyPath = struct {
+    step: Step,
+    lazy_path: Build.LazyPath,
+    pub fn create(
+        b: *Build,
+        lazy_path: Build.LazyPath,
+    ) *PrintLazyPath {
+        const print = b.allocator.create(PrintLazyPath) catch unreachable;
+        print.* = .{
+            .step = Step.init(.{
+                .id = .custom,
+                .name = "print the given lazy path",
+                .owner = b,
+                .makeFn = make,
+            }),
+            .lazy_path = lazy_path,
+        };
+        lazy_path.addStepDependencies(&print.step);
+        return print;
+    }
+    fn make(step: *Step, prog_node: std.Progress.Node) !void {
+        _ = prog_node;
+        const print: *PrintLazyPath = @fieldParentPtr("step", step);
+        try std.io.getStdOut().writer().print(
+            "{s}\n", .{print.lazy_path.getPath(step.owner)}
+        );
+    }
+};
 
 fn runStepMake(
     step: *Step,

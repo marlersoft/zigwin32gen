@@ -259,7 +259,6 @@ const notnull_filename: []const u8 = "notnull.json";
 const union_pointers_filename: []const u8 = "unionpointers.json";
 
 const Times = struct {
-    git_fetch_time_millis: u64 = 0,
     parse_time_millis: i64 = 0,
     read_time_millis: i64 = 0,
     generate_time_millis: i64 = 0,
@@ -273,7 +272,6 @@ pub fn main() !u8 {
         if (print_time_summary) {
             var total_millis = std.time.milliTimestamp() - main_start_millis;
             if (total_millis == 0) total_millis = 1; // prevent divide by 0
-            std.debug.print("Git Fetch Time: {} millis ({}%)\n", .{ global_times.git_fetch_time_millis, @divTrunc(100 * global_times.git_fetch_time_millis, @as(u64, @intCast(total_millis))) });
             std.debug.print("Parse Time: {} millis ({}%)\n", .{ global_times.parse_time_millis, @divTrunc(100 * global_times.parse_time_millis, total_millis) });
             std.debug.print("Read Time : {} millis ({}%)\n", .{ global_times.read_time_millis, @divTrunc(100 * global_times.read_time_millis, total_millis) });
             std.debug.print("Gen Time  : {} millis ({}%)\n", .{ global_times.generate_time_millis, @divTrunc(100 * global_times.generate_time_millis, total_millis) });
@@ -287,123 +285,53 @@ pub fn main() !u8 {
     // don't care about freeing args
 
     const cmd_args = all_args[1..];
-    if (cmd_args.len != 5) {
-        std.log.err("expected 5 cmdline arguments but got {}", .{cmd_args.len});
+    if (cmd_args.len != 3) {
+        std.log.err("expected 3 cmdline arguments but got {}", .{cmd_args.len});
         return 1;
     }
     const win32json_path = cmd_args[0];
     const pass1_json = cmd_args[1];
-    const src_path = cmd_args[2];
-    const zigwin32_repo = cmd_args[3];
-    const fetch_enabled_str = cmd_args[4];
-
-    const fetch_enabled = if (std.mem.eql(u8, fetch_enabled_str, "fetch"))
-        true
-    else if (std.mem.eql(u8, fetch_enabled_str, "nofetch"))
-        false
-    else
-        fatal("expected 'fetch' or 'nofetch' but got '{s}'", .{fetch_enabled_str});
+    const zigwin32_out_path = cmd_args[2];
 
     var win32json_dir = try std.fs.cwd().openDir(win32json_path, .{});
     defer win32json_dir.close();
-
-    std.fs.cwd().access(zigwin32_repo, .{}) catch |e| switch (e) {
-        error.FileNotFound => {
-            std.debug.print("error: zigwin32 repository to write generated files to does not exist, clone it with:\n", .{});
-            std.debug.print("    git clone https://github.com/marlersoft/zigwin32 {s}\n", .{zigwin32_repo});
-            std.process.exit(0xff);
-        },
-        else => return e,
-    };
-
-    try run("git clean", &.{"git", "-C", zigwin32_repo, "clean", "-xffd"});
-    try run("git reset", &.{"git", "-C", zigwin32_repo, "reset", "--hard", "HEAD"});
-    {
-        const result = try std.process.Child.run(.{
-            .allocator = allocator,
-            .argv = &.{
-                "git",
-                "-C",
-                zigwin32_repo,
-                "status",
-                "--porcelain",
-            },
-        });
-        defer {
-            allocator.free(result.stderr);
-            allocator.free(result.stdout);
-        }
-        if (result.stderr.len > 0) {
-            std.log.err("stderr output from git status:\n---\n{s}\n---\n", .{result.stderr});
-        }
-        if (result.stdout.len > 0) {
-            std.log.info("TODO: handle non-clean git status:\n---\n{s}\n---\n", .{result.stdout});
-            return error.Todo;
-        }
-    }
-
     const version = blk: {
         const file = try win32json_dir.openFile("version.txt", .{});
         defer file.close();
         break :blk try file.reader().readAllAlloc(allocator, 100);
     };
     defer allocator.free(version);
-
     _ = std.SemanticVersion.parse(version) catch |err|
         fatal("version '{s}' is not a valid semantic version: {s}", .{version, @errorName(err)});
-
-    {
-        if (fetch_enabled) {
-            var timer = try std.time.Timer.start();
-            const branch_exists = try gitFetch(zigwin32_repo, version);
-            global_times.git_fetch_time_millis = timer.read() / std.time.ns_per_ms;
-            if (branch_exists) {
-                const origin_branch = try std.fmt.allocPrint(allocator, "origin/{s}", .{version});
-                defer allocator.free(origin_branch);
-                try run("git checkout", &.{"git", "-C", zigwin32_repo, "checkout", origin_branch, "-B", version});
-            } else if (try gitBranchExists(zigwin32_repo, version)) {
-                try run("git checkout", &.{"git", "-C", zigwin32_repo, "checkout", "-B", version});
-            } else {
-                std.log.err(
-                    "there's no local nor remote branch for version '{s}' in the zigwin32 repo.",
-                    .{version},
-                );
-                fatalSuggestNewVersion(version, zigwin32_repo);
-            }
-        } else if (try gitBranchExists(zigwin32_repo, version)) {
-            try run("git checkout", &.{"git", "-C", zigwin32_repo, "checkout", "-B", version});
-        } else {
-            std.log.err(
-                "there's no local branch for version '{s}' in the zigwin32 repo and fetch has been disabled.",
-                .{version},
-            );
-            fatalSuggestNewVersion(version, zigwin32_repo);
-        }
-    }
 
     global_pass1 = try readJson(pass1_json);
     global_notnull = try readJson(notnull_filename);
     global_union_pointers = try readJson(union_pointers_filename);
 
-    var out_dir = try std.fs.cwd().openDir(zigwin32_repo, .{});
+    var out_dir = try std.fs.cwd().openDir(zigwin32_out_path, .{});
     defer out_dir.close();
-    out_dir.deleteFile("win32.zig") catch |e| switch (e) {
-        error.FileNotFound => {},
-        else => return e,
-    };
-    out_dir.deleteFile("build.zig") catch |e| switch (e) {
-        error.FileNotFound => {},
-        else => return e,
-    };
-    try cleanDir(out_dir, "win32");
-    var out_win32_dir = try out_dir.openDir("win32", .{});
-    defer out_win32_dir.close();
+    try out_dir.makeDir("win32");
 
-    const src_modules = &[_][]const u8{
+    const static_zig_files = [_][]const u8 {
         "zig",
         "missing",
         "windowlongptr",
     };
+
+    inline for (static_zig_files) |name| {
+        try installStaticFile(out_dir, "win32/" ++ name ++ ".zig");
+    }
+
+    const static_files = [_][]const u8 {
+        "build.zig",
+        "LICENSE",
+        "README.md",
+        ".gitignore",
+        "zig.mod",
+    };
+    inline for (static_files) |name| {
+        try installStaticFile(out_dir, name);
+    }
 
     const root_module = try Module.alloc(null, try global_symbol_pool.add("win32"));
 
@@ -426,6 +354,9 @@ pub fn main() !u8 {
         std.debug.print("-----------------------------------------------------------------------\n", .{});
         std.debug.print("loading {} api json files...\n", .{api_list.items.len});
 
+        var out_win32_dir = try out_dir.openDir("win32", .{});
+        defer out_win32_dir.close();
+
         for (api_list.items, 0..) |api_json_basename, api_index| {
             const api_num = api_index + 1;
             std.debug.print("{}/{}: loading '{s}'\n", .{ api_num, api_list.items.len, api_json_basename });
@@ -437,7 +368,7 @@ pub fn main() !u8 {
             try readAndGenerateApiFile(root_module, out_win32_dir, api_json_basename, file);
         }
 
-        for (src_modules ++ &[_][]const u8{
+        for (static_zig_files ++ &[_][]const u8{
             "everything",
         }) |submodule_str| {
             const submodule = try global_symbol_pool.add(submodule_str);
@@ -448,51 +379,35 @@ pub fn main() !u8 {
         try generateEverythingModule(out_win32_dir, root_module);
     }
 
-    // copy zig.zig, missing.zig and windowlongptr.zig modules
     {
-        var src_dir = try std.fs.cwd().openDir(src_path, .{});
-        defer src_dir.close();
-        inline for (src_modules) |mod| {
-            try src_dir.copyFile(mod ++ ".zig", out_win32_dir, mod ++ ".zig", .{});
+        var zon = try out_dir.createFile("build.zig.zon", .{});
+        defer zon.close();
+        const w = zon.writer();
+        try w.writeAll(".{\n");
+        try w.writeAll("    .name = \"zigwin32\",\n");
+        try w.print(   "    .version = \"{s}\",\n", .{version});
+        try w.writeAll("    .minimum_zig_version = \"0.12.0\",\n");
+        try w.writeAll("    .paths = .{\n");
+        for (static_files) |name| {
+            if (std.mem.eql(u8, name, ".gitignore")) continue;
+            try w.print("        \"{s}\",\n", .{name});
         }
-        try src_dir.copyFile("zigwin32.build.zig", out_dir, "build.zig", .{});
-
-        {
-            var zon = try out_dir.createFile("build.zig.zon", .{});
-            defer zon.close();
-            try zon.writer().print(
-                \\.{{
-                \\    .name = "zigwin32",
-                \\    .version = "{s}",
-                \\    .minimum_zig_version = "0.12.0",
-                \\    .paths = .{{
-                \\        "build.zig",
-                \\        "build.zig.zon",
-                \\        "win32",
-                \\        "win32.zig",
-                \\        "LICENSE",
-                \\        "README.md",
-                \\    }},
-                \\}}
-                \\
-                , .{ version }
-            );
-        }
+        try w.writeAll("        \"build.zig.zon\",\n");
+        try w.writeAll("        \"win32\",\n");
+        try w.writeAll("        \"win32.zig\",\n");
+        try w.writeAll("    },\n");
+        try w.writeAll("}\n");
     }
     print_time_summary = true;
-
-    try run("git status", &.{"git", "-C", zigwin32_repo, "status"});
-
     return 0;
 }
 
-fn fatalSuggestNewVersion(version: []const u8, zigwin32_repo: []const u8) noreturn {
-    fatal(
-        \\If {s} a new version/branch, create it with:
-        \\    git -C {s} checkout 6f193db913584e59a366d94553d8271a8d160309 -b {0s}
-        \\
-        , .{version, zigwin32_repo},
-    );
+fn installStaticFile(out_dir: std.fs.Dir, comptime name: []const u8) !void {
+    const file = try out_dir.createFile(name, .{});
+    defer file.close();
+    // NOTE: it's important that we use @embedFile here so that the genzig
+    //       executable tracks changes to these files
+    try file.writer().writeAll(@embedFile("static/" ++ name));
 }
 
 fn childProcFailed(term: std.process.Child.Term) bool {
@@ -3150,26 +3065,6 @@ pub fn FmtLower(comptime buffer_size: comptime_int) type {
 }
 pub fn fmtLower(s: []const u8, comptime buffer_size: comptime_int) FmtLower(buffer_size) {
     return .{ .s = s };
-}
-
-fn cleanDir(dir: std.fs.Dir, sub_path: []const u8) !void {
-    try dir.deleteTree(sub_path);
-    const MAX_ATTEMPTS = 30;
-    var attempt: u32 = 1;
-    while (true) : (attempt += 1) {
-        if (attempt > MAX_ATTEMPTS)
-            fatal("failed to delete '{s}' after {} attempts", .{ sub_path, MAX_ATTEMPTS });
-
-        // ERROR: windows.OpenFile is not handling error.Unexpected NTSTATUS=0xc0000056
-        dir.makeDir(sub_path) catch |e| switch (e) {
-            else => {
-                std.debug.print("[DEBUG] makedir failed with {}\n", .{e});
-                //std.process.exit(0xff);
-                continue;
-            },
-        };
-        break;
-    }
 }
 
 fn withoutCrLen(s: []const u8) usize {
