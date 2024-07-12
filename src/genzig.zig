@@ -1713,13 +1713,16 @@ fn generateTypeDefinition(
     } else if (std.mem.eql(u8, kind, "FunctionPointer")) {
         if (funcPtrHasDependencyLoop(pool_name.slice)) {
             try writer.line("// TODO: this function pointer causes dependency loop problems, so it's stubbed out");
-            try writer.linef("{s}switch (@import(\"builtin\").zig_backend) {{ " ++
-                ".stage1 => fn() callconv(@import(\"std\").os.windows.WINAPI) void" ++
-                ", else => *const fn() callconv(@import(\"std\").os.windows.WINAPI) void" ++
-                "}}{s}", .{ def_prefix, def_suffix });
+            try writer.linef(
+                "{s}*const fn() callconv(@import(\"std\").os.windows.WINAPI) void{s}",
+                .{ def_prefix, def_suffix },
+            );
             return;
         }
-        try generateFunction(sdk_file, writer, type_obj, .{ .ptr = .{ .both = .{ .def_prefix = def_prefix, .def_suffix = def_suffix } } });
+        try generateFunction(sdk_file, writer, type_obj, .{ .ptr = .{
+            .def_prefix = def_prefix,
+            .def_suffix = def_suffix,
+        }});
         try sdk_file.tmp_func_ptr_workaround_list.append(pool_name);
     } else if (std.mem.eql(u8, kind, "Com")) {
         try generateCom(sdk_file, writer, type_obj, arches, pool_name, def_prefix);
@@ -2359,10 +2362,10 @@ fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap
             const count = method_conflicts.get(method_name) orelse 0;
             try method_conflicts.put(method_name, count + 1);
             writer.depth += 2;
-            try generateFunction(sdk_file, writer, method_node_ptr.object, .{ .com = .{ .both = .{
-                .symbol_suffix = if (count == 0) null else count,
+            try generateFunction(sdk_file, writer, method_node_ptr.object, .{ .com = .{
+                .symbol_suffix = .{ .maybe_number = if (count == 0) null else count },
                 .self_type = com_pool_name.slice,
-            } } });
+            }});
             writer.depth -= 2;
         }
     }
@@ -2577,19 +2580,30 @@ const funcs_with_issues = std.StaticStringMap(void).initComptime(.{
 const ArchCaseContext = enum { outside_arch_case, inside_arch_case };
 const FuncPtrKind = union(enum) {
     fixed: void,
-    ptr: union(enum) {
-        stage1,
-        not_stage1,
-        both: struct { def_prefix: []const u8, def_suffix: []const u8 },
+    ptr: struct {
+        def_prefix: []const u8,
+        def_suffix: []const u8,
     },
-    com: union(enum) {
-        stage1: struct { self_type: []const u8 },
-        not_stage1: struct { self_type: []const u8 },
-        both: struct {
-            symbol_suffix: ?u8,
-            self_type: []const u8,
-        },
+    com: struct {
+        self_type: []const u8,
+        symbol_suffix: MaybeNumberSuffix,
     },
+};
+
+const MaybeNumberSuffix = struct {
+    maybe_number: ?u8,
+    pub fn format(
+        self: MaybeNumberSuffix,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = fmt;
+        _ = options;
+        if (self.maybe_number) |number| {
+            try writer.print("{}", .{number});
+        }
+    }
 };
 
 fn generateArchPrefix(writer: *CodeWriter, module_depth: u2, arches: ArchFlags, prefix: []const u8) !void {
@@ -2727,47 +2741,10 @@ fn generateFunction(
             // note the casing only matters on case-sensitive filesystems
             try writer.linef("pub extern \"{s}\" fn {p}(", .{ fmtLower(dll_import, 100), std.zig.fmtId(func_name_tmp) });
         },
-        .ptr => |ptr_data_union| switch (ptr_data_union) {
-            .stage1 => try writer.line(".stage1 => fn("),
-            .not_stage1 => try writer.line("else => *const fn("),
-            .both => |ptr_data| {
-                try writer.linef("{s}switch (@import(\"builtin\").zig_backend) {{", .{ptr_data.def_prefix});
-                writer.depth += 1;
-                try generateFunction(sdk_file, writer, function_obj, .{ .ptr = .stage1 });
-                try generateFunction(sdk_file, writer, function_obj, .{ .ptr = .not_stage1 });
-                writer.depth -= 1;
-                try writer.linef("}} {s}", .{ptr_data.def_suffix});
-                return;
-            },
-        },
-        .com => |com_data_union| {
-            const self_type = blk: {
-                switch (com_data_union) {
-                    .stage1 => |com_data| {
-                        try writer.line(".stage1 => fn(");
-                        break :blk com_data.self_type;
-                    },
-                    .not_stage1 => |com_data| {
-                        try writer.line("else => *const fn(");
-                        break :blk com_data.self_type;
-                    },
-                    .both => |com_data| {
-                        if (com_data.symbol_suffix) |s| {
-                            try writer.writef("{s}{}", .{ func_name_tmp, s }, .{ .nl = false });
-                        } else {
-                            try writer.writef("{p}", .{std.zig.fmtId(func_name_tmp)}, .{ .nl = false });
-                        }
-                        try writer.write(": switch (@import(\"builtin\").zig_backend) {", .{ .start = .mid });
-                        writer.depth += 1;
-                        try generateFunction(sdk_file, writer, function_obj, .{ .com = .{ .stage1 = .{ .self_type = com_data.self_type } } });
-                        try generateFunction(sdk_file, writer, function_obj, .{ .com = .{ .not_stage1 = .{ .self_type = com_data.self_type } } });
-                        writer.depth -= 1;
-                        try writer.line("},");
-                        return;
-                    },
-                }
-            };
-            try writer.linef("    self: *const {s},", .{self_type});
+        .ptr => |ptr_data| try writer.linef("{s}*const fn(", .{ptr_data.def_prefix}),
+        .com => |com_data| {
+            try writer.linef("{p}{}: *const fn(", .{std.zig.fmtId(func_name_tmp), com_data.symbol_suffix});
+            try writer.linef("    self: *const {s},", .{com_data.self_type});
         },
     }
 
@@ -2784,10 +2761,7 @@ fn generateFunction(
     }
     const term = switch (func_kind) {
         .fixed => ";",
-        .ptr => |ptr_data| switch (ptr_data) {
-            .stage1, .not_stage1 => ",",
-            .both => @panic("code bug"),
-        },
+        .ptr => |ptr_data| ptr_data.def_suffix,
         .com => ",",
     };
     try writer.writef("{s}", .{term}, .{ .start = .mid });
