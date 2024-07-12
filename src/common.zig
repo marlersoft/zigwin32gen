@@ -115,3 +115,26 @@ fn gitInit(repo: []const u8) !void {
     });
     try std.fs.cwd().rename(tmp_repo, repo);
 }
+
+pub fn gitStatusPorcelain(allocator: std.mem.Allocator, repo: []const u8) ![]const u8 {
+    const argv = [_][]const u8 {
+        "git",
+        "-C", repo,
+        "status",
+        "--porcelain",
+    };
+    std.log.info("{}", .{fmtArgv(&argv)});
+    const result = try std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = &argv,
+    });
+    defer allocator.free(result.stderr);
+    errdefer allocator.free(result.stdout);
+
+    if (result.stderr.len > 0) {
+        try std.io.getStdErr().writer().writeAll(result.stderr);
+    }
+    if (childProcFailed(result.term))
+        fatal("git status {}", .{fmtTerm(result.term)});
+    return result.stdout;
+}

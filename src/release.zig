@@ -244,6 +244,16 @@ pub fn main() !u8 {
         std.fs.cwd(), zigwin32_repo,
     );
 
+    {
+        const status = try common.gitStatusPorcelain(allocator, zigwin32_repo);
+        defer allocator.free(status);
+        const trimmed = std.mem.trimRight(u8, status, "\r\n");
+        if (trimmed.len == 0) {
+            std.log.info("this commit has no changes to release", .{});
+            std.process.exit(0);
+        }
+    }
+
     try common.run(allocator, "git status", &.{
         "git", "-C", zigwin32_repo, "status"
     });
@@ -266,29 +276,11 @@ pub fn main() !u8 {
 
     // verify we are now in a clean state
     {
-        const argv = [_][]const u8 {
-            "git",
-            "-C", zigwin32_repo,
-            "status",
-            "--porcelain",
-        };
-        std.log.info("{}", .{common.fmtArgv(&argv)});
-        const result = try std.process.Child.run(.{
-            .allocator = allocator,
-            .argv = &argv,
-        });
-        defer {
-            allocator.free(result.stderr);
-            allocator.free(result.stdout);
-        }
-        if (result.stderr.len > 0) {
-            try std.io.getStdErr().writer().writeAll(result.stderr);
-        }
-        if (common.childProcFailed(result.term))
-            fatal("git status {}", .{common.fmtTerm(result.term)});
-        if (result.stdout.len != 0) fatal(
+        const status = try common.gitStatusPorcelain(allocator, zigwin32_repo);
+        defer allocator.free(status);
+        if (status.len != 0) fatal(
             "git status is showing the following changes after a commit!\n{s}\n",
-            .{result.stdout},
+            .{status},
         );
     }
 
