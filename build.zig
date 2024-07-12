@@ -16,15 +16,33 @@ comptime {
 pub fn build(b: *Build) !void {
     patchstep.init(b.allocator);
 
-    const pass1_step = b.step("pass1", "Only perform pass1 of zig binding generation (generates pass1.json)");
-    const gen_step = b.step("gen", "Generate the bindings");
+    const default_steps = "install diff unittest";
+    b.default_step = b.step(
+        "default",
+        "The default step, equivalent to: " ++ default_steps,
+    );
     const unittest_step = b.step("unittest", "Unit test the generated bindings");
-    b.default_step = unittest_step;
+    const desc_line_prefix = [_]u8{ ' ' } **  31;
+    const diff_step = b.step("diff", (
+        "Updates 'diffrepo' then installs the latest generated\n" ++ desc_line_prefix ++
+        "files so they can be diffed via git."
+    ));
+    addDefaultStepDeps(b, default_steps);
+
+    {
+        const release_step = b.step("release", "Generate the bindings and run tests for a release");
+        release_step.dependOn(unittest_step);
+        release_step.dependOn(b.getInstallStep());
+    }
+
+    const pass1_step = b.step(
+        "pass1",
+        "Only perform pass1 of zig binding generation." ++ desc_line_prefix ++
+        "(generates pass1.json in .zig-cache)",
+    );
+    const gen_step = b.step("gen", "Generate the bindings (in .zig-cache)");
     const examples_step = b.step("examples", "Build/run examples. Use -j1 to run one at a time");
     const optimize = b.standardOptimizeOption(.{});
-    const release_step = b.step("release", "Generate the bindings and run tests for a release");
-
-    release_step.dependOn(unittest_step);
 
     const win32json_dep = b.dependency("win32json", .{});
 
@@ -68,20 +86,32 @@ pub fn build(b: *Build) !void {
         &PrintLazyPath.create(b, gen_out_dir).step
     );
 
-    // Not meant to be added to the default install step, only
-    // meant to install just the zigwin32 bindings using a
-    // custom install directory.
+    b.installDirectory(.{
+        .source_dir = gen_out_dir,
+        .install_dir = .prefix,
+        .install_subdir = ".",
+    });
+
     {
-        const install = b.addInstallDirectory(.{
-            .source_dir = gen_out_dir,
-            .install_dir = .prefix,
-            .install_subdir = ".",
+        const diff_exe = b.addExecutable(.{
+            .name = "diff",
+            .root_source_file = b.path("src/diff.zig"),
+            .target = b.host,
+            .optimize = .Debug,
         });
-        b.step(
-            "install-zigwin32",
-            "Install Generated Zigwin32 Bindings",
-        ).dependOn(&install.step);
-        release_step.dependOn(&install.step);
+        const diff = b.addRunArtifact(diff_exe);
+        // fetches from zigwin32 github and also modifies the contents
+        // of the 'diffrepo' subdirectory so definitely has side effects
+        diff.has_side_effects = true;
+        diff.addArg("--zigbuild");
+        // make this a normal string arg, we don't want the build system
+        // trying to hash this as an input or something
+        diff.addArg(b.pathFromRoot("diffrepo"));
+        diff.addDirectoryArg(gen_out_dir);
+        if (b.args) |args| {
+            diff.addArgs(args);
+        }
+        diff_step.dependOn(&diff.step);
     }
 
     {
@@ -198,5 +228,15 @@ fn addExample(
                 examples_step.dependOn(&run_cmd.step);
             }
         }
+    }
+}
+
+fn addDefaultStepDeps(b: *std.Build, default_steps: []const u8) void {
+    var it = std.mem.tokenize(u8, default_steps, " ");
+    while (it.next()) |step_name| {
+        const step = b.top_level_steps.get(step_name) orelse std.debug.panic(
+            "step '{s}' not added yet", .{step_name}
+        );
+        b.default_step.dependOn(&step.step);
     }
 }
