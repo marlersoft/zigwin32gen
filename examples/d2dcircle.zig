@@ -87,7 +87,7 @@ fn MainWindowCreateGraphicsResources(self: *MainWindow) HRESULT
 
         const size = D2D_SIZE_U{ .width = @intCast(rc.right), .height = @intCast(rc.bottom) };
 
-        hr = self.pFactory.?.ID2D1Factory_CreateHwndRenderTarget(
+        hr = self.pFactory.?.CreateHwndRenderTarget(
             &D2D1.RenderTargetProperties(),
             &D2D1.HwndRenderTargetProperties(self.base.m_hwnd.?, size),
             &self.pRenderTarget,
@@ -147,7 +147,7 @@ fn MainWindowResize(self: *MainWindow) void
 
         const size = D2D_SIZE_U{ .width = @intCast(rc.right), .height = @intCast(rc.bottom) };
 
-        _ = renderTarget.ID2D1HwndRenderTarget_Resize(&size);
+        _ = renderTarget.Resize(&size);
         self.CalculateLayout();
         _ = win32.InvalidateRect(self.base.m_hwnd.?, null, win32.FALSE);
     }

@@ -35,39 +35,39 @@ pub fn getDefaultDevice() !void {
 
     var device: ?*win32.IMMDevice = undefined;
     {
-        const status = enumerator.?.IMMDeviceEnumerator_GetDefaultAudioEndpoint(win32.EDataFlow.eCapture, win32.ERole.eCommunications, &device);
+        const status = enumerator.?.GetDefaultAudioEndpoint(win32.EDataFlow.eCapture, win32.ERole.eCommunications, &device);
         if (win32.FAILED(status)) {
             log("DEVICE STATUS: {d}", .{status});
             return error.Fail;
         }
     }
     defer _ = device.?.IUnknown_Release(); // No such method
-    
+
     var properties: ?*win32.IPropertyStore = undefined;
     {
-        const status = device.?.IMMDevice_OpenPropertyStore(win32.STGM_READ, &properties);
+        const status = device.?.OpenPropertyStore(win32.STGM_READ, &properties);
         if (win32.FAILED(status)) {
             log("DEVICE PROPS: {d}", .{status});
             return error.Fail;
         }
     }
-    
+
     var count: u32 = 0;
     {
-        const status = properties.?.IPropertyStore_GetCount(&count);
+        const status = properties.?.GetCount(&count);
         if (win32.FAILED(status)) {
             log("GetCount failed: {d}", .{status});
             return error.Fail;
         }
     }
-    
+
     var index: u32 = 0;
     while (index < count - 1) : (index += 1) {
         var propKey: win32.PROPERTYKEY = undefined;
 
         log("index: {d}", .{index});
         {
-            const status = properties.?.IPropertyStore_GetAt(index, &propKey);
+            const status = properties.?.GetAt(index, &propKey);
             if (win32.FAILED(status)) {
                 log("Failed to getAt {x}", .{status});
                 return error.Fail;
@@ -77,7 +77,7 @@ pub fn getDefaultDevice() !void {
 
         var propValue: win32.PROPVARIANT = undefined;
         // The following line fails with a stack trace (pasted below)
-        const status = properties.?.IPropertyStore_GetValue(&propKey, &propValue);
+        const status = properties.?.GetValue(&propKey, &propValue);
         _ = status;
     }
 

@@ -222,7 +222,8 @@ const SdkFile = struct {
     func_exports: StringPoolArrayHashMap(void),
     // this field is only needed to workaround: https://github.com/ziglang/zig/issues/4476
     tmp_func_ptr_workaround_list: ArrayList(StringPool.Val),
-    param_names_to_avoid_map_get_fn: std.StaticStringMap(void),
+    method_conflict_map: std.StaticStringMap(void),
+    param_conflict_map: std.StaticStringMap(void),
     not_null_funcs: json.ObjectMap,
     not_null_funcs_applied: StringPool.HashMap(void),
     union_pointer_funcs: json.ObjectMap,
@@ -759,7 +760,8 @@ fn readAndGenerateApiFile(root_module: *Module, out_dir: std.fs.Dir, json_basena
         .type_exports = StringPoolArrayHashMap(void).init(allocator),
         .func_exports = StringPoolArrayHashMap(void).init(allocator),
         .tmp_func_ptr_workaround_list = ArrayList(StringPool.Val).init(allocator),
-        .param_names_to_avoid_map_get_fn = getParamNamesToAvoidMapGetFn(json_name),
+        .method_conflict_map = getMethodConflictMap(json_name),
+        .param_conflict_map = getParamConflictMap(json_name),
         .not_null_funcs = not_null_funcs,
         .not_null_funcs_applied = StringPool.HashMap(void).init(allocator),
         .union_pointer_funcs = union_pointer_funcs,
@@ -2295,8 +2297,18 @@ fn generateEnum(
     }
 }
 
-fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap, arches: ArchFlags, com_pool_name: StringPool.Val, def_prefix: []const u8) !void {
-    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8{ "Kind", "Name", "Platform", "Architectures", "Guid", "Attrs", "Interface", "Methods" }, sdk_file);
+fn generateCom(
+    sdk_file: *SdkFile,
+    writer: *CodeWriter,
+    type_obj: json.ObjectMap,
+    arches: ArchFlags,
+    com_pool_name: StringPool.Val,
+    def_prefix: []const u8,
+) !void {
+    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8{
+        "Kind", "Name", "Platform", "Architectures",
+        "Guid", "Attrs", "Interface", "Methods",
+    }, sdk_file);
 
     const com_optional_guid: ?[]const u8 = switch (try jsonObjGetRequired(type_obj, "Guid", sdk_file)) {
         .null => null,
@@ -2343,6 +2355,21 @@ fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap
     try writer.line("    pub const VTable = extern struct {");
     var maybe_iface_formatter: ?TypeRefFormatter = null;
 
+    // some COM objects have methods with the same name and only differ in parameter types
+    const method_conflict_suffixes = try allocator.alloc(ConflictSuffix, com_methods.items.len);
+    defer allocator.free(method_conflict_suffixes);
+
+    {
+        var conflict_count_map = StringHashMap(u8).init(allocator);
+        defer conflict_count_map.deinit();
+        for (com_methods.items, method_conflict_suffixes) |*method_node_ptr, *conflict_suffix| {
+            const method_name = (try jsonObjGetRequired(method_node_ptr.object, "Name", sdk_file)).string;
+            const count = conflict_count_map.get(method_name) orelse 0;
+            try conflict_count_map.put(method_name, count + 1);
+            conflict_suffix.* = .{ .conflict_count = count };
+        }
+    }
+
     if (skip) {
         try writer.line("        _: *opaque{}, // just a placeholder because this COM type is skipped");
     } else {
@@ -2357,17 +2384,10 @@ fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap
             try writer.write(".VTable,", .{ .start = .mid });
         }
 
-        // some COM objects have methods with the same name and only differ in parameter types
-        var method_conflicts = StringHashMap(u8).init(allocator);
-        defer method_conflicts.deinit();
-
-        for (com_methods.items) |*method_node_ptr| {
-            const method_name = (try jsonObjGetRequired(method_node_ptr.object, "Name", sdk_file)).string;
-            const count = method_conflicts.get(method_name) orelse 0;
-            try method_conflicts.put(method_name, count + 1);
+        for (com_methods.items, method_conflict_suffixes) |*method_node_ptr, conflict_suffix| {
             writer.depth += 2;
             try generateFunction(sdk_file, writer, method_node_ptr.object, .{ .com = .{
-                .symbol_suffix = .{ .maybe_number = if (count == 0) null else count },
+                .conflict_suffix = conflict_suffix,
                 .self_type = com_pool_name.slice,
             }});
             writer.depth -= 2;
@@ -2391,77 +2411,129 @@ fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap
     // Generate wrapper methods for every entry in the vtable
     try writer.line("    pub fn MethodMixin(comptime T: type) type { return struct {");
     if (maybe_iface_formatter) |iface_formatter| {
-        // For now we're putting this inside a sub-struct to avoid name conflicts
         try writer.write("        pub usingnamespace ", .{ .nl = false });
         try generateTypeRef(sdk_file, writer, iface_formatter);
         try writer.write(".MethodMixin(T);", .{ .start = .mid });
     }
     if (!skip) {
-        for (com_methods.items) |*method_node_ptr| {
-            const method_obj = method_node_ptr.object;
-            const method_name = (try jsonObjGetRequired(method_obj, "Name", sdk_file)).string;
-            const return_type = (try jsonObjGetRequired(method_obj, "ReturnType", sdk_file)).object;
-            const params = (try jsonObjGetRequired(method_obj, "Params", sdk_file)).array;
+        writer.depth += 1;
+        try generateComMethods(
+            sdk_file, writer, arches, com_pool_name.slice, .mixin,
+            com_methods, method_conflict_suffixes, .prefix_name_with_com_type,
+        );
+        writer.depth -= 1;
+    }
+    try writer.line("    };}");
 
-            const count = method_conflicts.get(method_name) orelse 0;
-            try method_conflicts.put(method_name, count + 1);
+    if (maybe_iface_formatter) |iface_formatter| {
+        try writer.write("    pub usingnamespace ", .{ .nl = false });
+        try generateTypeRef(sdk_file, writer, iface_formatter);
+        try writer.write(".MethodMixin(@This());", .{ .start = .mid });
+    }
+    try generateComMethods(
+        sdk_file, writer, arches, com_pool_name.slice, .concrete,
+        com_methods, method_conflict_suffixes, .bare_name,
+    );
+    try writer.line("};");
+}
 
-            try writer.line("        // NOTE: method is namespaced with interface name to avoid conflicts for now");
-            try writer.writef("        pub fn {s}_{s}", .{ com_pool_name, method_name }, .{ .nl = false });
-            if (count > 0) {
-                try writer.writef("{}", .{count}, .{ .start = .mid, .nl = false });
-            }
-            try writer.write("(self: *const T", .{ .start = .mid, .nl = false });
-            for (params.items) |*param_node_ptr| {
-                const param_obj = param_node_ptr.object;
-                try jsonObjEnforceKnownFieldsOnly(param_obj, &[_][]const u8{ "Name", "Type", "Attrs" }, sdk_file);
-                const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).string;
-                const param_type = (try jsonObjGetRequired(param_obj, "Type", sdk_file)).object;
-                // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                // TODO: set null_modifier properly
-                // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                const modifiers = ParamModifiers{};
-                const param_options = processParamAttrs(
-                    (try jsonObjGetRequired(param_obj, "Attrs", sdk_file)).array,
-                    .var_decl,
-                    modifiers,
-                    sdk_file,
-                );
-                // NOTE: don't need to call addTypeRefs because it was already called in generateFunction above
-                const param_type_formatter = fmtTypeRef(param_type, arches, param_options, null);
-                if (param_options.optional_bytes_param_index) |bytes_param_index| {
-                    _ = bytes_param_index; // NOTE: can't print this because we are currently inline
-                    //try writer.linef("// TODO: what to do with BytesParamIndex {}?", .{bytes_param_index});
-                }
-                try writer.writef(", {s}: ", .{fmtParamId(param_name, sdk_file.param_names_to_avoid_map_get_fn)}, .{ .start = .mid, .nl = false });
-                try generateTypeRef(sdk_file, writer, param_type_formatter);
-            }
-            // NOTE: don't need to call addTypeRefs because it was already called in generateFunction above
-            // TODO: set is_const, in and out properly
+fn generateComMethods(
+    sdk_file: *SdkFile,
+    writer: *CodeWriter,
+    arches: ArchFlags,
+    com_type_name: []const u8,
+    context: enum { mixin, concrete },
+    com_methods: json.Array,
+    conflict_suffixes : []ConflictSuffix,
+    namespace: enum { bare_name, prefix_name_with_com_type },
+) !void {
+    const self = switch (context) {
+        .mixin => "T",
+        .concrete => com_type_name,
+    };
+    for (com_methods.items, conflict_suffixes) |*method_node_ptr, conflict_suffix| {
+        const method_obj = method_node_ptr.object;
+        const method_name = (try jsonObjGetRequired(method_obj, "Name", sdk_file)).string;
+        const return_type = (try jsonObjGetRequired(method_obj, "ReturnType", sdk_file)).object;
+        const params = (try jsonObjGetRequired(method_obj, "Params", sdk_file)).array;
+
+        switch (namespace) {
+            .bare_name => {},
+            .prefix_name_with_com_type => {
+                try writer.line("    // NOTE: method is namespaced with interface name to avoid conflicts for now");
+            },
+        }
+        try writer.write("    pub fn ", .{ .nl = false });
+        {
+            var buf: [100]u8 = undefined;
+            const prefixes: struct { []const u8, []const u8  } = switch (namespace) {
+                .bare_name => .{ "", "" },
+                .prefix_name_with_com_type => .{ com_type_name, "_" },
+            };
+            const full_method_name = try std.fmt.bufPrint(&buf, "{s}{s}{s}{}", .{
+                prefixes[0],
+                prefixes[1],
+                method_name,
+                conflict_suffix,
+            });
+            try writer.writef("{}", .{
+                fmtComMethodId(full_method_name, sdk_file.method_conflict_map),
+            }, .{ .start = .mid, .nl = false });
+        }
+        try writer.writef("(self: *const {s}", .{self}, .{ .start = .mid, .nl = false });
+        for (params.items) |*param_node_ptr| {
+            const param_obj = param_node_ptr.object;
+            try jsonObjEnforceKnownFieldsOnly(param_obj, &[_][]const u8{ "Name", "Type", "Attrs" }, sdk_file);
+            const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).string;
+            const param_type = (try jsonObjGetRequired(param_obj, "Type", sdk_file)).object;
             // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             // TODO: set null_modifier properly
             // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-            const return_type_formatter = fmtTypeRef(return_type, arches, .{ .reason = .var_decl, .is_const = false, .in = false, .out = false, .anon_types = null, .null_modifier = 0 }, null);
-            try writer.write(") callconv(.Inline) ", .{ .start = .mid, .nl = false });
-            try generateTypeRef(sdk_file, writer, return_type_formatter);
-            try writer.write(" {", .{ .start = .mid });
-            try writer.writef("            return @as(*const {s}.VTable, @ptrCast(self.vtable)).{p}(@as(*const {0s}, @ptrCast(self))", .{ com_pool_name, std.zig.fmtId(method_name) }, .{ .nl = false });
-            for (params.items) |*param_node_ptr| {
-                const param_obj = param_node_ptr.object;
-                const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).string;
-                try writer.writef(", {s}", .{fmtParamId(param_name, sdk_file.param_names_to_avoid_map_get_fn)}, .{ .start = .mid, .nl = false });
+            const modifiers = ParamModifiers{};
+            const param_options = processParamAttrs(
+                (try jsonObjGetRequired(param_obj, "Attrs", sdk_file)).array,
+                .var_decl,
+                modifiers,
+                sdk_file,
+            );
+            // NOTE: don't need to call addTypeRefs because it was already called in generateFunction above
+            const param_type_formatter = fmtTypeRef(param_type, arches, param_options, null);
+            if (param_options.optional_bytes_param_index) |bytes_param_index| {
+                _ = bytes_param_index; // NOTE: can't print this because we are currently inline
+                //try writer.linef("// TODO: what to do with BytesParamIndex {}?", .{bytes_param_index});
             }
-            try writer.write(");", .{ .start = .any });
-            try writer.line("        }");
+            try writer.writef(", {s}: ", .{
+                fmtParamId(param_name, sdk_file.param_conflict_map)
+            }, .{ .start = .mid, .nl = false });
+            try generateTypeRef(sdk_file, writer, param_type_formatter);
         }
+        // NOTE: don't need to call addTypeRefs because it was already called in generateFunction above
+        // TODO: set is_const, in and out properly
+        // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        // TODO: set null_modifier properly
+        // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        const return_type_formatter = fmtTypeRef(return_type, arches, .{ .reason = .var_decl, .is_const = false, .in = false, .out = false, .anon_types = null, .null_modifier = 0 }, null);
+        try writer.write(") callconv(.Inline) ", .{ .start = .mid, .nl = false });
+        try generateTypeRef(sdk_file, writer, return_type_formatter);
+        try writer.write(" {", .{ .start = .mid });
+        try writer.writef(
+            "        return @as(*const {s}.VTable, @ptrCast(self.vtable)).{p}(@as(*const {0s}, @ptrCast(self))",
+            .{ com_type_name, std.zig.fmtId(method_name) }, .{ .nl = false },
+        );
+        for (params.items) |*param_node_ptr| {
+            const param_obj = param_node_ptr.object;
+            const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).string;
+            try writer.writef(", {s}", .{
+                fmtParamId(param_name, sdk_file.param_conflict_map)
+            }, .{ .start = .mid, .nl = false });
+        }
+        try writer.write(");", .{ .start = .any });
+        try writer.line("    }");
     }
-    try writer.line("    };}");
-    try writer.line("    pub usingnamespace MethodMixin(@This());");
-    try writer.line("};");
 }
 
 fn processParamAttrs(
@@ -2597,22 +2669,22 @@ const FuncPtrKind = union(enum) {
     },
     com: struct {
         self_type: []const u8,
-        symbol_suffix: MaybeNumberSuffix,
+        conflict_suffix: ConflictSuffix,
     },
 };
 
-const MaybeNumberSuffix = struct {
-    maybe_number: ?u8,
+const ConflictSuffix = struct {
+    conflict_count: u8,
     pub fn format(
-        self: MaybeNumberSuffix,
+        self: ConflictSuffix,
         comptime fmt: []const u8,
         options: std.fmt.FormatOptions,
         writer: anytype,
     ) !void {
         _ = fmt;
         _ = options;
-        if (self.maybe_number) |number| {
-            try writer.print("{}", .{number});
+        if (self.conflict_count > 0) {
+            try writer.print("{}", .{self.conflict_count});
         }
     }
 };
@@ -2754,7 +2826,7 @@ fn generateFunction(
         },
         .ptr => |ptr_data| try writer.linef("{s}*const fn(", .{ptr_data.def_prefix}),
         .com => |com_data| {
-            try writer.linef("{p}{}: *const fn(", .{std.zig.fmtId(func_name_tmp), com_data.symbol_suffix});
+            try writer.linef("{p}{}: *const fn(", .{std.zig.fmtId(func_name_tmp), com_data.conflict_suffix});
             try writer.linef("    self: *const {s},", .{com_data.self_type});
         },
     }
@@ -2938,8 +3010,16 @@ pub fn jsonEql(a: json.Value, b: json.Value) bool {
     }
 }
 
+fn getMethodConflictMap(json_name: []const u8) std.StaticStringMap(void) {
+    if (std.mem.eql(u8, json_name, "Media.MediaPlayer")) return std.StaticStringMap(void).initComptime(.{
+        .{ "Guid" }, // conflicts with an imported type
+    });
+    return std.StaticStringMap(void).initComptime(.{});
+}
+
 // NOTE: this data could be generated automatically by doing a first pass
-fn getParamNamesToAvoidMapGetFn(json_name: []const u8) std.StaticStringMap(void) {
+fn getParamConflictMap(json_name: []const u8) std.StaticStringMap(void) {
+    @setEvalBranchQuota(9999);
     if (std.mem.eql(u8, json_name, "System.Mmc")) return std.StaticStringMap(void).initComptime(.{
         .{ "Node" },
         .{ "Nodes" },
@@ -2959,11 +3039,36 @@ fn getParamNamesToAvoidMapGetFn(json_name: []const u8) std.StaticStringMap(void)
         .{ "Extensions" },
         .{ "ContextMenu" },
         .{ "Guid" },
+        .{ "IsScopeNode" },
+        .{ "Enable" },
+        .{ "Name" },
+        .{ "IsSortColumn" },
+        .{ "IsSelected" },
+    });
+    if (std.mem.eql(
+        u8, json_name, "System.SettingsManagementInfrastructure"
+    )) return std.StaticStringMap(void).initComptime(.{
+        .{ "Attributes" },
+        .{ "Children" },
+        .{ "Settings" },
     });
     if (std.mem.eql(u8, json_name, "UI.TabletPC")) return std.StaticStringMap(void).initComptime(.{
         .{ "EventMask" },
         .{ "InkDisplayMode" },
         .{ "Guid" },
+        .{ "Item" },
+        .{ "DoesPropertyExist" },
+        .{ "Transform" },
+        .{ "ToString" },
+        .{ "CanPaste" },
+        .{ "AlternatesFromSelection" },
+        .{ "GetStrokesFromStrokeRanges" },
+        .{ "GetStrokesFromTextRange" },
+        .{ "AlternatesWithConstantPropertyValues" },
+        .{ "GetStrokesFromStrokeRanges" },
+        .{ "GetStrokesFromTextRange" },
+        .{ "AlternatesWithConstantPropertyValues" },
+        .{ "RemoveWord" },
     });
     if (std.mem.eql(u8, json_name, "UI.Shell")) return std.StaticStringMap(void).initComptime(.{
         .{ "Folder" },
@@ -2973,9 +3078,16 @@ fn getParamNamesToAvoidMapGetFn(json_name: []const u8) std.StaticStringMap(void)
         .{ "ScanModulationTypes" },
         .{ "AnalogVideoStandard" },
         .{ "Guid" },
+        .{ "HideCursor" },
+        .{ "UseScanLine" },
+        .{ "UseOverlayStretch" },
+        .{ "UseWhenFullScreen" },
+        .{ "UseScanLine" },
+        .{ "UseWhenFullScreen" },
     });
     if (std.mem.eql(u8, json_name, "Media.Speech")) return std.StaticStringMap(void).initComptime(.{
         .{ "Guid" },
+        .{ "Alternates" },
     });
     if (std.mem.eql(u8, json_name, "Media.MediaFoundation")) return std.StaticStringMap(void).initComptime(.{
         .{ "Guid" },
@@ -2983,12 +3095,34 @@ fn getParamNamesToAvoidMapGetFn(json_name: []const u8) std.StaticStringMap(void)
     if (std.mem.eql(u8, json_name, "System.Diagnostics.Debug")) return std.StaticStringMap(void).initComptime(.{
         .{ "Guid" },
         .{ "Symbol" },
+        .{ "Request" },
+        .{ "Exception" },
+    });
+    if (std.mem.eql(u8, json_name, "System.RemoteDesktop")) return std.StaticStringMap(void).initComptime(.{
+        .{ "DisplayIOCtl" },
+    });
+    if (std.mem.eql(u8, json_name, "System.Performance")) return std.StaticStringMap(void).initComptime(.{
+        .{ "Stop" },
+    });
+    if (std.mem.eql(u8, json_name, "Web.MsHtml")) return std.StaticStringMap(void).initComptime(.{
+        .{ "item" },
+        .{ "Gravity" },
+    });
+    if (std.mem.eql(u8, json_name, "Data.Xml.MsXml")) return std.StaticStringMap(void).initComptime(.{
+        .{ "hasFeature" },
+    });
+    if (std.mem.eql(u8, json_name, "UI.Controls.RichEdit")) return std.StaticStringMap(void).initComptime(.{
+        .{ "Notify" },
+    });
+    if (std.mem.eql(u8, json_name, "Devices.ImageAcquisition")) return std.StaticStringMap(void).initComptime(.{
+        .{ "hResult" },
     });
     return std.StaticStringMap(void).initComptime(.{});
 }
 
-pub const FmtParamId = struct {
+pub const FmtId = struct {
     s: []const u8,
+    kind: enum { param, com_method },
     avoid_map: std.StaticStringMap(void),
     pub fn format(
         self: @This(),
@@ -2999,14 +3133,22 @@ pub const FmtParamId = struct {
         _ = fmt;
         _ = options;
         if (self.avoid_map.get(self.s)) |_| {
-            try writer.print("_param_{s}", .{self.s});
+            const prefix: []const u8 = switch (self.kind) {
+                .param => "_param_",
+                .com_method => "_method_",
+            };
+            try writer.print("{s}{s}", .{prefix, self.s});
         } else {
             try writer.print("{}", .{std.zig.fmtId(self.s)});
         }
     }
 };
-pub fn fmtParamId(s: []const u8, avoid_map: std.StaticStringMap(void)) FmtParamId {
-    return FmtParamId{ .s = s, .avoid_map = avoid_map };
+
+pub fn fmtParamId(s: []const u8, avoid_map: std.StaticStringMap(void)) FmtId {
+    return FmtId{ .s = s, .kind = .param, .avoid_map = avoid_map };
+}
+pub fn fmtComMethodId(s: []const u8, avoid_map: std.StaticStringMap(void)) FmtId {
+    return FmtId{ .s = s, .kind = .com_method, .avoid_map = avoid_map };
 }
 
 pub fn FmtLower(comptime buffer_size: comptime_int) type {

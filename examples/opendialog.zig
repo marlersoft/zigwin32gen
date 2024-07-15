@@ -68,7 +68,7 @@ pub export fn wWinMain(__: win32.HINSTANCE, _: ?win32.HINSTANCE, ___: [*:0]u16, 
 
     const file_path = blk: {
         var file_path : ?[*:0]u16 = undefined;
-        const hr = pItem.?.IShellItem_GetDisplayName(win32.SIGDN_FILESYSPATH, &file_path);
+        const hr = pItem.?.GetDisplayName(win32.SIGDN_FILESYSPATH, &file_path);
         if (win32.FAILED(hr))
             fatal("GetDisplayName failed, hr={}", .{hr});
         break :blk file_path.?;
