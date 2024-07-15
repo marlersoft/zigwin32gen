@@ -2520,10 +2520,19 @@ fn generateComMethods(
         try writer.write(") callconv(.Inline) ", .{ .start = .mid, .nl = false });
         try generateTypeRef(sdk_file, writer, return_type_formatter);
         try writer.write(" {", .{ .start = .mid });
-        try writer.writef(
-            "        return @as(*const {s}.VTable, @ptrCast(self.vtable)).{p}(@as(*const {0s}, @ptrCast(self))",
-            .{ com_type_name, std.zig.fmtId(method_name) }, .{ .nl = false },
-        );
+        try writer.write("        return ", .{ .nl = false });
+        switch (context) {
+            .mixin => try writer.writef(
+                "@as(*const {s}.VTable, @ptrCast(self.vtable)).{p}(@as(*const {0s}, @ptrCast(self))",
+                .{ com_type_name, std.zig.fmtId(method_name) },
+                .{ .start = .mid, .nl = false },
+            ),
+            .concrete => try writer.writef(
+                "self.vtable.{p}(self",
+                .{ std.zig.fmtId(method_name) },
+                .{ .start = .mid, .nl = false },
+            ),
+        }
         for (params.items) |*param_node_ptr| {
             const param_obj = param_node_ptr.object;
             const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).string;
