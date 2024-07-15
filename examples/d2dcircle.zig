@@ -34,7 +34,7 @@ const BaseWindow = basewin.BaseWindow;
 
 fn SafeRelease(ppT: anytype) void {
     if (ppT.*) |t| {
-        _ = t.IUnknown_Release();
+        _ = t.IUnknown.Release();
         ppT.* = null;
     }
 }
@@ -97,7 +97,7 @@ fn MainWindowCreateGraphicsResources(self: *MainWindow) HRESULT
         {
             const color = D2D1.ColorF(.{ .r = 1, .g = 1, .b = 0});
             // TODO: how do I do this ptrCast better by using COM base type?
-            hr = self.pRenderTarget.?.ID2D1RenderTarget_CreateSolidColorBrush(&color, null, &self.pBrush);
+            hr = self.pRenderTarget.?.ID2D1RenderTarget.CreateSolidColorBrush(&color, null, &self.pBrush);
 
             if (SUCCEEDED(hr))
             {
@@ -122,14 +122,14 @@ fn MainWindowOnPaint(self: *MainWindow) void
         var ps : win32.PAINTSTRUCT = undefined;
         _ = win32.BeginPaint(self.base.m_hwnd.?, &ps);
 
-        self.pRenderTarget.?.ID2D1RenderTarget_BeginDraw();
+        self.pRenderTarget.?.ID2D1RenderTarget.BeginDraw();
 
-        self.pRenderTarget.?.ID2D1RenderTarget_Clear(&D2D1.ColorFU32(.{ .rgb = D2D1.SkyBlue }));
+        self.pRenderTarget.?.ID2D1RenderTarget.Clear(&D2D1.ColorFU32(.{ .rgb = D2D1.SkyBlue }));
         // TODO: how do I get a COM interface type to convert to a base type without
         //       an explicit cast like this?
-        self.pRenderTarget.?.ID2D1RenderTarget_FillEllipse(&self.ellipse, &self.pBrush.?.ID2D1Brush);
+        self.pRenderTarget.?.ID2D1RenderTarget.FillEllipse(&self.ellipse, &self.pBrush.?.ID2D1Brush);
 
-        hr = self.pRenderTarget.?.ID2D1RenderTarget_EndDraw(null, null);
+        hr = self.pRenderTarget.?.ID2D1RenderTarget.EndDraw(null, null);
         if (FAILED(hr) or hr == win32.D2DERR_RECREATE_TARGET)
         {
             self.DiscardGraphicsResources();

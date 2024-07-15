@@ -4,8 +4,11 @@ const json = std.json;
 const common = @import("common.zig");
 const fatal = common.fatal;
 const jsonPanicMsg = common.jsonPanicMsg;
+const jsonObjGetRequired = common.jsonObjGetRequired;
 const jsonObjEnforceKnownFieldsOnly = common.jsonObjEnforceKnownFieldsOnly;
 const fmtJson = common.fmtJson;
+
+const ComInterface = common.ComInterface;
 
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const allocator = arena.allocator();
@@ -75,6 +78,7 @@ pub fn main() !u8 {
 
     try out.writeAll("}\n");
     try buffered_writer.flush();
+    std.log.info("wrote {s}", .{out_filename});
     return 0;
 }
 
@@ -124,7 +128,7 @@ fn pass1OnJson(out: OutWriter, filename: []const u8, root_obj: json.ObjectMap) !
         } else if (std.mem.eql(u8, kind, "FunctionPointer")) {
             try writeType(out, json_obj_prefix, name, "FunctionPointer");
         } else if (std.mem.eql(u8, kind, "Com")) {
-            try writeType(out, json_obj_prefix, name, "Com");
+            try writeComType(out, filename, json_obj_prefix, type_obj, name);
         } else {
             jsonPanicMsg("{s}: unknown type Kind '{s}'", .{ filename, kind });
         }
@@ -213,10 +217,34 @@ fn generateNativeTypedef(
     jsonPanicMsg("unhandled NativeTypedef kind '{s}'", .{kind});
 }
 
-fn jsonObjGetRequired(map: json.ObjectMap, field: []const u8, file_for_error: []const u8) !json.Value {
-    return map.get(field) orelse {
-        // TODO: print file location?
-        std.log.err("{s}: json object is missing '{s}' field: {}\n", .{ file_for_error, field, fmtJson(map) });
-        common.jsonPanic();
+fn writeComType(
+    out: OutWriter,
+    filename: []const u8,
+    json_obj_prefix: []const u8,
+    type_obj: json.ObjectMap,
+    name: []const u8,
+) !void {
+    try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8{
+        "Kind", "Name", "Platform", "Architectures",
+        "Guid", "Attrs", "Interface", "Methods",
+    }, filename);
+    const iface: ?ComInterface = blk: {
+        const maybe_iface: ?json.ObjectMap = switch (try jsonObjGetRequired(type_obj, "Interface", filename)) {
+            .null => null,
+            .object => |o| o,
+            else => common.jsonPanic(),
+        };
+        if (maybe_iface) |iface| {
+            break :blk common.parseComInterface(iface, filename);
+        }
+        if (!std.mem.eql(u8, "name", "IUnknown")) {
+            std.log.warn("com type '{s}' does not have an interface (file bug if we're on the latest metadata version)", .{name});
+        }
+        break :blk null;
     };
+
+    try out.print(
+        "        {s}\"{s}\": {{\"Kind\":\"Com\",\"Interface\":{?}}}\n",
+        .{ json_obj_prefix, name,  iface },
+    );
 }

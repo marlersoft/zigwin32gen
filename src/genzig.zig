@@ -1195,7 +1195,7 @@ fn generateTypeRefRec(sdk_file: *SdkFile, writer: *CodeWriter, self: TypeRefForm
                 // this means its a nested type which are always structs/unions
                 break :blk Pass1TypeKindCategory.default;
             }).object;
-            try jsonObjEnforceKnownFieldsOnly(pass1_type_obj, &[_][]const u8{"Kind"}, sdk_file);
+            try jsonObjEnforceKnownFieldsOnly(pass1_type_obj, &[_][]const u8{"Kind", "Interface"}, sdk_file);
             const type_kind = (try jsonObjGetRequired(pass1_type_obj, "Kind", sdk_file)).string;
             break :blk pass1_type_kind_info.get(type_kind) orelse
                 jsonPanicMsg("unknown pass1 type kind '{s}'", .{type_kind});
@@ -2297,6 +2297,25 @@ fn generateEnum(
     }
 }
 
+fn getComInterface(api: []const u8, name: []const u8, sdk_file: *const SdkFile) ?json.ObjectMap {
+    const pass1_api_map = (global_pass1.get(api) orelse jsonPanicMsg(
+        "com interface inside unknown api '{s}'", .{api}
+    )).object;
+    const pass1_type_obj = (pass1_api_map.get(name) orelse jsonPanicMsg(
+        "com interface '{s}' does not exist in api '{s}'",
+        .{name, api},
+    )).object;
+    try jsonObjEnforceKnownFieldsOnly(pass1_type_obj, &[_][]const u8{"Kind", "Interface"}, sdk_file);
+    const kind = (try jsonObjGetRequired(pass1_type_obj, "Kind", sdk_file)).string;
+    jsonEnforce(std.mem.eql(u8, kind, "Com"));
+    const interface = try jsonObjGetRequired(pass1_type_obj, "Interface", sdk_file);
+    return switch (interface) {
+        .object => |o| o,
+        .null => null,
+        else => jsonPanic(),
+    };
+}
+
 fn generateCom(
     sdk_file: *SdkFile,
     writer: *CodeWriter,
@@ -2332,7 +2351,9 @@ fn generateCom(
     if (is_agile) {
         try writer.line("// This COM type is Agile, not sure what that means");
     }
-    const com_optional_iface: ?json.ObjectMap = switch (try jsonObjGetRequired(type_obj, "Interface", sdk_file)) {
+    const com_optional_iface: ?json.ObjectMap = switch (
+        try jsonObjGetRequired(type_obj, "Interface", sdk_file)
+    ) {
         .null => null,
         .object => |o| o,
         else => jsonPanic(),
@@ -2396,40 +2417,28 @@ fn generateCom(
 
     try writer.line("    };");
     try writer.linef("    vtable: *const VTable,", .{});
-    if (maybe_iface_formatter) |iface_formatter| {
-        try writer.write("    ", .{ .nl = false});
-        try generateTypeRef(sdk_file, writer, iface_formatter);
-        try writer.write(": ", .{ .start = .mid, .nl = false });
-        try generateTypeRef(sdk_file, writer, iface_formatter);
-        try writer.write(",", .{ .start = .mid });
+
+    if (com_optional_iface) |direct_iface| {
+        var next_iface: json.ObjectMap = direct_iface;
+        var com_iface = common.parseComInterface(next_iface, sdk_file.json_basename);
+        while (true) {
+            const iface_formatter = try addTypeRefs(sdk_file, arches, next_iface, .{
+                .reason = .direct_type_access,
+                .anon_types = null,
+                .null_modifier = 0,
+            }, null);
+
+            try writer.write("    ", .{ .nl = false});
+            try generateTypeRef(sdk_file, writer, iface_formatter);
+            try writer.write(": ", .{ .start = .mid, .nl = false });
+            try generateTypeRef(sdk_file, writer, iface_formatter);
+            try writer.write(",", .{ .start = .mid });
+
+            next_iface = getComInterface(com_iface.api, com_iface.name, sdk_file) orelse break;
+            com_iface = common.parseComInterface(next_iface, "pass1.json");
+        }
     }
 
-    // some COM objects have methods with the same name and only differ in parameter types
-    var method_conflicts = StringHashMap(u8).init(allocator);
-    defer method_conflicts.deinit();
-
-    // Generate wrapper methods for every entry in the vtable
-    try writer.line("    pub fn MethodMixin(comptime T: type) type { return struct {");
-    if (maybe_iface_formatter) |iface_formatter| {
-        try writer.write("        pub usingnamespace ", .{ .nl = false });
-        try generateTypeRef(sdk_file, writer, iface_formatter);
-        try writer.write(".MethodMixin(T);", .{ .start = .mid });
-    }
-    if (!skip) {
-        writer.depth += 1;
-        try generateComMethods(
-            sdk_file, writer, arches, com_pool_name.slice, .mixin,
-            com_methods, method_conflict_suffixes, .prefix_name_with_com_type,
-        );
-        writer.depth -= 1;
-    }
-    try writer.line("    };}");
-
-    if (maybe_iface_formatter) |iface_formatter| {
-        try writer.write("    pub usingnamespace ", .{ .nl = false });
-        try generateTypeRef(sdk_file, writer, iface_formatter);
-        try writer.write(".MethodMixin(@This());", .{ .start = .mid });
-    }
     try generateComMethods(
         sdk_file, writer, arches, com_pool_name.slice, .concrete,
         com_methods, method_conflict_suffixes, .bare_name,
@@ -2991,17 +3000,10 @@ pub fn jsonObjEnforceKnownFieldsOnly(map: std.json.ObjectMap, known_fields: []co
 
 fn jsonObjGetRequired(map: json.ObjectMap, field: []const u8, file_thing: anytype) !json.Value {
     if (@TypeOf(file_thing) == *SdkFile or @TypeOf(file_thing) == *const SdkFile)
-        return jsonObjGetRequiredImpl(map, field, file_thing.json_basename);
+        return common.jsonObjGetRequired(map, field, file_thing.json_basename);
     if (@TypeOf(file_thing) == []const u8)
-        return jsonObjGetRequiredImpl(map, field, file_thing);
+        return common.jsonObjGetRequired(map, field, file_thing);
     @compileError("unhandled file_thing type: " ++ @typeName(@TypeOf(file_thing)));
-}
-fn jsonObjGetRequiredImpl(map: json.ObjectMap, field: []const u8, file_for_error: []const u8) !json.Value {
-    return map.get(field) orelse {
-        // TODO: print file location?
-        std.debug.print("{s}: json object is missing '{s}' field: {}\n", .{ file_for_error, field, fmtJson(map) });
-        jsonPanic();
-    };
 }
 
 // TODO: this should probably be in std.json

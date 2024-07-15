@@ -14,7 +14,7 @@ const win32 = struct {
 };
 
 pub fn getDefaultDevice() !void {
-    var enumerator: ?*win32.IMMDeviceEnumerator = undefined;
+    var enumerator: *win32.IMMDeviceEnumerator = undefined;
 
     {
         const status = win32.CoCreateInstance(
@@ -29,19 +29,23 @@ pub fn getDefaultDevice() !void {
             return error.Fail;
         }
     }
-    defer _ = enumerator.?.IUnknown_Release();
+    defer _ = enumerator.IUnknown.Release();
 
-    log("pre enumerator: {}", .{enumerator.?});
+    log("pre enumerator: {}", .{enumerator});
 
     var device: ?*win32.IMMDevice = undefined;
     {
-        const status = enumerator.?.GetDefaultAudioEndpoint(win32.EDataFlow.eCapture, win32.ERole.eCommunications, &device);
+        const status = enumerator.GetDefaultAudioEndpoint(
+            win32.EDataFlow.eCapture,
+            win32.ERole.eCommunications,
+            &device,
+        );
         if (win32.FAILED(status)) {
             log("DEVICE STATUS: {d}", .{status});
             return error.Fail;
         }
     }
-    defer _ = device.?.IUnknown_Release(); // No such method
+    defer _ = device.?.IUnknown.Release(); // No such method
 
     var properties: ?*win32.IPropertyStore = undefined;
     {

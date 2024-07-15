@@ -50,21 +50,21 @@ pub export fn wWinMain(__: win32.HINSTANCE, _: ?win32.HINSTANCE, ___: [*:0]u16, 
             fatal("create FileOpenDialog failed, hr={}", .{hr});
         break :blk dialog.?;
     };
-    defer _ = dialog.IUnknown_Release();
+    defer _ = dialog.IUnknown.Release();
 
     {
-        const hr = dialog.IModalWindow_Show(null);
+        const hr = dialog.IModalWindow.Show(null);
         if (win32.FAILED(hr))
             fatal("show dialog failed, hr={}", .{hr});
     }
 
     var pItem: ?*win32.IShellItem = undefined;
     {
-        const hr = dialog.IFileDialog_GetResult(&pItem);
+        const hr = dialog.IFileDialog.GetResult(&pItem);
         if (win32.FAILED(hr))
             fatal("get dialog result failed, hr={}", .{hr});
     }
-    defer _ = pItem.?.IUnknown_Release();
+    defer _ = pItem.?.IUnknown.Release();
 
     const file_path = blk: {
         var file_path : ?[*:0]u16 = undefined;

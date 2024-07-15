@@ -123,6 +123,57 @@ pub fn fmtJson(value: anytype) JsonFormatter {
     return .{ .value = value };
 }
 
+pub fn jsonObjGetRequired(
+    map: std.json.ObjectMap,
+    field: []const u8,
+    file_for_error: []const u8,
+) !std.json.Value {
+    return map.get(field) orelse {
+        // TODO: print file location?
+        std.log.err("{s}: json object is missing '{s}' field: {}\n", .{ file_for_error, field, fmtJson(map) });
+        jsonPanic();
+    };
+}
+
+pub const ComInterface = struct {
+    name: []const u8,
+    api: []const u8,
+    pub fn format(
+        self: ComInterface,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = fmt;
+        _ = options;
+        try writer.print(
+            "{{\"Kind\":\"ApiRef\",\"Name\":\"{s}\",\"TargetKind\":\"Com\",\"Api\":\"{s}\",\"Parents\":[]}}",
+            .{ self.name, self.api },
+        );
+    }
+};
+pub fn parseComInterface(
+    type_ref: std.json.ObjectMap,
+    file_for_error: []const u8,
+) ComInterface {
+    const kind = (try jsonObjGetRequired(type_ref, "Kind", file_for_error)).string;
+    jsonEnforce(std.mem.eql(u8, kind, "ApiRef"));
+    try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8{
+        "Kind", "Name", "TargetKind", "Api", "Parents"
+    }, file_for_error);
+    const tmp_name = (try jsonObjGetRequired(type_ref, "Name", file_for_error)).string;
+    const target_kind = (try jsonObjGetRequired(type_ref, "TargetKind", file_for_error)).string;
+    const api = (try jsonObjGetRequired(type_ref, "Api", file_for_error)).string;
+    const parents = (try jsonObjGetRequired(type_ref, "Parents", file_for_error)).array;
+    jsonEnforce(std.mem.eql(u8, target_kind, "Com"));
+    jsonEnforce(parents.items.len == 0);
+    return .{
+        .api = api,
+        .name = tmp_name
+    };
+}
+
+
 // TODO: this should be in std, maybe  method on HashMap?
 pub fn allocMapValues(alloc: std.mem.Allocator, comptime T: type, map: anytype) ![]T {
     var values = try alloc.alloc(T, map.count());
