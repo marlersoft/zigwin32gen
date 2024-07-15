@@ -90,14 +90,14 @@ fn MainWindowCreateGraphicsResources(self: *MainWindow) HRESULT
         hr = self.pFactory.?.ID2D1Factory_CreateHwndRenderTarget(
             &D2D1.RenderTargetProperties(),
             &D2D1.HwndRenderTargetProperties(self.base.m_hwnd.?, size),
-            // TODO: figure out how to cast a COM object to a base type
-            @ptrCast(&self.pRenderTarget));
+            &self.pRenderTarget,
+        );
 
         if (SUCCEEDED(hr))
         {
             const color = D2D1.ColorF(.{ .r = 1, .g = 1, .b = 0});
             // TODO: how do I do this ptrCast better by using COM base type?
-            hr = self.pRenderTarget.?.ID2D1RenderTarget_CreateSolidColorBrush(&color, null, @ptrCast(&self.pBrush));
+            hr = self.pRenderTarget.?.ID2D1RenderTarget_CreateSolidColorBrush(&color, null, &self.pBrush);
 
             if (SUCCEEDED(hr))
             {
@@ -127,7 +127,7 @@ fn MainWindowOnPaint(self: *MainWindow) void
         self.pRenderTarget.?.ID2D1RenderTarget_Clear(&D2D1.ColorFU32(.{ .rgb = D2D1.SkyBlue }));
         // TODO: how do I get a COM interface type to convert to a base type without
         //       an explicit cast like this?
-        self.pRenderTarget.?.ID2D1RenderTarget_FillEllipse(&self.ellipse, @ptrCast(self.pBrush));
+        self.pRenderTarget.?.ID2D1RenderTarget_FillEllipse(&self.ellipse, &self.pBrush.?.ID2D1Brush);
 
         hr = self.pRenderTarget.?.ID2D1RenderTarget_EndDraw(null, null);
         if (FAILED(hr) or hr == win32.D2DERR_RECREATE_TARGET)
@@ -187,8 +187,11 @@ fn MainWindowHandleMessage(self: *MainWindow, uMsg: u32, wParam: WPARAM, lParam:
         // TODO: Should I need to case &self.pFactory to **anyopaque? Maybe
         //       D2D2CreateFactory probably doesn't have the correct type yet?
         if (FAILED(win32.D2D1CreateFactory(
-            win32.D2D1_FACTORY_TYPE_SINGLE_THREADED, win32.IID_ID2D1Factory, null, @ptrCast(&self.pFactory))))
-        {
+            win32.D2D1_FACTORY_TYPE_SINGLE_THREADED,
+            win32.IID_ID2D1Factory,
+            null,
+            @ptrCast(&self.pFactory),
+        ))) {
             return -1;  // Fail CreateWindowEx.
         }
         return 0;

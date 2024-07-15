@@ -2339,17 +2339,21 @@ fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap
         try sdk_file.const_exports.append(iid_pool);
     }
 
-    try writer.linef("{s}extern struct {{", .{def_prefix});
+    try writer.linef("{s}extern union {{", .{def_prefix});
     try writer.line("    pub const VTable = extern struct {");
-    var iface_formatter: TypeRefFormatter = undefined;
+    var maybe_iface_formatter: ?TypeRefFormatter = null;
 
     if (skip) {
         try writer.line("        _: *opaque{}, // just a placeholder because this COM type is skipped");
     } else {
         if (com_optional_iface) |iface| {
-            iface_formatter = try addTypeRefs(sdk_file, arches, iface, .{ .reason = .direct_type_access, .anon_types = null, .null_modifier = 0 }, null);
+            maybe_iface_formatter = try addTypeRefs(sdk_file, arches, iface, .{
+                .reason = .direct_type_access,
+                .anon_types = null,
+                .null_modifier = 0,
+            }, null);
             try writer.write("        base: ", .{ .nl = false });
-            try generateTypeRef(sdk_file, writer, iface_formatter);
+            try generateTypeRef(sdk_file, writer, maybe_iface_formatter.?);
             try writer.write(".VTable,", .{ .start = .mid });
         }
 
@@ -2372,6 +2376,13 @@ fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap
 
     try writer.line("    };");
     try writer.linef("    vtable: *const VTable,", .{});
+    if (maybe_iface_formatter) |iface_formatter| {
+        try writer.write("    ", .{ .nl = false});
+        try generateTypeRef(sdk_file, writer, iface_formatter);
+        try writer.write(": ", .{ .start = .mid, .nl = false });
+        try generateTypeRef(sdk_file, writer, iface_formatter);
+        try writer.write(",", .{ .start = .mid });
+    }
 
     // some COM objects have methods with the same name and only differ in parameter types
     var method_conflicts = StringHashMap(u8).init(allocator);
@@ -2379,13 +2390,13 @@ fn generateCom(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap
 
     // Generate wrapper methods for every entry in the vtable
     try writer.line("    pub fn MethodMixin(comptime T: type) type { return struct {");
+    if (maybe_iface_formatter) |iface_formatter| {
+        // For now we're putting this inside a sub-struct to avoid name conflicts
+        try writer.write("        pub usingnamespace ", .{ .nl = false });
+        try generateTypeRef(sdk_file, writer, iface_formatter);
+        try writer.write(".MethodMixin(T);", .{ .start = .mid });
+    }
     if (!skip) {
-        if (com_optional_iface) |_| {
-            // For now we're putting this inside a sub-struct to avoid name conflicts
-            try writer.write("        pub usingnamespace ", .{ .nl = false });
-            try generateTypeRef(sdk_file, writer, iface_formatter);
-            try writer.write(".MethodMixin(T);", .{ .start = .mid });
-        }
         for (com_methods.items) |*method_node_ptr| {
             const method_obj = method_node_ptr.object;
             const method_name = (try jsonObjGetRequired(method_obj, "Name", sdk_file)).string;
