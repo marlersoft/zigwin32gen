@@ -2938,23 +2938,6 @@ pub fn jsonEql(a: json.Value, b: json.Value) bool {
     }
 }
 
-// TODO: would be nice to have isBuiltinId in the std lib
-const builtin_ids = std.StaticStringMap(void).initComptime(.{
-    .{ "type" },
-});
-pub fn isBuiltinId(s: []const u8) bool {
-    if (builtin_ids.get(s)) |_| return true;
-    if (s.len >= 2 and (s[0] == 'i' or s[0] == 'u')) {
-        if (blk: {
-            for (s[1..]) |e| {
-                if (e > '9' or e < '0') break :blk false;
-            }
-            break :blk true;
-        }) return true;
-    }
-    return false;
-}
-
 // NOTE: this data could be generated automatically by doing a first pass
 fn getParamNamesToAvoidMapGetFn(json_name: []const u8) std.StaticStringMap(void) {
     if (std.mem.eql(u8, json_name, "System.Mmc")) return std.StaticStringMap(void).initComptime(.{
@@ -3017,10 +3000,8 @@ pub const FmtParamId = struct {
         _ = options;
         if (self.avoid_map.get(self.s)) |_| {
             try writer.print("_param_{s}", .{self.s});
-        } else if (isBuiltinId(self.s)) {
-            try writer.print("{s}_", .{self.s});
         } else {
-            try writer.print("{p}", .{std.zig.fmtId(self.s)});
+            try writer.print("{}", .{std.zig.fmtId(self.s)});
         }
     }
 };
