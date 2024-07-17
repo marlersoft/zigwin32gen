@@ -28,6 +28,9 @@ var global_symbol_pool = StringPool.init(allocator);
 var global_symbol_none: StringPool.Val = undefined;
 var global_symbol_None: StringPool.Val = undefined;
 
+var global_notnull_filename: []const u8 = undefined;
+var global_union_pointers_filename: []const u8 = undefined;
+
 var global_pass1: json.ObjectMap = undefined;
 var global_notnull: json.ObjectMap = undefined;
 var global_union_pointers: json.ObjectMap = undefined;
@@ -256,9 +259,6 @@ const SdkFile = struct {
     }
 };
 
-const notnull_filename: []const u8 = "notnull.json";
-const union_pointers_filename: []const u8 = "unionpointers.json";
-
 const Times = struct {
     parse_time_millis: i64 = 0,
     read_time_millis: i64 = 0,
@@ -286,13 +286,15 @@ pub fn main() !u8 {
     // don't care about freeing args
 
     const cmd_args = all_args[1..];
-    if (cmd_args.len != 3) {
-        std.log.err("expected 3 cmdline arguments but got {}", .{cmd_args.len});
+    if (cmd_args.len != 5) {
+        std.log.err("expected 5 cmdline arguments but got {}", .{cmd_args.len});
         return 1;
     }
-    const win32json_path = cmd_args[0];
-    const pass1_json = cmd_args[1];
-    const zigwin32_out_path = cmd_args[2];
+    global_notnull_filename = cmd_args[0];
+    global_union_pointers_filename = cmd_args[1];
+    const win32json_path = cmd_args[2];
+    const pass1_json = cmd_args[3];
+    const zigwin32_out_path = stripDotDir(cmd_args[4]);
 
     var win32json_dir = try std.fs.cwd().openDir(win32json_path, .{});
     defer win32json_dir.close();
@@ -306,9 +308,10 @@ pub fn main() !u8 {
         fatal("version '{s}' is not a valid semantic version: {s}", .{version, @errorName(err)});
 
     global_pass1 = try readJson(pass1_json);
-    global_notnull = try readJson(notnull_filename);
-    global_union_pointers = try readJson(union_pointers_filename);
+    global_notnull = try readJson(global_notnull_filename);
+    global_union_pointers = try readJson(global_union_pointers_filename);
 
+    try cleanDir(std.fs.cwd(), zigwin32_out_path);
     var out_dir = try std.fs.cwd().openDir(zigwin32_out_path, .{});
     defer out_dir.close();
     try out_dir.makeDir("win32");
@@ -401,6 +404,12 @@ pub fn main() !u8 {
     }
     print_time_summary = true;
     return 0;
+}
+
+fn stripDotDir(path: []const u8) []const u8 {
+    if (std.mem.endsWith(u8, path, "/."))
+        return path[0 .. path.len - 2];
+    return path;
 }
 
 fn installStaticFile(out_dir: std.fs.Dir, comptime name: []const u8) !void {
@@ -733,17 +742,33 @@ fn readAndGenerateApiFile(root_module: *Module, out_dir: std.fs.Dir, json_basena
     var not_null_funcs = empty_json_object_map;
     if (global_notnull.get(json_name)) |*api_node| {
         const api_obj = api_node.object;
-        try jsonObjEnforceKnownFieldsOnly(api_obj, &[_][]const u8{"Functions"}, notnull_filename);
-        not_null_funcs = (try jsonObjGetRequired(api_obj, "Functions", notnull_filename)).object;
+        try jsonObjEnforceKnownFieldsOnly(
+            api_obj,
+            &[_][]const u8{"Functions"},
+            global_notnull_filename,
+        );
+        not_null_funcs = (try jsonObjGetRequired(api_obj, "Functions", global_notnull_filename)).object;
     }
     var union_pointer_funcs = empty_json_object_map;
     var union_pointer_consts = std.StringArrayHashMap(void).init(allocator);
     if (global_union_pointers.get(json_name)) |*api_node| {
         const api_obj = api_node.object;
-        try jsonObjEnforceKnownFieldsOnly(api_obj, &[_][]const u8{"Functions", "Constants"}, union_pointers_filename);
-        union_pointer_funcs = (try jsonObjGetRequired(api_obj, "Functions", union_pointers_filename)).object;
+        try jsonObjEnforceKnownFieldsOnly(
+            api_obj,
+            &[_][]const u8{"Functions", "Constants"},
+            global_union_pointers_filename,
+        );
+        union_pointer_funcs = (try jsonObjGetRequired(
+            api_obj,
+            "Functions",
+            global_union_pointers_filename,
+        )).object;
 
-        const constant_union_pointers = (try jsonObjGetRequired(api_obj, "Constants", union_pointers_filename)).array;
+        const constant_union_pointers = (try jsonObjGetRequired(
+            api_obj,
+            "Constants",
+            global_union_pointers_filename,
+        )).array;
         for (constant_union_pointers.items) |*constant| {
             try union_pointer_consts.put(constant.string, {});
         }
@@ -3204,5 +3229,26 @@ fn removeCr(comptime s: []const u8) [withoutCrLen(s):0]u8 {
         }
         std.debug.assert(i == len);
         return without_cr;
+    }
+}
+
+fn cleanDir(dir: std.fs.Dir, sub_path: []const u8) !void {
+    std.log.info("cleandir '{s}'", .{sub_path});
+    try dir.deleteTree(sub_path);
+    const MAX_ATTEMPTS = 30;
+    var attempt: u32 = 1;
+    while (true) : (attempt += 1) {
+        if (attempt > MAX_ATTEMPTS)
+            fatal("failed to delete '{s}' after {} attempts", .{ sub_path, MAX_ATTEMPTS });
+
+        // ERROR: windows.OpenFile is not handling error.Unexpected NTSTATUS=0xc0000056
+        dir.makeDir(sub_path) catch |e| switch (e) {
+            else => {
+                std.debug.print("[DEBUG] makedir failed with {}\n", .{e});
+                //std.process.exit(0xff);
+                continue;
+            },
+        };
+        break;
     }
 }

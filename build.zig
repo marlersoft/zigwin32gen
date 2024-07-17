@@ -72,6 +72,8 @@ pub fn build(b: *Build) !void {
         });
         const run = b.addRunArtifact(exe);
         patchstep.patch(&run.step, runStepMake);
+        run.addFileArg(b.path("notnull.json"));
+        run.addFileArg(b.path("unionpointers.json"));
         run.addDirectoryArg(win32json_dep.path(""));
         run.addFileArg(pass1_out_file);
         const out_dir = run.addOutputDirectoryArg(".");
