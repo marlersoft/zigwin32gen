@@ -34,6 +34,14 @@ var global_union_pointers_filename: []const u8 = undefined;
 var global_pass1: json.ObjectMap = undefined;
 var global_notnull: json.ObjectMap = undefined;
 var global_union_pointers: json.ObjectMap = undefined;
+var global_com_overloads: std.StringHashMap(ComTypeMap) = undefined;
+const MissingOverload = struct {
+    api: []const u8,
+    com_type: []const u8,
+    method: []const u8,
+    method_index: u16,
+};
+var global_missing_com_overloads: std.ArrayListUnmanaged(MissingOverload) = .{};
 
 const ValueType = enum {
     Byte,
@@ -233,6 +241,7 @@ const SdkFile = struct {
     union_pointer_funcs_applied: StringPool.HashMap(void),
     union_pointer_consts: std.StringArrayHashMap(void),
     union_pointer_consts_applied: StringPool.HashMap(void),
+    com_type_overloads: ?std.StringHashMap(ComMethodMap),
 
     pub fn getWin32DirImportPrefix(self: SdkFile) []const u8 {
         return import_prefix_table[self.depth];
@@ -286,15 +295,16 @@ pub fn main() !u8 {
     // don't care about freeing args
 
     const cmd_args = all_args[1..];
-    if (cmd_args.len != 5) {
-        std.log.err("expected 5 cmdline arguments but got {}", .{cmd_args.len});
+    if (cmd_args.len != 6) {
+        std.log.err("expected 6 cmdline arguments but got {}", .{cmd_args.len});
         return 1;
     }
     global_notnull_filename = cmd_args[0];
     global_union_pointers_filename = cmd_args[1];
     const win32json_path = cmd_args[2];
     const pass1_json = cmd_args[3];
-    const zigwin32_out_path = stripDotDir(cmd_args[4]);
+    const com_overloads_filename = cmd_args[4];
+    const zigwin32_out_path = stripDotDir(cmd_args[5]);
 
     var win32json_dir = try std.fs.cwd().openDir(win32json_path, .{});
     defer win32json_dir.close();
@@ -310,6 +320,9 @@ pub fn main() !u8 {
     global_pass1 = try readJson(pass1_json);
     global_notnull = try readJson(global_notnull_filename);
     global_union_pointers = try readJson(global_union_pointers_filename);
+    global_com_overloads = std.StringHashMap(ComTypeMap).init(allocator);
+    // no need to free
+    try readComOverloads(&global_com_overloads, com_overloads_filename);
 
     try cleanDir(std.fs.cwd(), zigwin32_out_path);
     var out_dir = try std.fs.cwd().openDir(zigwin32_out_path, .{});
@@ -370,6 +383,25 @@ pub fn main() !u8 {
             var file = try api_dir.openFile(api_json_basename, .{});
             defer file.close();
             try readAndGenerateApiFile(root_module, out_win32_dir, api_json_basename, file);
+        }
+
+        if (global_missing_com_overloads.items.len > 0) {
+            std.log.err(
+                "missing {} entries in ComOverloads.txt, copy/paste the following to it:",
+                .{global_missing_com_overloads.items.len},
+            );
+            for (global_missing_com_overloads.items) |overload| {
+                try std.io.getStdErr().writer().print(
+                    "{s} {s} {s} {} TODO_FILL_IN_SUFFIX\n",
+                    .{
+                        overload.api,
+                        overload.com_type,
+                        overload.method,
+                        overload.method_index,
+                    },
+                );
+            }
+            std.process.exit(0xff);
         }
 
         for (static_zig_files ++ &[_][]const u8{
@@ -533,6 +565,65 @@ fn readJson(filename: []const u8) !std.json.ObjectMap {
         break :blk try json.parseFromSlice(json.Value, allocator, json_content, .{});
     };
     return json_tree.value.object;
+}
+
+const ComSuffixMap = std.AutoHashMap(u16, []const u8);
+const ComMethodMap = std.StringHashMap(ComSuffixMap);
+const ComTypeMap = std.StringHashMap(ComMethodMap);
+
+fn readComOverloads(api_map: *std.StringHashMap(ComTypeMap), filename: []const u8) !void {
+    var file = try std.fs.cwd().openFile(filename, .{});
+    defer file.close();
+    const content = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
+    // don't free, we'll keep the strings around
+    var lines = std.mem.splitScalar(u8, content, '\n');
+    var line_number: u32 = 1;
+    while (lines.next()) |line| : (line_number += 1) {
+        if (line.len == 0) continue;
+        var field_it = std.mem.tokenize(u8, line, " ");
+        const api = field_it.next() orelse continue;
+        const com_type = field_it.next() orelse fatal(
+            "{s} line {}: missing type field", .{filename, line_number}
+        );
+        const method = field_it.next() orelse fatal(
+            "{s} line {}: missing method field", .{filename, line_number}
+        );
+        const method_index_str = field_it.next() orelse fatal(
+            "{s} line {}: missing method index field", .{filename, line_number}
+        );
+        const method_index = std.fmt.parseInt(u16, method_index_str, 10) catch |err| fatal(
+            "{s} line {}: invalid method index '{s}': {s}",
+            .{filename, line_number, method_index_str, @errorName(err)},
+        );
+        const suffix = field_it.next() orelse fatal(
+            "{s} line {}: missing suffix field", .{filename, line_number}
+        );
+        if (field_it.next()) |f| fatal(
+            "{s} line {}: has extra field '{s}'", .{filename, line_number, f},
+        );
+
+        const api_entry = try api_map.getOrPut(api);
+        if (!api_entry.found_existing) {
+            api_entry.value_ptr.* = ComTypeMap.init(allocator);
+        }
+        const type_map = api_entry.value_ptr;
+        const type_entry = try type_map.getOrPut(com_type);
+        if (!type_entry.found_existing) {
+            type_entry.value_ptr.* = ComMethodMap.init(allocator);
+        }
+        const method_map = type_entry.value_ptr;
+        const method_entry = try method_map.getOrPut(method);
+        if (!method_entry.found_existing) {
+            method_entry.value_ptr.* = ComSuffixMap.init(allocator);
+        }
+        const suffix_map = method_entry.value_ptr;
+        const suffix_entry = try suffix_map.getOrPut(method_index);
+        if (suffix_entry.found_existing) fatal(
+            "api '{s}' type '{s}' method '{s}' has duplicate entries for index {}",
+            .{ api, com_type, method, method_index},
+        );
+        suffix_entry.value_ptr.* = suffix;
+    }
 }
 
 fn gatherSdkFiles(sdk_files: *ArrayList(*SdkFile), module: *Module) anyerror!void {
@@ -793,6 +884,7 @@ fn readAndGenerateApiFile(root_module: *Module, out_dir: std.fs.Dir, json_basena
         .union_pointer_funcs_applied = StringPool.HashMap(void).init(allocator),
         .union_pointer_consts = union_pointer_consts,
         .union_pointer_consts_applied = StringPool.HashMap(void).init(allocator),
+        .com_type_overloads = global_com_overloads.get(json_name),
     };
 
     const generate_start_millis = std.time.milliTimestamp();
@@ -2401,19 +2493,59 @@ fn generateCom(
     try writer.line("    pub const VTable = extern struct {");
     var maybe_iface_formatter: ?TypeRefFormatter = null;
 
-    // some COM objects have methods with the same name and only differ in parameter types
-    const method_conflict_suffixes = try allocator.alloc(ConflictSuffix, com_methods.items.len);
-    defer allocator.free(method_conflict_suffixes);
+    const maybe_overloads: ?ComMethodMap = if (sdk_file.com_type_overloads) |m| m.get(com_pool_name.slice) else null;
 
     {
-        var conflict_count_map = StringHashMap(u8).init(allocator);
-        defer conflict_count_map.deinit();
-        for (com_methods.items, method_conflict_suffixes) |*method_node_ptr, *conflict_suffix| {
+        const ComSymbolState = enum { unique, conflicts };
+        var method_set = StringHashMap(ComSymbolState).init(allocator);
+        defer method_set.deinit();
+
+        for (com_methods.items) |*method_node_ptr| {
             const method_name = (try jsonObjGetRequired(method_node_ptr.object, "Name", sdk_file)).string;
-            const count = conflict_count_map.get(method_name) orelse 0;
-            try conflict_count_map.put(method_name, count + 1);
-            conflict_suffix.* = .{ .conflict_count = count };
+            const entry = try method_set.getOrPut(method_name);
+            if (entry.found_existing) {
+                entry.value_ptr.* = .conflicts;
+            } else {
+                entry.value_ptr.* = .unique;
+            }
         }
+
+        const count_before = global_missing_com_overloads.items.len;
+        for (com_methods.items, 0..) |*method_node_ptr, method_index| {
+            const method_name = (try jsonObjGetRequired(method_node_ptr.object, "Name", sdk_file)).string;
+
+            const maybe_overload_suffixes: ?ComSuffixMap = if (maybe_overloads) |o|
+                o.get(method_name)
+            else
+                null;
+            const state = method_set.get(method_name).?;
+            switch (state) {
+                .unique => {
+                    if (maybe_overload_suffixes)  |_| fatal(
+                        "api '{s}' COM type '{s}' method '{s}' has a unique name but also entries in ComOverloads.txt?",
+                        .{ sdk_file.json_name, com_pool_name, method_name },
+                    );
+                },
+                .conflicts => {
+                    const have_overload = blk: {
+                        const overload_suffixes = maybe_overload_suffixes orelse break :blk false;
+                        const suffix  = overload_suffixes.get(@intCast(method_index)) orelse break :blk false;
+                        std.debug.assert(suffix.len > 0);
+                        break :blk true;
+                    };
+                    if (!have_overload) {
+                        try global_missing_com_overloads.append(allocator, .{
+                            .api = sdk_file.json_name,
+                            .com_type = com_pool_name.slice,
+                            .method = try allocator.dupe(u8, method_name),
+                            .method_index = @intCast(method_index),
+                        });
+                    }
+                },
+            }
+        }
+        if (count_before != global_missing_com_overloads.items.len)
+            return;
     }
 
     if (skip) {
@@ -2430,11 +2562,23 @@ fn generateCom(
             try writer.write(".VTable,", .{ .start = .mid });
         }
 
-        for (com_methods.items, method_conflict_suffixes) |*method_node_ptr, conflict_suffix| {
+        for (com_methods.items, 0..) |*method_node_ptr, method_index| {
             writer.depth += 2;
-            try generateFunction(sdk_file, writer, method_node_ptr.object, .{ .com = .{
-                .conflict_suffix = conflict_suffix,
+
+            const method_obj = method_node_ptr.object;
+            const method_name = (try jsonObjGetRequired(method_obj, "Name", sdk_file)).string;
+            const suffix: []const u8 = blk: {
+                const overload = maybe_overloads orelse break :blk "";
+                const suffixes = overload.get(method_name) orelse break :blk "";
+                break :blk suffixes.get(@intCast(method_index)) orelse fatal(
+                    "method '{s}' is missing suffix for method at index {}",
+                    .{ method_name, method_index },
+                );
+            };
+
+            try generateFunction(sdk_file, writer, method_obj, .{ .com = .{
                 .self_type = com_pool_name.slice,
+                .suffix = suffix,
             }});
             writer.depth -= 2;
         }
@@ -2465,8 +2609,8 @@ fn generateCom(
     }
 
     try generateComMethods(
-        sdk_file, writer, arches, com_pool_name.slice, .concrete,
-        com_methods, method_conflict_suffixes, .bare_name,
+        sdk_file, writer, arches, com_pool_name.slice,
+        com_methods, maybe_overloads,
     );
     try writer.line("};");
 }
@@ -2476,45 +2620,56 @@ fn generateComMethods(
     writer: *CodeWriter,
     arches: ArchFlags,
     com_type_name: []const u8,
-    context: enum { mixin, concrete },
     com_methods: json.Array,
-    conflict_suffixes : []ConflictSuffix,
-    namespace: enum { bare_name, prefix_name_with_com_type },
+    maybe_overloads: ?ComMethodMap,
 ) !void {
-    const self = switch (context) {
-        .mixin => "T",
-        .concrete => com_type_name,
-    };
-    for (com_methods.items, conflict_suffixes) |*method_node_ptr, conflict_suffix| {
+    if (maybe_overloads) |overloads| {
+        var overload_it = overloads.iterator();
+        while (overload_it.next()) |overload_entry| {
+            const name = overload_entry.key_ptr.*;
+            try writer.writef(
+                "    pub const {s} = @compileError(\"COM method '{0s}' must be called using one of the following overload names:",
+                .{name},
+                .{ .nl = false },
+            );
+            var suffix_it = overload_entry.value_ptr.iterator();
+            var sep: []const u8 = "";
+            while (suffix_it.next()) |suffix_entry| {
+                const suffix = suffix_entry.value_ptr.*;
+                try writer.writef("{s} {s}{s}", .{sep, name, suffix}, .{ .start = .mid, .nl = false });
+                sep = ",";
+            }
+            try writer.write("\");", .{ .start = .mid });
+        }
+    }
+
+    for (com_methods.items, 0..) |*method_node_ptr, method_index| {
         const method_obj = method_node_ptr.object;
-        const method_name = (try jsonObjGetRequired(method_obj, "Name", sdk_file)).string;
+        const method_name_metadata = (try jsonObjGetRequired(method_obj, "Name", sdk_file)).string;
         const return_type = (try jsonObjGetRequired(method_obj, "ReturnType", sdk_file)).object;
         const params = (try jsonObjGetRequired(method_obj, "Params", sdk_file)).array;
 
-        switch (namespace) {
-            .bare_name => {},
-            .prefix_name_with_com_type => {
-                try writer.line("    // NOTE: method is namespaced with interface name to avoid conflicts for now");
-            },
-        }
         try writer.write("    pub fn ", .{ .nl = false });
-        {
-            var buf: [100]u8 = undefined;
-            const prefixes: struct { []const u8, []const u8  } = switch (namespace) {
-                .bare_name => .{ "", "" },
-                .prefix_name_with_com_type => .{ com_type_name, "_" },
-            };
-            const full_method_name = try std.fmt.bufPrint(&buf, "{s}{s}{s}{}", .{
-                prefixes[0],
-                prefixes[1],
-                method_name,
-                conflict_suffix,
-            });
-            try writer.writef("{}", .{
-                fmtComMethodId(full_method_name, sdk_file.method_conflict_map),
-            }, .{ .start = .mid, .nl = false });
-        }
-        try writer.writef("(self: *const {s}", .{self}, .{ .start = .mid, .nl = false });
+
+        const suffix: []const u8 = blk: {
+            const overload = maybe_overloads orelse break :blk "";
+            const suffixes = overload.get(method_name_metadata) orelse break :blk "";
+            break :blk suffixes.get(@intCast(method_index)) orelse fatal(
+                "method '{s}' is missing suffix for method at index {}",
+                .{ method_name_metadata, method_index },
+            );
+        };
+
+        var method_name_buf: [100]u8 = undefined;
+        const method_name = try std.fmt.bufPrint(
+            &method_name_buf,
+            "{s}{s}",
+            .{method_name_metadata, suffix},
+        );
+        try writer.writef("{}", .{
+            fmtComMethodId(method_name, sdk_file.method_conflict_map),
+        }, .{ .start = .mid, .nl = false });
+        try writer.writef("(self: *const {s}", .{com_type_name}, .{ .start = .mid, .nl = false });
         for (params.items) |*param_node_ptr| {
             const param_obj = param_node_ptr.object;
             try jsonObjEnforceKnownFieldsOnly(param_obj, &[_][]const u8{ "Name", "Type", "Attrs" }, sdk_file);
@@ -2555,18 +2710,11 @@ fn generateComMethods(
         try generateTypeRef(sdk_file, writer, return_type_formatter);
         try writer.write(" {", .{ .start = .mid });
         try writer.write("        return ", .{ .nl = false });
-        switch (context) {
-            .mixin => try writer.writef(
-                "@as(*const {s}.VTable, @ptrCast(self.vtable)).{p}(@as(*const {0s}, @ptrCast(self))",
-                .{ com_type_name, std.zig.fmtId(method_name) },
-                .{ .start = .mid, .nl = false },
-            ),
-            .concrete => try writer.writef(
-                "self.vtable.{p}(self",
-                .{ std.zig.fmtId(method_name) },
-                .{ .start = .mid, .nl = false },
-            ),
-        }
+        try writer.writef(
+            "self.vtable.{}(self",
+            .{ fmtComMethodId(method_name, sdk_file.method_conflict_map) },
+            .{ .start = .mid, .nl = false },
+        );
         for (params.items) |*param_node_ptr| {
             const param_obj = param_node_ptr.object;
             const param_name = (try jsonObjGetRequired(param_obj, "Name", sdk_file)).string;
@@ -2712,7 +2860,7 @@ const FuncPtrKind = union(enum) {
     },
     com: struct {
         self_type: []const u8,
-        conflict_suffix: ConflictSuffix,
+        suffix: []const u8,
     },
 };
 
@@ -2869,7 +3017,9 @@ fn generateFunction(
         },
         .ptr => |ptr_data| try writer.linef("{s}*const fn(", .{ptr_data.def_prefix}),
         .com => |com_data| {
-            try writer.linef("{p}{}: *const fn(", .{std.zig.fmtId(func_name_tmp), com_data.conflict_suffix});
+            var id_buf: [100]u8 = undefined;
+            const id = try std.fmt.bufPrint(&id_buf, "{s}{s}", .{func_name_tmp, com_data.suffix});
+            try writer.linef("{}: *const fn(", .{std.zig.fmtId(id)});
             try writer.linef("    self: *const {s},", .{com_data.self_type});
         },
     }
@@ -3179,6 +3329,26 @@ pub const FmtId = struct {
         }
     }
 };
+
+fn FmtOptOrEmpty(comptime T: type) type {
+    return struct {
+        opt: T,
+        pub fn format(
+            self: @This(),
+            comptime fmt: []const u8,
+            options: std.fmt.FormatOptions,
+            writer: anytype,
+        ) !void {
+            _ = options;
+            if (self.opt) |v| {
+                try writer.print(fmt, .{v});
+            }
+        }
+    };
+}
+pub fn fmtOptOrEmpty(opt: anytype) FmtOptOrEmpty(@TypeOf(opt)) {
+    return .{ .opt = opt };
+}
 
 pub fn fmtParamId(s: []const u8, avoid_map: std.StaticStringMap(void)) FmtId {
     return FmtId{ .s = s, .kind = .param, .avoid_map = avoid_map };

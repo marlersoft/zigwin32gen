@@ -16,12 +16,14 @@ comptime {
 pub fn build(b: *Build) !void {
     patchstep.init(b.allocator);
 
-    const default_steps = "install diff unittest";
+    const default_steps = "install diff test";
     b.default_step = b.step(
         "default",
         "The default step, equivalent to: " ++ default_steps,
     );
+    const test_step = b.step("test", "Run all the tests (except the examples)");
     const unittest_step = b.step("unittest", "Unit test the generated bindings");
+    test_step.dependOn(unittest_step);
     const desc_line_prefix = [_]u8{ ' ' } **  31;
     const diff_step = b.step("diff", (
         "Updates 'diffrepo' then installs the latest generated\n" ++ desc_line_prefix ++
@@ -31,7 +33,7 @@ pub fn build(b: *Build) !void {
 
     {
         const release_step = b.step("release", "Generate the bindings and run tests for a release");
-        release_step.dependOn(unittest_step);
+        release_step.dependOn(test_step);
         release_step.dependOn(b.getInstallStep());
     }
 
@@ -76,6 +78,7 @@ pub fn build(b: *Build) !void {
         run.addFileArg(b.path("unionpointers.json"));
         run.addDirectoryArg(win32json_dep.path(""));
         run.addFileArg(pass1_out_file);
+        run.addFileArg(b.path("ComOverloads.txt"));
         const out_dir = run.addOutputDirectoryArg(".");
         gen_step.dependOn(&run.step);
         break :blk out_dir;
@@ -117,12 +120,13 @@ pub fn build(b: *Build) !void {
     }
 
     {
-        const test_step = b.addTest(.{
+        const unittest = b.addTest(.{
             .root_source_file = gen_out_dir.path(b, "win32.zig"),
             .target = b.host,
             .optimize = optimize,
         });
-        unittest_step.dependOn(&test_step.step);
+        unittest.pie = true;
+        unittest_step.dependOn(&unittest.step);
     }
 
     const win32 = b.createModule(.{
@@ -143,6 +147,31 @@ pub fn build(b: *Build) !void {
     try addExample(b, arches, optimize, win32, "d2dcircle", .Windows, examples_step);
     try addExample(b, arches, optimize, win32, "opendialog", .Windows, examples_step);
     try addExample(b, arches, optimize, win32, "unionpointers", .Windows, examples_step);
+
+    {
+        const exe = b.addExecutable(.{
+            .name = "comoverload",
+            .root_source_file = b.path("test/comoverload.zig"),
+            .target = b.host,
+        });
+        exe.root_module.addImport("win32", win32);
+        const run = b.addRunArtifact(exe);
+        b.step("comoverload", "").dependOn(&run.step);
+        test_step.dependOn(&run.step);
+    }
+    {
+        const compile = b.addSystemCommand(&.{
+            b.graph.zig_exe,
+            "build-exe",
+            "--dep", "win32",
+        });
+        compile.addPrefixedFileArg("-Mroot=", b.path("test/badcomoverload.zig"));
+        compile.addPrefixedFileArg("-Mwin32=", gen_out_dir.path(b, "win32.zig"));
+        compile.addCheck(.{ .expect_stderr_match =
+            "COM method 'GetAttributeValue' must be called using one of the following overload names: GetAttributeValueString, GetAttributeValueObj, GetAttributeValuePod"
+        });
+        test_step.dependOn(&compile.step);
+    }
 }
 
 const PrintLazyPath = struct {
@@ -216,6 +245,7 @@ fn addExample(
         exe.subsystem = subsystem;
         exe.root_module.addImport("win32", win32);
         examples_step.dependOn(&exe.step);
+        exe.pie = true;
 
         const desc_suffix: []const u8 = if (cross_arch_opt) |_| "" else " for the native target";
         const build_desc = b.fmt("Build {s}{s}", .{name, desc_suffix});
