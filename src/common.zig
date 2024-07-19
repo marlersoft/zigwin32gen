@@ -61,6 +61,27 @@ pub fn formatSliceT(comptime T: type, comptime spec: []const u8, slice: []const 
 //    return .{ .slice = slice };
 //}
 
+pub fn cleanDir(dir: std.fs.Dir, sub_path: []const u8) !void {
+    std.log.info("cleandir '{s}'", .{sub_path});
+    try dir.deleteTree(sub_path);
+    const MAX_ATTEMPTS = 30;
+    var attempt: u32 = 1;
+    while (true) : (attempt += 1) {
+        if (attempt > MAX_ATTEMPTS)
+            fatal("failed to delete '{s}' after {} attempts", .{ sub_path, MAX_ATTEMPTS });
+
+        // ERROR: windows.OpenFile is not handling error.Unexpected NTSTATUS=0xc0000056
+        dir.makeDir(sub_path) catch |e| switch (e) {
+            else => {
+                std.debug.print("[DEBUG] makedir failed with {}\n", .{e});
+                //std.process.exit(0xff);
+                continue;
+            },
+        };
+        break;
+    }
+}
+
 pub fn jsonPanic() noreturn {
     @panic("an assumption about the json format was violated");
 }
