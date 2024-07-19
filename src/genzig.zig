@@ -93,42 +93,8 @@ const pass1_type_kind_info = std.StaticStringMap(Pass1TypeKindCategory).initComp
     .{ "FunctionPointer", .ptr },
 });
 
-const NativeType = enum {
-    Boolean,
-    SByte,
-    Byte,
-    Int16,
-    UInt16,
-    Int32,
-    UInt32,
-    Int64,
-    UInt64,
-    Char,
-    Single,
-    Double,
-    String,
-    IntPtr,
-    UIntPtr,
-    Guid,
-};
-const global_native_type_map = std.StaticStringMap(NativeType).initComptime(.{
-    .{ "Boolean", NativeType.Boolean },
-    .{ "SByte", NativeType.SByte },
-    .{ "Byte", NativeType.Byte },
-    .{ "Int16", NativeType.Int16 },
-    .{ "UInt16", NativeType.UInt16 },
-    .{ "Int32", NativeType.Int32 },
-    .{ "UInt32", NativeType.UInt32 },
-    .{ "Int64", NativeType.Int64 },
-    .{ "UInt64", NativeType.UInt64 },
-    .{ "Char", NativeType.Char },
-    .{ "Single", NativeType.Single },
-    .{ "Double", NativeType.Double },
-    .{ "String", NativeType.String },
-    .{ "IntPtr", NativeType.IntPtr },
-    .{ "UIntPtr", NativeType.UIntPtr },
-    .{ "Guid", NativeType.Guid },
-});
+const NativeType = common.NativeType;
+const global_native_type_map = common.native_type_map;
 fn nativeTypeToZigType(t: NativeType) []const u8 {
     return switch (t) {
         .Boolean => return "bool",
@@ -324,7 +290,7 @@ pub fn main() !u8 {
     // no need to free
     try readComOverloads(&global_com_overloads, com_overloads_filename);
 
-    try cleanDir(std.fs.cwd(), zigwin32_out_path);
+    try common.cleanDir(std.fs.cwd(), zigwin32_out_path);
     var out_dir = try std.fs.cwd().openDir(zigwin32_out_path, .{});
     defer out_dir.close();
     try out_dir.makeDir("win32");
@@ -3399,26 +3365,5 @@ fn removeCr(comptime s: []const u8) [withoutCrLen(s):0]u8 {
         }
         std.debug.assert(i == len);
         return without_cr;
-    }
-}
-
-fn cleanDir(dir: std.fs.Dir, sub_path: []const u8) !void {
-    std.log.info("cleandir '{s}'", .{sub_path});
-    try dir.deleteTree(sub_path);
-    const MAX_ATTEMPTS = 30;
-    var attempt: u32 = 1;
-    while (true) : (attempt += 1) {
-        if (attempt > MAX_ATTEMPTS)
-            fatal("failed to delete '{s}' after {} attempts", .{ sub_path, MAX_ATTEMPTS });
-
-        // ERROR: windows.OpenFile is not handling error.Unexpected NTSTATUS=0xc0000056
-        dir.makeDir(sub_path) catch |e| switch (e) {
-            else => {
-                std.debug.print("[DEBUG] makedir failed with {}\n", .{e});
-                //std.process.exit(0xff);
-                continue;
-            },
-        };
-        break;
     }
 }
