@@ -31,9 +31,6 @@ var global_symbol_pool = StringPool.init(allocator);
 var global_symbol_none: StringPool.Val = undefined;
 var global_symbol_None: StringPool.Val = undefined;
 
-var global_notnull_filename: []const u8 = undefined;
-var global_union_pointers_filename: []const u8 = undefined;
-
 var global_pass1: pass1data.Root = undefined;
 var global_notnull: NotNullRoot = undefined;
 var global_union_pointers: UnionPointersRoot = undefined;
@@ -300,8 +297,8 @@ pub fn main() !u8 {
         std.log.err("expected 6 cmdline arguments but got {}", .{cmd_args.len});
         return 1;
     }
-    global_notnull_filename = cmd_args[0];
-    global_union_pointers_filename = cmd_args[1];
+    const notnull_filename = cmd_args[0];
+    const union_pointers_filename = cmd_args[1];
     const win32json_path = cmd_args[2];
     const pass1_json = cmd_args[3];
     const com_overloads_filename = cmd_args[4];
@@ -326,19 +323,19 @@ pub fn main() !u8 {
     // no need to free pass1_json_content
     global_pass1 = pass1data.parseRoot(allocator, pass1_json, pass1_json_content);
     const notnull_json_content = blk: {
-        var file = try std.fs.cwd().openFile(global_notnull_filename, .{});
+        var file = try std.fs.cwd().openFile(notnull_filename, .{});
         defer file.close();
         break :blk try file.readToEndAlloc(allocator, std.math.maxInt(usize));
     };
     // no need to free notnull_json_content
-    global_notnull = readJson(NotNullRoot, global_notnull_filename, notnull_json_content);
+    global_notnull = readJson(NotNullRoot, notnull_filename, notnull_json_content);
     const union_pointers_json_content = blk: {
-        var file = try std.fs.cwd().openFile(global_union_pointers_filename, .{});
+        var file = try std.fs.cwd().openFile(union_pointers_filename, .{});
         defer file.close();
         break :blk try file.readToEndAlloc(allocator, std.math.maxInt(usize));
     };
     // no need to free union_pointers_json_content
-    global_union_pointers = readJson(UnionPointersRoot, global_union_pointers_filename, union_pointers_json_content);
+    global_union_pointers = readJson(UnionPointersRoot, union_pointers_filename, union_pointers_json_content);
     global_com_overloads = std.StringHashMap(ComTypeMap).init(allocator);
     // no need to free
     try readComOverloads(&global_com_overloads, com_overloads_filename);
@@ -469,100 +466,6 @@ fn installStaticFile(out_dir: std.fs.Dir, comptime name: []const u8) !void {
     // NOTE: it's important that we use @embedFile here so that the genzig
     //       executable tracks changes to these files
     try file.writer().writeAll(@embedFile("static/" ++ name));
-}
-
-fn childProcFailed(term: std.process.Child.Term) bool {
-    return switch (term) {
-        .Exited => |code| code != 0,
-        .Signal => true,
-        .Stopped => true,
-        .Unknown => true,
-    };
-}
-const FormatTerm = struct {
-    term: std.process.Child.Term,
-    pub fn format(
-        self: @This(),
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        _ = fmt;
-        _ = options;
-        switch (self.term) {
-            .Exited => |code| try writer.print("exited with code {}", .{code}),
-            .Signal => |sig| try writer.print("exited with signal {}", .{sig}),
-            .Stopped => |sig| try writer.print("stopped with signal {}", .{sig}),
-            .Unknown => |sig| try writer.print("terminated abnormally with signal {}", .{sig}),
-        }
-    }
-};
-fn fmtTerm(term: std.process.Child.Term) FormatTerm {
-    return .{ .term = term };
-}
-
-const FormatArgv = struct {
-    argv: []const []const u8,
-    pub fn format(
-        self: @This(),
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        _ = fmt;
-        _ = options;
-        var prefix: []const u8 = "";
-        for (self.argv) |arg| {
-            try writer.print("{s}{s}", .{prefix, arg});
-            prefix = " ";
-        }
-    }
-};
-fn fmtArgv(argv: []const []const u8) FormatArgv {
-    return .{ .argv = argv };
-}
-
-fn run(name: []const u8, argv: []const []const u8) !void {
-    var child = std.process.Child.init(argv, allocator);
-    std.log.info("{}", .{fmtArgv(child.argv)});
-    try child.spawn();
-    const term = try child.wait();
-    if (childProcFailed(term)) {
-        fatal("{s} {}", .{name, fmtTerm(term)});
-    }
-}
-fn gitFetch(path: []const u8, branch: []const u8) !bool {
-    var child = std.process.Child.init(&.{
-        "git",
-        "-C", path,
-        "fetch",
-        "origin",
-        branch,
-    }, allocator);
-    std.log.info("{}", .{fmtArgv(child.argv)});
-    try child.spawn();
-    const term = try child.wait();
-    switch (term) {
-        .Exited => |code| return code == 0,
-        else => fatal("git fetch {}", .{fmtTerm(term)}),
-    }
-}
-
-fn gitBranchExists(path: []const u8, branch: []const u8) !bool {
-    var child = std.process.Child.init(&.{
-        "git",
-        "-C", path,
-        "rev-parse",
-        "--verify",
-        branch,
-    }, allocator);
-    std.log.info("{}", .{fmtArgv(child.argv)});
-    try child.spawn();
-    const term = try child.wait();
-    switch (term) {
-        .Exited => |code| return code == 0,
-        else => fatal("git fetch {}", .{fmtTerm(term)}),
-    }
 }
 
 fn readJson(comptime T: type, filename: []const u8, content: []const u8) T {
