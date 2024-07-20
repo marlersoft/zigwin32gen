@@ -10,6 +10,7 @@ const cameltosnake = @import("cameltosnake.zig");
 
 const common = @import("common.zig");
 const metadata = @import("metadata.zig");
+const jsonextra = @import("jsonextra.zig");
 const pass1data = @import("pass1data.zig");
 const fatal = common.fatal;
 const jsonPanic = common.jsonPanic;
@@ -34,8 +35,8 @@ var global_notnull_filename: []const u8 = undefined;
 var global_union_pointers_filename: []const u8 = undefined;
 
 var global_pass1: pass1data.Root = undefined;
-var global_notnull: json.ObjectMap = undefined;
-var global_union_pointers: json.ObjectMap = undefined;
+var global_notnull: NotNullRoot = undefined;
+var global_union_pointers: UnionPointersRoot = undefined;
 var global_com_overloads: std.StringHashMap(ComTypeMap) = undefined;
 const MissingOverload = struct {
     api: []const u8,
@@ -137,6 +138,35 @@ const target_kind_map = std.StaticStringMap(TargetKind).initComptime(.{
     .{ "Com", TargetKind.Com },
 });
 
+const UnionPointersRoot = jsonextra.ArrayHashMap(UnionPointersApi);
+const UnionPointersApi = struct {
+    Functions: UnionPointersFunctionMap,
+    Constants: []const []const u8,
+};
+const UnionPointersFunctionMap = jsonextra.ArrayHashMap([]const []const u8);
+const empty_strings_map = jsonextra.ArrayHashMap([]const []const u8){
+    .map = .{
+        .ctx = .{},
+        .allocator = fail_allocator,
+        .unmanaged = .{},
+    },
+};
+
+const NotNullRoot = jsonextra.ArrayHashMap(NotNullApi);
+const NotNullApi = struct {
+    Functions: NotNullFunctionMap,
+};
+const NullModifier = u3;
+const NotNullFunctionMap = jsonextra.ArrayHashMap([]const NullModifier);
+const notnull_empty_function_map = NotNullFunctionMap{
+    .map = .{
+        .ctx = .{},
+        .allocator = fail_allocator,
+        .unmanaged = .{},
+    },
+};
+
+
 const Module = struct {
     optional_parent: ?*Module,
     name: StringPool.Val,
@@ -185,11 +215,6 @@ fn failAllocatorAlloc(_: *anyopaque, n: usize, alignment: u8, ra: usize) ?[*]u8 
     _ = ra;
     return null;
 }
-const empty_json_object_map = json.ObjectMap{
-    .ctx = .{},
-    .allocator = fail_allocator,
-    .unmanaged = .{},
-};
 
 fn StringPoolArrayHashMap(comptime T: type) type {
     return std.ArrayHashMap(StringPool.Val, T, StringPool.ArrayHashContext, false);
@@ -211,11 +236,11 @@ const SdkFile = struct {
     tmp_func_ptr_workaround_list: ArrayList(StringPool.Val),
     method_conflict_map: std.StaticStringMap(void),
     param_conflict_map: std.StaticStringMap(void),
-    not_null_funcs: json.ObjectMap,
+    not_null_funcs: NotNullFunctionMap,
     not_null_funcs_applied: StringPool.HashMap(void),
-    union_pointer_funcs: json.ObjectMap,
+    union_pointer_funcs: UnionPointersFunctionMap,
     union_pointer_funcs_applied: StringPool.HashMap(void),
-    union_pointer_consts: std.StringArrayHashMap(void),
+    union_pointer_consts: StringPool.HashMap(void),
     union_pointer_consts_applied: StringPool.HashMap(void),
     com_type_overloads: ?std.StringHashMap(ComMethodMap),
 
@@ -300,8 +325,20 @@ pub fn main() !u8 {
     };
     // no need to free pass1_json_content
     global_pass1 = pass1data.parseRoot(allocator, pass1_json, pass1_json_content);
-    global_notnull = try readJson(global_notnull_filename);
-    global_union_pointers = try readJson(global_union_pointers_filename);
+    const notnull_json_content = blk: {
+        var file = try std.fs.cwd().openFile(global_notnull_filename, .{});
+        defer file.close();
+        break :blk try file.readToEndAlloc(allocator, std.math.maxInt(usize));
+    };
+    // no need to free notnull_json_content
+    global_notnull = readJson(NotNullRoot, global_notnull_filename, notnull_json_content);
+    const union_pointers_json_content = blk: {
+        var file = try std.fs.cwd().openFile(global_union_pointers_filename, .{});
+        defer file.close();
+        break :blk try file.readToEndAlloc(allocator, std.math.maxInt(usize));
+    };
+    // no need to free union_pointers_json_content
+    global_union_pointers = readJson(UnionPointersRoot, global_union_pointers_filename, union_pointers_json_content);
     global_com_overloads = std.StringHashMap(ComTypeMap).init(allocator);
     // no need to free
     try readComOverloads(&global_com_overloads, com_overloads_filename);
@@ -528,25 +565,28 @@ fn gitBranchExists(path: []const u8, branch: []const u8) !bool {
     }
 }
 
-fn readJson(filename: []const u8) !std.json.ObjectMap {
-    const content = blk: {
-        const file = try std.fs.cwd().openFile(filename, .{});
-        defer file.close();
-        break :blk try file.readToEndAlloc(allocator, std.math.maxInt(usize));
+fn readJson(comptime T: type, filename: []const u8, content: []const u8) T {
+    var diagnostics = std.json.Diagnostics{};
+    var scanner = std.json.Scanner.initCompleteInput(allocator, content);
+    defer scanner.deinit();
+    scanner.enableDiagnostics(&diagnostics);
+    return std.json.parseFromTokenSourceLeaky(
+        T,
+        allocator,
+        &scanner,
+        .{},
+    ) catch |err| {
+        std.log.err(
+            "{s}:{}:{}: {s}",
+            .{
+                filename,
+                diagnostics.getLine(),
+                diagnostics.getColumn(),
+                @errorName(err),
+            },
+        );
+        @panic("json error");
     };
-
-    const json_tree = blk: {
-        //var parser = json.Parser.init(allocator, false); // false is copy_strings
-        //defer parser.deinit();
-
-        const start = if (std.mem.startsWith(u8, content, "\xEF\xBB\xBF")) 3 else @as(usize, 0);
-        const json_content = content[start..];
-        std.log.info("parsing '{s}'...", .{filename});
-        //break :blk try parser.parse(json_content);
-        // TODO: parseFromSliceLeaky?
-        break :blk try json.parseFromSlice(json.Value, allocator, json_content, .{});
-    };
-    return json_tree.value.object;
 }
 
 const ComSuffixMap = std.AutoHashMap(u16, []const u8);
@@ -812,38 +852,16 @@ fn readAndGenerateApiFile(root_module: *Module, out_dir: std.fs.Dir, json_basena
         jsonPanicMsg("qualified name '{s}' already has an sdk file?", .{zig_name});
     }
 
-    var not_null_funcs = empty_json_object_map;
-    if (global_notnull.get(json_name)) |*api_node| {
-        const api_obj = api_node.object;
-        try jsonObjEnforceKnownFieldsOnly(
-            api_obj,
-            &[_][]const u8{"Functions"},
-            global_notnull_filename,
-        );
-        not_null_funcs = (try jsonObjGetRequired(api_obj, "Functions", global_notnull_filename)).object;
+    var not_null_funcs: NotNullFunctionMap = notnull_empty_function_map;
+    if (global_notnull.get(json_name)) |api_obj| {
+        not_null_funcs = api_obj.Functions;
     }
-    var union_pointer_funcs = empty_json_object_map;
-    var union_pointer_consts = std.StringArrayHashMap(void).init(allocator);
-    if (global_union_pointers.get(json_name)) |*api_node| {
-        const api_obj = api_node.object;
-        try jsonObjEnforceKnownFieldsOnly(
-            api_obj,
-            &[_][]const u8{"Functions", "Constants"},
-            global_union_pointers_filename,
-        );
-        union_pointer_funcs = (try jsonObjGetRequired(
-            api_obj,
-            "Functions",
-            global_union_pointers_filename,
-        )).object;
-
-        const constant_union_pointers = (try jsonObjGetRequired(
-            api_obj,
-            "Constants",
-            global_union_pointers_filename,
-        )).array;
-        for (constant_union_pointers.items) |*constant| {
-            try union_pointer_consts.put(constant.string, {});
+    var union_pointer_funcs = empty_strings_map;
+    var union_pointer_consts = StringPool.HashMap(void).init(allocator);
+    if (global_union_pointers.get(json_name)) |api_obj| {
+        union_pointer_funcs = api_obj.Functions;
+        for (api_obj.Constants) |name| {
+            try union_pointer_consts.put(try global_symbol_pool.add(name), {});
         }
     }
 
@@ -1057,7 +1075,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.Parsed(json.
 
     // check that all notnull stuff was applied
     {
-        var it = sdk_file.not_null_funcs.iterator();
+        var it = sdk_file.not_null_funcs.map.iterator();
         var error_count: u32 = 0;
         while (it.next()) |api| {
             const pool_name = try global_symbol_pool.add(api.key_ptr.*);
@@ -1073,7 +1091,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.Parsed(json.
     }
     // check that all union_pointer data was applied
     {
-        var it = sdk_file.union_pointer_funcs.iterator();
+        var it = sdk_file.union_pointer_funcs.map.iterator();
         var error_count: u32 = 0;
         while (it.next()) |api| {
             const pool_name = try global_symbol_pool.add(api.key_ptr.*);
@@ -1091,7 +1109,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.Parsed(json.
         var it = sdk_file.union_pointer_consts.iterator();
         var error_count: u32 = 0;
         while (it.next()) |api| {
-            const pool_name = try global_symbol_pool.add(api.key_ptr.*);
+            const pool_name = api.key_ptr.*;
             if (sdk_file.union_pointer_consts_applied.get(pool_name)) |_| {} else {
                 std.log.err("notnull.json api '{s}' function '{s}' was not applied", .{ sdk_file.json_name, pool_name });
                 error_count += 1;
@@ -1195,8 +1213,6 @@ const NestedContext = struct {
         return false;
     }
 };
-
-const NullModifier = u3;
 
 // we need to know if the type is the top-level type or a child type of something like a pointer
 // so we can generate the correct `void` type.  Top level void types become void, but pointers
@@ -1525,7 +1541,7 @@ fn generateConstant(sdk_file: *SdkFile, writer: *CodeWriter, constant_obj: json.
     }
 
     var options = TypeRefFormatter.Options{ .reason = .direct_type_access, .is_const = true, .in = false, .out = false, .anon_types = null, .null_modifier = 0 };
-    if (sdk_file.union_pointer_consts.get(name_pool.slice)) |_| {
+    if (sdk_file.union_pointer_consts.get(name_pool)) |_| {
         try sdk_file.union_pointer_consts_applied.put(name_pool, {});
         options.union_pointer = true;
     }
@@ -2930,24 +2946,19 @@ fn generateFunction(
         if (func_kind == .fixed) {
             try sdk_file.func_exports.put(func_name_pool, {});
         }
-        if (sdk_file.not_null_funcs.get(func_name_pool.slice)) |notnull_node| {
+        if (sdk_file.not_null_funcs.get(func_name_pool.slice)) |notnull_mods| {
             try sdk_file.not_null_funcs_applied.put(func_name_pool, {});
-            jsonEnforce(notnull_node.array.items.len > 0);
-            modifier_set.ret.not_null = @as(NullModifier, @intCast(notnull_node.array.items[0].integer));
-            for (notnull_node.array.items[1..], 0..) |item, i| {
+            jsonEnforce(notnull_mods.len > 0);
+            modifier_set.ret.not_null = notnull_mods[0];
+            for (notnull_mods[1..], 0..) |mod, i| {
                 jsonEnforce(i < modifier_set.params.len); // if we hit this, increase max param count
                 jsonEnforce(i < params.items.len);
-                modifier_set.params[i].not_null = @as(NullModifier, @intCast(item.integer));
+                modifier_set.params[i].not_null = mod;
             }
         }
-        if (sdk_file.union_pointer_funcs.get(func_name_pool.slice)) |union_pointer_node| {
+        if (sdk_file.union_pointer_funcs.get(func_name_pool.slice)) |union_pointer_funcs| {
             try sdk_file.union_pointer_funcs_applied.put(func_name_pool, {});
-            jsonEnforce(union_pointer_node.array.items.len > 0);
-            for (union_pointer_node.array.items) |name_node| {
-                const name = switch (name_node) {
-                    .string => |name| name,
-                    else => jsonPanic(),
-                };
+            for (union_pointer_funcs) |name| {
                 const index = findParam(sdk_file, params.items, name) orelse jsonPanicMsg(
                     "function '{s}' from unionpointers.json does not have a parameter named '{s}'",
                     .{ func_name_pool, name },
