@@ -10,6 +10,7 @@ const cameltosnake = @import("cameltosnake.zig");
 
 const common = @import("common.zig");
 const metadata = @import("metadata.zig");
+const pass1data = @import("pass1data.zig");
 const fatal = common.fatal;
 const jsonPanic = common.jsonPanic;
 const jsonPanicMsg = common.jsonPanicMsg;
@@ -32,7 +33,7 @@ var global_symbol_None: StringPool.Val = undefined;
 var global_notnull_filename: []const u8 = undefined;
 var global_union_pointers_filename: []const u8 = undefined;
 
-var global_pass1: json.ObjectMap = undefined;
+var global_pass1: pass1data.Root = undefined;
 var global_notnull: json.ObjectMap = undefined;
 var global_union_pointers: json.ObjectMap = undefined;
 var global_com_overloads: std.StringHashMap(ComTypeMap) = undefined;
@@ -72,16 +73,18 @@ fn valueTypeToZigType(t: ValueType) []const u8 {
     };
 }
 
-const Pass1TypeKindCategory = enum { default, ptr, com };
-const pass1_type_kind_info = std.StaticStringMap(Pass1TypeKindCategory).initComptime(.{
-    .{ "Integral", .default },
-    .{ "Enum", .default },
-    .{ "Struct", .default },
-    .{ "Union", .default },
-    .{ "Com", .com },
-    .{ "Pointer", .ptr },
-    .{ "FunctionPointer", .ptr },
-});
+const Pass1TypeCategory = enum { default, ptr, com };
+pub fn getPass1TypeCategory(kind: pass1data.TypeKind) Pass1TypeCategory {
+    return switch (kind) {
+        .Integral => .default,
+        .Enum => .default,
+        .Struct => .default,
+        .Union => .default,
+        .Pointer => .ptr,
+        .FunctionPointer => .ptr,
+        .Com => .com,
+    };
+}
 
 const NativeType = metadata.Native;
 const global_native_type_map = std.StaticStringMap(NativeType).initComptime(.{
@@ -290,7 +293,13 @@ pub fn main() !u8 {
     _ = std.SemanticVersion.parse(version) catch |err|
         fatal("version '{s}' is not a valid semantic version: {s}", .{version, @errorName(err)});
 
-    global_pass1 = try readJson(pass1_json);
+    const pass1_json_content = blk: {
+        var file = try std.fs.cwd().openFile(pass1_json, .{});
+        defer file.close();
+        break :blk try file.readToEndAlloc(allocator, std.math.maxInt(usize));
+    };
+    // no need to free pass1_json_content
+    global_pass1 = pass1data.parseRoot(allocator, pass1_json, pass1_json_content);
     global_notnull = try readJson(global_notnull_filename);
     global_union_pointers = try readJson(global_union_pointers_filename);
     global_com_overloads = std.StringHashMap(ComTypeMap).init(allocator);
@@ -1272,23 +1281,24 @@ fn generateTypeRefRec(sdk_file: *SdkFile, writer: *CodeWriter, self: TypeRefForm
 
         const parents = (try jsonObjGetRequired(self.type_ref, "Parents", sdk_file)).array;
 
-        const type_kind_category = blk: {
-            const pass1_api_map = (global_pass1.get(api) orelse
-                jsonPanicMsg("type '{s}' is from API '{s}' that is missing from pass1 data", .{ name, api })).object;
-            const pass1_type_obj = (pass1_api_map.get(name) orelse {
+        const type_kind_category: Pass1TypeCategory = blk: {
+            const pass1_api_map = global_pass1.get(api) orelse jsonPanicMsg(
+                "type '{s}' is from API '{s}' that is missing from pass1 data",
+                .{ name, api }
+            );
+
+            const pass1_type: pass1data.Type = pass1_api_map.get(name) orelse {
                 if (parents.items.len == 0) {
                     const in_nested_context = if (self.nested_context) |c| c.contains(name) else false;
-                    if (!in_nested_context) {
-                        jsonPanicMsg("type '{s}' from API '{s}' is missing from pass1 data, has no parents and is not in the current nested context!", .{ name, api });
-                    }
+                    if (!in_nested_context) jsonPanicMsg(
+                        "type '{s}' from API '{s}' is missing from pass1 data, has no parents and is not in the current nested context!",
+                        .{ name, api },
+                    );
                 }
                 // this means its a nested type which are always structs/unions
-                break :blk Pass1TypeKindCategory.default;
-            }).object;
-            try jsonObjEnforceKnownFieldsOnly(pass1_type_obj, &[_][]const u8{"Kind", "Interface"}, sdk_file);
-            const type_kind = (try jsonObjGetRequired(pass1_type_obj, "Kind", sdk_file)).string;
-            break :blk pass1_type_kind_info.get(type_kind) orelse
-                jsonPanicMsg("unknown pass1 type kind '{s}'", .{type_kind});
+                break :blk .default;
+            };
+            break :blk getPass1TypeCategory(pass1_type);
         };
 
         if (self.options.reason == .var_decl) {
@@ -2387,18 +2397,18 @@ fn generateEnum(
     }
 }
 
-fn getComInterface(api: []const u8, name: []const u8, sdk_file: *const SdkFile) ?json.ObjectMap {
-    const pass1_api_map = (global_pass1.get(api) orelse jsonPanicMsg(
+fn getComInterface(api: []const u8, name: []const u8) ?json.ObjectMap {
+    const pass1_api_map = global_pass1.get(api) orelse jsonPanicMsg(
         "com interface inside unknown api '{s}'", .{api}
-    )).object;
-    const pass1_type_obj = (pass1_api_map.get(name) orelse jsonPanicMsg(
+    );
+    const pass1_type = pass1_api_map.get(name) orelse jsonPanicMsg(
         "com interface '{s}' does not exist in api '{s}'",
         .{name, api},
-    )).object;
-    try jsonObjEnforceKnownFieldsOnly(pass1_type_obj, &[_][]const u8{"Kind", "Interface"}, sdk_file);
-    const kind = (try jsonObjGetRequired(pass1_type_obj, "Kind", sdk_file)).string;
-    jsonEnforce(std.mem.eql(u8, kind, "Com"));
-    const interface = try jsonObjGetRequired(pass1_type_obj, "Interface", sdk_file);
+    );
+    const interface = switch (pass1_type) {
+        .Com => |com| com.Interface,
+        else => jsonPanic(),
+    };
     return switch (interface) {
         .object => |o| o,
         .null => null,
@@ -2576,7 +2586,7 @@ fn generateCom(
             try generateTypeRef(sdk_file, writer, iface_formatter);
             try writer.write(",", .{ .start = .mid });
 
-            next_iface = getComInterface(com_iface.api, com_iface.name, sdk_file) orelse break;
+            next_iface = getComInterface(com_iface.api, com_iface.name) orelse break;
             com_iface = common.parseComInterface(next_iface, "pass1.json");
         }
     }

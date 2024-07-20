@@ -1,5 +1,4 @@
 const std = @import("std");
-const json = @import("json.zig");
 
 pub const Api = struct {
     Constants: []const Constant,
@@ -583,7 +582,7 @@ fn parseAttrsArray(
     }
 }
 
-fn jsonParseUnionKind(
+pub fn jsonParseUnionKind(
     comptime KindEnum: type,
     type_name: []const u8,
     source: anytype,
@@ -609,7 +608,7 @@ fn jsonParseUnionKind(
     };
 }
 
-fn parseUnionObject(
+pub fn parseUnionObject(
     comptime T: type,
     allocator: std.mem.Allocator,
     source: anytype,
