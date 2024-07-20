@@ -1,4 +1,5 @@
 const std = @import("std");
+const metadata = @import("metadata.zig");
 
 const path_sep = std.fs.path.sep_str;
 
@@ -170,6 +171,21 @@ pub fn parseComInterface(
     return .{
         .api = api,
         .name = tmp_name
+    };
+}
+
+pub fn getComInterface(
+    type_ref: metadata.TypeRef
+) ComInterface {
+    const api_ref = switch (type_ref) {
+        .ApiRef => |r| r,
+        else => jsonPanic(),
+    };
+    jsonEnforce(api_ref.TargetKind == .Com);
+    jsonEnforce(api_ref.Parents.len == 0);
+    return .{
+        .api = api_ref.Api,
+        .name = api_ref.Name,
     };
 }
 

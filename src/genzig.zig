@@ -9,6 +9,7 @@ const path_sep = std.fs.path.sep_str;
 const cameltosnake = @import("cameltosnake.zig");
 
 const common = @import("common.zig");
+const metadata = @import("metadata.zig");
 const fatal = common.fatal;
 const jsonPanic = common.jsonPanic;
 const jsonPanicMsg = common.jsonPanicMsg;
@@ -43,29 +44,18 @@ const MissingOverload = struct {
 };
 var global_missing_com_overloads: std.ArrayListUnmanaged(MissingOverload) = .{};
 
-const ValueType = enum {
-    Byte,
-    UInt16,
-    Int32,
-    UInt32,
-    Int64,
-    UInt64,
-    Single,
-    Double,
-    String,
-    PropertyKey,
-};
+const ValueType = metadata.ValueType;
 const global_value_type_map = std.StaticStringMap(ValueType).initComptime(.{
-    .{ "Byte", ValueType.Byte },
-    .{ "UInt16", ValueType.UInt16 },
-    .{ "Int32", ValueType.Int32 },
-    .{ "UInt32", ValueType.UInt32 },
-    .{ "Int64", ValueType.Int64 },
-    .{ "UInt64", ValueType.UInt64 },
-    .{ "Single", ValueType.Single },
-    .{ "Double", ValueType.Double },
-    .{ "String", ValueType.String },
-    .{ "PropertyKey", ValueType.PropertyKey },
+    .{ "Byte", .Byte },
+    .{ "UInt16", .UInt16 },
+    .{ "Int32", .Int32 },
+    .{ "UInt32", .UInt32 },
+    .{ "Int64", .Int64 },
+    .{ "UInt64", .UInt64 },
+    .{ "Single", .Single },
+    .{ "Double", .Double },
+    .{ "String", .String },
+    .{ "PropertyKey", .PropertyKey },
 });
 fn valueTypeToZigType(t: ValueType) []const u8 {
     return switch (t) {
@@ -93,41 +83,24 @@ const pass1_type_kind_info = std.StaticStringMap(Pass1TypeKindCategory).initComp
     .{ "FunctionPointer", .ptr },
 });
 
-const NativeType = enum {
-    Boolean,
-    SByte,
-    Byte,
-    Int16,
-    UInt16,
-    Int32,
-    UInt32,
-    Int64,
-    UInt64,
-    Char,
-    Single,
-    Double,
-    String,
-    IntPtr,
-    UIntPtr,
-    Guid,
-};
+const NativeType = metadata.Native;
 const global_native_type_map = std.StaticStringMap(NativeType).initComptime(.{
-    .{ "Boolean", NativeType.Boolean },
-    .{ "SByte", NativeType.SByte },
-    .{ "Byte", NativeType.Byte },
-    .{ "Int16", NativeType.Int16 },
-    .{ "UInt16", NativeType.UInt16 },
-    .{ "Int32", NativeType.Int32 },
-    .{ "UInt32", NativeType.UInt32 },
-    .{ "Int64", NativeType.Int64 },
-    .{ "UInt64", NativeType.UInt64 },
-    .{ "Char", NativeType.Char },
-    .{ "Single", NativeType.Single },
-    .{ "Double", NativeType.Double },
-    .{ "String", NativeType.String },
-    .{ "IntPtr", NativeType.IntPtr },
-    .{ "UIntPtr", NativeType.UIntPtr },
-    .{ "Guid", NativeType.Guid },
+    .{ "Boolean", .Boolean },
+    .{ "SByte", .SByte },
+    .{ "Byte", .Byte },
+    .{ "Int16", .Int16 },
+    .{ "UInt16", .UInt16 },
+    .{ "Int32", .Int32 },
+    .{ "UInt32", .UInt32 },
+    .{ "Int64", .Int64 },
+    .{ "UInt64", .UInt64 },
+    .{ "Char", .Char },
+    .{ "Single", .Single },
+    .{ "Double", .Double },
+    .{ "String", .String },
+    .{ "IntPtr", .IntPtr },
+    .{ "UIntPtr", .UIntPtr },
+    .{ "Guid", .Guid },
 });
 fn nativeTypeToZigType(t: NativeType) []const u8 {
     return switch (t) {
