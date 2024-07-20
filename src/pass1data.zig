@@ -82,6 +82,5 @@ pub const Type = union(TypeKind) {
 };
 
 pub const Com = struct {
-    //Interface: metadata.TypeRef,
-    Interface: std.json.Value,
+    Interface: ?metadata.TypeRef,
 };

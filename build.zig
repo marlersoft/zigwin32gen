@@ -39,7 +39,7 @@ pub fn build(b: *Build) !void {
 
     const pass1_step = b.step(
         "pass1",
-        "Only perform pass1 of zig binding generation." ++ desc_line_prefix ++
+        "Only perform pass1 of zig binding generation.\n" ++ desc_line_prefix ++
         "(generates pass1.json in .zig-cache)",
     );
     const gen_step = b.step("gen", "Generate the bindings (in .zig-cache)");

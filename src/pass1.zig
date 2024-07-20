@@ -104,15 +104,6 @@ fn pass1OnJson(out: OutWriter, api: metadata.Api) !void {
     }
 }
 
-const native_integral_types = std.StaticStringMap(void).initComptime(.{
-    .{ "Byte" },
-    .{ "Int32" },
-    .{ "UInt32" },
-    .{ "UInt64" },
-    .{ "IntPtr" },
-    .{ "UIntPtr" },
-});
-
 fn generateNativeTypedef(
     out: OutWriter,
     json_obj_prefix: []const u8,
@@ -161,14 +152,36 @@ fn generateNativeTypedef(
     }
 
     switch (native_typedef.Def) {
-        .Native => |native| if (native_integral_types.get(native.Name)) |_| {
+        .Native => |native| if (isIntegral(native.Name)) {
             try writeType(out, json_obj_prefix, t.Name, "Integral");
         } else std.debug.panic(
-            "unhandled Native kind in NativeTypedef '{s}'", .{native.Name}
+            "unhandled Native kind in NativeTypedef '{s}'", .{@tagName(native.Name)}
         ),
         .PointerTo => try writeType(out, json_obj_prefix, t.Name, "Pointer"),
         else => |kind| std.debug.panic("unhandled NativeTypedef kind '{s}'", .{@tagName(kind)}),
     }
+}
+
+fn isIntegral(native: metadata.TypeRefNative) bool {
+    return switch (native) {
+        .Void => false,
+        .Boolean => false,
+        .SByte => true,
+        .Byte => true,
+        .Int16 => true,
+        .UInt16 => true,
+        .Int32 => true,
+        .UInt32 => true,
+        .Int64 => true,
+        .UInt64 => true,
+        .Char => false,
+        .Single => false,
+        .Double => false,
+        .String => false,
+        .IntPtr => true,
+        .UIntPtr => true,
+        .Guid => false,
+    };
 }
 
 fn writeComType(

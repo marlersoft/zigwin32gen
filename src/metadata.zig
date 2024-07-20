@@ -1,4 +1,5 @@
 const std = @import("std");
+const metadata = @This();
 
 pub const Api = struct {
     Constants: []const Constant,
@@ -49,7 +50,8 @@ pub const ValueType = enum {
     PropertyKey,
 };
 
-pub const Native = enum {
+pub const TypeRefNative = enum {
+    Void,
     Boolean,
     SByte,
     Byte,
@@ -85,6 +87,10 @@ pub const ConstantAttrs = struct {
     }
 };
 
+pub const EnumIntegerBase = enum {
+    Byte, SByte, UInt16, UInt32, Int32, UInt64
+};
+
 const TypeKind = enum {
     NativeTypedef,
     Enum,
@@ -110,8 +116,8 @@ pub const Type = struct {
     Kind: union(enum) {
         NativeTypedef: NativeTypedef,
         Enum: Enum,
-        Struct: Struct,
-        Union: Union,
+        Struct: StructOrUnion,
+        Union: StructOrUnion,
         ComClassID: ComClassID,
         Com: Com,
         FunctionPointer: FunctionPointer,
@@ -121,48 +127,15 @@ pub const Type = struct {
         Flags: bool,
         Scoped: bool,
         Values: []EnumField,
-        IntegerBase: ?enum { Byte, SByte, UInt16, UInt32, Int32, UInt64 },
+        IntegerBase: ?EnumIntegerBase,
     };
     pub const EnumField = struct {
         Name: []const u8,
         Value: std.json.Value,
     };
 
-    pub const Struct = struct {
-        Size: u32,
-        PackingSize: u32,
-        Fields: []const StructField,
-        NestedTypes: []const Type,
-        Comment: ?[]const u8 = null,
-    };
-    pub const StructField = struct {
-        Name: []const u8,
-        Type: TypeRef,
-        Attrs: FieldAttrs,
-    };
-
-    pub const Union = struct {
-        Size: u32,
-        PackingSize: u32,
-        Fields: []const UnionField,
-        NestedTypes: []const Type,
-    };
-    pub const UnionField = struct {
-        Name: []const u8,
-        Type: TypeRef,
-        Attrs: FieldAttrs,
-    };
-
     pub const ComClassID = struct {
         Guid: []const u8,
-    };
-
-    pub const FunctionPointer = struct {
-        SetLastError: bool,
-        ReturnType: TypeRef,
-        ReturnAttrs: ReturnAttrs,
-        Attrs: FunctionAttrs,
-        Params: []const Param,
     };
 
     pub fn jsonParse(
@@ -188,10 +161,10 @@ pub const Type = struct {
                 .Enum = try parseUnionObject(Enum, allocator, source, options),
             }},
             .Struct => return .{ .Name = name, .Architectures = arches, .Platform = platform, .Kind = .{
-                .Struct = try parseUnionObject(Struct, allocator, source, options),
+                .Struct = try parseUnionObject(StructOrUnion, allocator, source, options),
             }},
             .Union => return .{ .Name = name, .Architectures = arches, .Platform = platform, .Kind = .{
-                .Union = try parseUnionObject(Union, allocator, source, options),
+                .Union = try parseUnionObject(StructOrUnion, allocator, source, options),
             }},
             .ComClassID => return .{ .Name = name, .Architectures = arches, .Platform = platform, .Kind = .{
                 .ComClassID = try parseUnionObject(ComClassID, allocator, source, options),
@@ -205,6 +178,28 @@ pub const Type = struct {
         }
     }
 
+};
+
+pub const FunctionPointer = struct {
+    SetLastError: bool,
+    ReturnType: TypeRef,
+    //ReturnAttrs: ReturnAttrs,
+    ReturnAttrs: ParamAttrs,
+    Attrs: FunctionAttrs,
+    Params: []const Param,
+};
+
+pub const StructOrUnion = struct {
+    Size: u32,
+    PackingSize: u32,
+    Fields: []const StructOrUnionField,
+    NestedTypes: []const Type,
+    Comment: ?[]const u8 = null,
+};
+pub const StructOrUnionField = struct {
+    Name: []const u8,
+    Type: TypeRef,
+    Attrs: FieldAttrs,
 };
 
 pub const FieldAttrs = struct {
@@ -226,7 +221,7 @@ pub const NativeTypedef = struct {
     AlsoUsableFor: ?[]const u8,
     Def: TypeRef,
     FreeFunc: ?[]const u8,
-    InvalidHandleValue: ?u32,
+    InvalidHandleValue: ?i64,
 };
 
 pub const Com = struct {
@@ -250,57 +245,59 @@ pub const ComMethod = struct {
     Name: []const u8,
     SetLastError: bool,
     ReturnType: TypeRef,
-    ReturnAttrs: ReturnAttrs,
+    //ReturnAttrs: ReturnAttrs,
+    ReturnAttrs: ParamAttrs,
     Architectures: Architectures,
     Platform: ?Platform,
-    Attrs: ComMethodAttrs,
-    Params: []const ComMethodParam,
+    Attrs: FunctionAttrs,
+    Params: []const Param,
 };
-pub const ComMethodAttrs = struct {
-    SpecialName: bool = false,
-    PreserveSig: bool = false,
-    pub fn jsonParse(
-        allocator: std.mem.Allocator,
-        source: anytype,
-        options: std.json.ParseOptions,
-    ) std.json.ParseError(@TypeOf(source.*))!ComMethodAttrs {
-        return parseAttrsArray(ComMethodAttrs, allocator, source, options);
-    }
-};
+//pub const ComMethodAttrs = struct {
+//    SpecialName: bool = false,
+//    PreserveSig: bool = false,
+//    pub fn jsonParse(
+//        allocator: std.mem.Allocator,
+//        source: anytype,
+//        options: std.json.ParseOptions,
+//    ) std.json.ParseError(@TypeOf(source.*))!ComMethodAttrs {
+//        return parseAttrsArray(ComMethodAttrs, allocator, source, options);
+//    }
+//};
 
-pub const ComMethodParam = struct {
-    Name: []const u8,
-    Type: TypeRef,
-    Attrs: ComMethodParamAttrs,
-};
-pub const ComMethodParamAttrs = struct {
-    In: bool = false,
-    Out: bool = false,
-    Const: bool = false,
-    Optional: bool = false,
-    ComOutPtr: bool = false,
-    RetVal: bool = false,
-    Reserved: bool = false,
-    NotNullTerminated: bool = false,
-    NullNullTerminated: bool = false,
-    MemorySize: ?MemorySize = null,
-    FreeWith: ?FreeWith = null,
-
-    pub fn jsonParse(
-        allocator: std.mem.Allocator,
-        source: anytype,
-        options: std.json.ParseOptions,
-    ) std.json.ParseError(@TypeOf(source.*))!ComMethodParamAttrs {
-        return parseAttrsArray(ComMethodParamAttrs, allocator, source, options);
-    }
-};
+//pub const ComMethodParam = struct {
+//    Name: []const u8,
+//    Type: TypeRef,
+//    Attrs: ComMethodParamAttrs,
+//};
+//pub const ComMethodParamAttrs = struct {
+//    In: bool = false,
+//    Out: bool = false,
+//    Const: bool = false,
+//    Optional: bool = false,
+//    ComOutPtr: bool = false,
+//    RetVal: bool = false,
+//    Reserved: bool = false,
+//    NotNullTerminated: bool = false,
+//    NullNullTerminated: bool = false,
+//    MemorySize: ?MemorySize = null,
+//    FreeWith: ?FreeWith = null,
+//
+//    pub fn jsonParse(
+//        allocator: std.mem.Allocator,
+//        source: anytype,
+//        options: std.json.ParseOptions,
+//    ) std.json.ParseError(@TypeOf(source.*))!ComMethodParamAttrs {
+//        return parseAttrsArray(ComMethodParamAttrs, allocator, source, options);
+//    }
+//};
 
 pub const Function = struct {
     Name: []const u8,
     SetLastError: bool,
     DllImport: []const u8,
     ReturnType: TypeRef,
-    ReturnAttrs: ReturnAttrs,
+    //ReturnAttrs: ReturnAttrs,
+    ReturnAttrs: ParamAttrs,
     Architectures: Architectures,
     Platform: ?Platform,
     Attrs: FunctionAttrs,
@@ -331,26 +328,94 @@ pub const Platform = enum {
 };
 
 pub const Architectures = struct {
-    X86: bool = false,
-    X64: bool = false,
-    Arm64: bool = false,
+    filter: ?Filter = null,
+
+    pub const Filter = struct {
+        X86: bool = false,
+        X64: bool = false,
+        Arm64: bool = false,
+        //pub fn allAreSet(self: Filter) bool {
+        //return self.X86 and self.X64 and self.Arm64;
+        //}
+        pub fn eql(self: Filter, other: Filter) bool {
+            return
+                self.X86 == other.X86 and
+                self.X64 == other.X64 and
+                self.Arm64 == other.Arm64;
+        }
+        pub fn unionWith(self: Filter, other: Filter) ?Filter {
+            const new_filter: Filter = .{
+                .X86 = self.X86 or other.X86,
+                .X64 = self.X64 or other.X64,
+                .Arm64 = self.Arm64 or other.Arm64,
+            };
+            if (new_filter.X86 and new_filter.X64 and new_filter.Arm64)
+                return null;
+            return new_filter;
+        }
+    };
+
+    pub fn eql(self: Architectures, other: Architectures) bool {
+        const self_filter = self.filter orelse return other.filter == null;
+        const other_filter = other.filter orelse return false;
+        return self_filter.eql(other_filter);
+    }
+
+    pub fn unionWith(self: Architectures, other: Architectures) Architectures {
+        const self_filter = self.filter orelse return .{};
+        const other_filter = other.filter orelse return .{};
+        return .{ .filter = self_filter.unionWith(other_filter) };
+    }
+
     pub fn jsonParse(
         allocator: std.mem.Allocator,
         source: anytype,
         options: std.json.ParseOptions,
     ) std.json.ParseError(@TypeOf(source.*))!Architectures {
-        return parseAttrsArray(Architectures, allocator, source, options);
+        _ = allocator;
+        _ = options;
+        if (.array_begin != try source.next()) return error.UnexpectedToken;
+        const filter_struct_info = @typeInfo(Filter).Struct;
+        var result: Architectures = .{};
+        while (true) {
+            switch (try source.next()) {
+                .array_end => return result,
+                .string => |s| {
+                    if (result.filter == null) {
+                        result.filter = .{};
+                    }
+
+                    inline for (filter_struct_info.fields) |field| {
+                        if (field.type == bool and std.mem.eql(u8, s, field.name)) {
+                            @field(result.filter.?, field.name) = true;
+                            break;
+                        }
+                    } else {
+                        std.log.err("unknown Architecture attribute '{s}'", .{s});
+                        return error.UnexpectedToken;
+                    }
+                },
+                else => |token| {
+                    std.log.err(
+                        "expected string or array_close but got {s}",
+                        .{ @tagName(token) },
+                    );
+                    return error.UnexpectedToken;
+                },
+            }
+        }
     }
 };
 
 const MemorySize = struct {
-    BytesParamIndex: u32,
+    BytesParamIndex: u16,
 };
 const FreeWith = struct {
     Func: []const u8,
 };
 
 pub const FunctionAttrs = struct {
+    SpecialName: bool = false,
     PreserveSig: bool = false,
     DoesNotReturn: bool = false,
     pub fn jsonParse(
@@ -362,41 +427,43 @@ pub const FunctionAttrs = struct {
     }
 };
 
-pub const ReturnAttrs = struct {
-    Optional: bool = false,
-    pub fn jsonParse(
-        allocator: std.mem.Allocator,
-        source: anytype,
-        options: std.json.ParseOptions,
-    ) std.json.ParseError(@TypeOf(source.*))!ReturnAttrs {
-        return parseAttrsArray(ReturnAttrs, allocator, source, options);
-    }
-};
-pub const FuncParamAttrs = struct {
+//pub const ReturnAttrs = struct {
+//    Optional: bool = false,
+//    pub fn jsonParse(
+//        allocator: std.mem.Allocator,
+//        source: anytype,
+//        options: std.json.ParseOptions,
+//    ) std.json.ParseError(@TypeOf(source.*))!ReturnAttrs {
+//        return parseAttrsArray(ReturnAttrs, allocator, source, options);
+//    }
+//};
+pub const ParamAttrs = struct {
+    Const: bool = false,
     In: bool = false,
     Out: bool = false,
-    Const: bool = false,
     Optional: bool = false,
-    ComOutPtr: bool = false,
-    DoNotRelease: bool = false,
     NotNullTerminated: bool = false,
     NullNullTerminated: bool = false,
+    RetVal: bool = false,
+    ComOutPtr: bool = false,
+    DoNotRelease: bool = false,
     Reserved: bool = false,
     MemorySize: ?MemorySize = null,
     FreeWith: ?FreeWith = null,
+
     pub fn jsonParse(
         allocator: std.mem.Allocator,
         source: anytype,
         options: std.json.ParseOptions,
-    ) std.json.ParseError(@TypeOf(source.*))!FuncParamAttrs {
-        return parseAttrsArray(FuncParamAttrs, allocator, source, options);
+    ) std.json.ParseError(@TypeOf(source.*))!ParamAttrs {
+        return parseAttrsArray(ParamAttrs, allocator, source, options);
     }
 };
 
 pub const Param = struct {
     Name: []const u8,
     Type: TypeRef,
-    Attrs: FuncParamAttrs,
+    Attrs: ParamAttrs,
 };
 
 const TargetKind = enum {
@@ -429,7 +496,7 @@ pub const TypeRef = union(TypeRefKind) {
     LPArray: LPArray,
     MissingClrType: MissingClrType,
     pub const Native = struct {
-        Name: []const u8,
+        Name: TypeRefNative,
     };
     pub const ApiRef = struct {
         Name: []const u8,

@@ -3,6 +3,10 @@ const metadata = @import("metadata.zig");
 
 const path_sep = std.fs.path.sep_str;
 
+pub fn oom(e: error{OutOfMemory}) noreturn {
+    @panic(@errorName(e));
+}
+
 pub fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.log.err(fmt, args);
     std.process.exit(0xff);
@@ -80,18 +84,6 @@ pub fn jsonEnforceMsg(cond: bool, comptime msg: []const u8, args: anytype) void 
     }
 }
 
-pub fn jsonObjEnforceKnownFieldsOnly(map: std.json.ObjectMap, known_fields: []const []const u8, file_for_error: []const u8) !void {
-    var it = map.iterator();
-    fieldLoop: while (it.next()) |kv| {
-        for (known_fields) |known_field| {
-            if (std.mem.eql(u8, known_field, kv.key_ptr.*))
-                continue :fieldLoop;
-        }
-        std.log.err("{s}: JSON object has unknown field '{s}', expected one of: {}\n", .{ file_for_error, kv.key_ptr.*, formatSliceT([]const u8, "s", known_fields) });
-        jsonPanic();
-    }
-}
-
 const JsonFormatter = struct {
     value: std.json.Value,
     pub fn format(
@@ -124,18 +116,6 @@ pub fn fmtJson(value: anytype) JsonFormatter {
     return .{ .value = value };
 }
 
-pub fn jsonObjGetRequired(
-    map: std.json.ObjectMap,
-    field: []const u8,
-    file_for_error: []const u8,
-) !std.json.Value {
-    return map.get(field) orelse {
-        // TODO: print file location?
-        std.log.err("{s}: json object is missing '{s}' field: {}\n", .{ file_for_error, field, fmtJson(map) });
-        jsonPanic();
-    };
-}
-
 pub const ComInterface = struct {
     name: []const u8,
     api: []const u8,
@@ -153,26 +133,6 @@ pub const ComInterface = struct {
         );
     }
 };
-pub fn parseComInterface(
-    type_ref: std.json.ObjectMap,
-    file_for_error: []const u8,
-) ComInterface {
-    const kind = (try jsonObjGetRequired(type_ref, "Kind", file_for_error)).string;
-    jsonEnforce(std.mem.eql(u8, kind, "ApiRef"));
-    try jsonObjEnforceKnownFieldsOnly(type_ref, &[_][]const u8{
-        "Kind", "Name", "TargetKind", "Api", "Parents"
-    }, file_for_error);
-    const tmp_name = (try jsonObjGetRequired(type_ref, "Name", file_for_error)).string;
-    const target_kind = (try jsonObjGetRequired(type_ref, "TargetKind", file_for_error)).string;
-    const api = (try jsonObjGetRequired(type_ref, "Api", file_for_error)).string;
-    const parents = (try jsonObjGetRequired(type_ref, "Parents", file_for_error)).array;
-    jsonEnforce(std.mem.eql(u8, target_kind, "Com"));
-    jsonEnforce(parents.items.len == 0);
-    return .{
-        .api = api,
-        .name = tmp_name
-    };
-}
 
 pub fn getComInterface(
     type_ref: metadata.TypeRef
