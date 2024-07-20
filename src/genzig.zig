@@ -698,21 +698,22 @@ fn generateContainerModules(dir: std.fs.Dir, module: *Module) anyerror!void {
 }
 
 fn readAndGenerateApiFile(root_module: *Module, out_dir: std.fs.Dir, json_basename: []const u8, file: std.fs.File) !void {
+    var json_arena_instance = std.heap.ArenaAllocator.init(allocator);
+    defer json_arena_instance.deinit();
+    const json_arena = json_arena_instance.allocator();
+
     const read_start_millis = std.time.milliTimestamp();
-    const content = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
+    const content = try file.readToEndAlloc(json_arena, std.math.maxInt(usize));
+    // no need to free content, owned by json_arena
     const read_end_millis = std.time.milliTimestamp();
     global_times.read_time_millis += read_end_millis - read_start_millis;
-    defer allocator.free(content);
     std.debug.print("  read {} bytes\n", .{content.len});
 
     // Parsing the JSON is VERY VERY SLOW!!!!!!
-    var json_tree = blk: {
-        //var parser = json.Parser.init(allocator, false); // false is copy_strings
-        //defer parser.deinit();
-        //break :blk try parser.parse(content);
-        break :blk try json.parseFromSlice(json.Value, allocator, content, .{});
+    const json_root = blk: {
+        break :blk try json.parseFromSliceLeaky(json.Value, json_arena, content, .{});
     };
-    defer json_tree.deinit();
+    // no need to free json_root, owned by json_arena
     global_times.parse_time_millis += std.time.milliTimestamp() - read_end_millis;
 
     const json_basename_copy = try allocator.dupe(u8, json_basename);
@@ -791,7 +792,7 @@ fn readAndGenerateApiFile(root_module: *Module, out_dir: std.fs.Dir, json_basena
     };
 
     const generate_start_millis = std.time.milliTimestamp();
-    try generateFile(module_dir, module, json_tree);
+    try generateFile(module_dir, module, json_root.object);
     global_times.generate_time_millis += std.time.milliTimestamp() - generate_start_millis;
 }
 
@@ -808,7 +809,7 @@ fn ArchSpecificMap(comptime T: type) type {
     return StringPoolArrayHashMap(ArchSpecificObjects(T));
 }
 
-fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.Parsed(json.Value)) !void {
+fn generateFile(module_dir: std.fs.Dir, module: *Module, root_obj: json.ObjectMap) !void {
     const sdk_file = &module.file.?;
 
     var out_file = try module_dir.createFile(module.zig_basename, .{});
@@ -822,7 +823,6 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, tree: json.Parsed(json.
     try writer.writeBlock(autogen_header);
     // We can't import the everything module because it will re-introduce the same symbols we are exporting
     //try writer.print("usingnamespace @import(\"everything.zig\");\n", .{});
-    const root_obj = tree.value.object;
     const constants_array = (try jsonObjGetRequired(root_obj, "Constants", sdk_file)).array;
     const types_array = (try jsonObjGetRequired(root_obj, "Types", sdk_file)).array;
     const functions_array = (try jsonObjGetRequired(root_obj, "Functions", sdk_file)).array;
