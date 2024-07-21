@@ -262,23 +262,17 @@ pub fn main() !u8 {
     });
 
     {
-        const commit_logs = try gitLogGenRepo(
-            gen_repo,
-            latest_release,
-            main_sha,
-        );
-        defer allocator.free(commit_logs);
-
-        const ahead_suffix: []const u8 = if (ahead == 1) "" else "s";
-        const commit_msg = try std.fmt.allocPrint(
+        const gen_repo_commit_msg = try gitLogGenRepo(gen_repo, main_sha);
+        defer allocator.free(gen_repo_commit_msg);
+        const full_commit_msg = try std.fmt.allocPrint(
             allocator,
-            "release {s} ({} commit{s})\n\n{s}",
-            .{&main_sha, ahead, ahead_suffix, commit_logs},
+            "{s}\n\ngenerated from zigwin32gen commit {s}\n",
+            .{gen_repo_commit_msg, &main_sha},
         );
-        defer allocator.free(commit_msg);
+        defer allocator.free(full_commit_msg);
         try common.run(allocator, "git status", &.{
             "git", "-C", zigwin32_repo, "commit",
-            "-m", commit_msg
+            "-m", full_commit_msg
         });
     }
 
@@ -346,21 +340,15 @@ pub fn main() !u8 {
 
 fn gitLogGenRepo(
     gen_repo: []const u8,
-    latest_release: Release,
     main_sha: [40]u8,
 ) ![]const u8{
-    const ancestry_path = std.fmt.allocPrint(
-        allocator,
-        "{s}..{s}",
-        .{ latest_release.gen_commit, &main_sha },
-    ) catch |e| oom(e);
-    defer allocator.free(ancestry_path);
     const argv = [_][]const u8 {
         "git",
         "-C", gen_repo,
         "log",
-        "--oneline",
-        ancestry_path,
+        "-n", "1",
+        "--format=%B",
+        &main_sha,
     };
     std.log.info("{}", .{common.fmtArgv(&argv)});
     const result = try std.process.Child.run(.{
