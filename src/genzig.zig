@@ -1011,12 +1011,16 @@ fn addTypeRefs(
 }
 
 fn addTypeRefsNoFormatter(sdk_file: *SdkFile, arches: metadata.Architectures, type_ref: metadata.TypeRef) anyerror!void {
+
     switch (type_ref) {
         .Native => |native| switch (native.Name) {
             .Guid => sdk_file.uses_guid = true,
             else => {},
         },
-        .ApiRef => |r| try sdk_file.addApiImport(arches, r.Name, r.Api, r.Parents),
+        .ApiRef => |api_ref| {
+            const name = getApiRefSubstitute(api_ref.Name, api_ref.Parents) orelse api_ref.Name;
+            try sdk_file.addApiImport(arches, name, api_ref.Api, api_ref.Parents);
+        },
         .PointerTo => |to| try addTypeRefsNoFormatter(sdk_file, arches, to.Child.*),
         .Array => |a| try addTypeRefsNoFormatter(sdk_file, arches, a.Child.*),
         .LPArray => |a| try addTypeRefsNoFormatter(sdk_file, arches, a.Child.*),
@@ -1173,10 +1177,11 @@ fn generateTypeRefRec(
             try writer.writef("{s}", .{zig_type}, .{ .start = .any, .nl = false });
         },
         .ApiRef => |api_ref| {
-            if (isAnonymousTypeName(api_ref.Name)) {
+            const name = getApiRefSubstitute(api_ref.Name, api_ref.Parents) orelse api_ref.Name;
+            if (isAnonymousTypeName(name)) {
                 const anon_types = self.options.anon_types orelse
-                    jsonPanicMsg("missing anonymous type '{s}' (this scope does not have any anonymous types)!", .{api_ref.Name});
-                const name_pool = try global_symbol_pool.add(api_ref.Name);
+                    jsonPanicMsg("missing anonymous type '{s}' (this scope does not have any anonymous types)!", .{name});
+                const name_pool = try global_symbol_pool.add(name);
                 const t = anon_types.types.get(name_pool) orelse
                     jsonPanicMsg("missing anonymous type '{s}'!", .{name_pool});
                 switch (t.Kind) {
@@ -1195,15 +1200,15 @@ fn generateTypeRefRec(
             const type_kind_category: Pass1TypeCategory = blk: {
                 const pass1_api_map = global_pass1.get(api_ref.Api) orelse jsonPanicMsg(
                     "type '{s}' is from API '{s}' that is missing from pass1 data",
-                    .{ api_ref.Name, api_ref.Api }
+                    .{ name, api_ref.Api }
                 );
 
-                const pass1_type: pass1data.Type = pass1_api_map.get(api_ref.Name) orelse {
+                const pass1_type: pass1data.Type = pass1_api_map.get(name) orelse {
                     if (api_ref.Parents.len == 0) {
-                        const in_nested_context = if (self.nested_context) |c| c.contains(api_ref.Name) else false;
+                        const in_nested_context = if (self.nested_context) |c| c.contains(name) else false;
                         if (!in_nested_context) jsonPanicMsg(
                             "type '{s}' from API '{s}' is missing from pass1 data, has no parents and is not in the current nested context!",
-                            .{ api_ref.Name, api_ref.Api },
+                            .{ name, api_ref.Api },
                         );
                     }
                     // this means its a nested type which are always structs/unions
@@ -1236,8 +1241,8 @@ fn generateTypeRefRec(
             // system where the first pass I gather all the type definitions so that on the second pass
             // I'll know whether each type is a pointer like this and can fix things like this.
             const special: enum { pstr, pwstr, other } = blk: {
-                if (std.mem.eql(u8, api_ref.Name, "PSTR")) break :blk .pstr;
-                if (std.mem.eql(u8, api_ref.Name, "PWSTR")) break :blk .pwstr;
+                if (std.mem.eql(u8, name, "PSTR")) break :blk .pstr;
+                if (std.mem.eql(u8, name, "PWSTR")) break :blk .pwstr;
                 break :blk .other;
             };
             if (special == .pstr or special == .pwstr) {
@@ -1264,7 +1269,7 @@ fn generateTypeRefRec(
             //    try writer.writef("{s}", .{parent}, .{.start=.any,.nl=false});
             //    try writer.write(".", .{.start=.any,.nl=false});
             //}
-            try writer.writef("{s}", .{api_ref.Name}, .{ .start = .any, .nl = false });
+            try writer.writef("{s}", .{name}, .{ .start = .any, .nl = false });
         },
         .PointerTo => |to| {
             var child_options = self.options;
@@ -1584,6 +1589,15 @@ fn generateType(
     t: metadata.Type,
     enum_alias_conflicts: *StringPool.HashMap(StringPool.Val),
 ) !void {
+
+    if (api_type_substitutes.get(t.Name)) |replacement| {
+        try writer.linef(
+            "// {s} Type '{s}' has been substituted with '{s}'",
+            .{@tagName(t.Kind), t.Name, replacement},
+        );
+        return;
+    }
+
     try generatePlatformComment(writer, t.Platform);
 
     switch (t.Kind) {
@@ -1753,6 +1767,21 @@ fn generateTypeDefinition(
             try sdk_file.tmp_func_ptr_workaround_list.append(pool_name);
         },
     }
+}
+
+const api_type_substitutes = std.StaticStringMap([]const u8).initComptime(.{
+    // D2D1_COLOR_F is just an alias to D2D_COLOR_F but in the metadata it's
+    // a distinct type, we can remove it, the only purpose of having it separate
+    // I can think of is to allow overloads, but we don't use overloading.
+    .{ "D2D1_COLOR_F", "D2D_COLOR_F" },
+});
+fn getApiRefSubstitute(type_name: []const u8, parents: []const []const u8) ?[]const u8 {
+    const replacement = api_type_substitutes.get(type_name) orelse return null;
+    if (parents.len != 0) std.debug.panic(
+        "type '{s}' has a replacement '{s}' but also has parents?",
+        .{ type_name, replacement },
+    );
+    return replacement;
 }
 
 const types_to_skip = std.StaticStringMap([]const u8).initComptime(.{
