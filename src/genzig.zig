@@ -1087,16 +1087,15 @@ fn addTypeRefsNoFormatter(sdk_file: *SdkFile, arches: ArchFlags, type_ref: json.
     }
 }
 
-const ContainerKind = enum { Struct, Union };
-pub fn getAnonKind(s: []const u8) ?ContainerKind {
-    //if (std.mem.startsWith(u8, s, "_Anonymous")) {
-    if (std.mem.endsWith(u8, s, "_e__Struct"))
-        return .Struct;
-    if (std.mem.endsWith(u8, s, "_e__Union"))
-        return .Union;
-    //    jsonPanicMsg("type '{s}' starts with '_Anonymous' but does not have an expected end", .{s});
+pub fn isAnonymousTypeName(name: []const u8) bool {
+    //if (std.mem.startsWith(u8, name, "_Anonymous")) {
+    if (std.mem.endsWith(u8, name, "_e__Struct"))
+        return true;
+    if (std.mem.endsWith(u8, name, "_e__Union"))
+        return true;
+    //    jsonPanicMsg("type '{s}' starts with '_Anonymous' but does not have an expected end", .{name});
     //}
-    return null;
+    return false;
 }
 
 // Provides access to nested types accessible from the current scope
@@ -1187,13 +1186,13 @@ fn generateTypeRefRec(sdk_file: *SdkFile, writer: *CodeWriter, self: TypeRefForm
         const name = (try jsonObjGetRequired(self.type_ref, "Name", sdk_file)).string;
         const api = (try jsonObjGetRequired(self.type_ref, "Api", sdk_file)).string;
 
-        if (getAnonKind(name)) |anon_kind| {
+        if (isAnonymousTypeName(name)) {
             const anon_types = self.options.anon_types orelse
                 jsonPanicMsg("missing anonymous type '{s}' (this scope does not have any anonymous types)!", .{name});
             const name_pool = try global_symbol_pool.add(name);
             const type_obj = anon_types.types.get(name_pool) orelse
                 jsonPanicMsg("missing anonymous type '{s}'!", .{name});
-            try generateStructOrUnionDef(sdk_file, writer, type_obj, self.arches, anon_kind, self.nested_context);
+            try generateStructOrUnionDef(sdk_file, writer, type_obj, self.arches, self.nested_context);
             try writer.write("}", .{ .nl = false });
             return;
         }
@@ -1728,9 +1727,9 @@ fn generateTypeDefinition(
     } else if (std.mem.eql(u8, kind, "Enum")) {
         try generateEnum(sdk_file, writer, type_obj, pool_name, enum_alias_conflicts, def_prefix, def_suffix);
     } else if (std.mem.eql(u8, kind, "Union")) {
-        try generateStructOrUnion(sdk_file, writer, type_obj, arches, pool_name, def_prefix, def_suffix, .Union, null);
+        try generateStructOrUnion(sdk_file, writer, type_obj, arches, pool_name, def_prefix, def_suffix, null);
     } else if (std.mem.eql(u8, kind, "Struct")) {
-        try generateStructOrUnion(sdk_file, writer, type_obj, arches, pool_name, def_prefix, def_suffix, .Struct, null);
+        try generateStructOrUnion(sdk_file, writer, type_obj, arches, pool_name, def_prefix, def_suffix, null);
     } else if (std.mem.eql(u8, kind, "FunctionPointer")) {
         if (funcPtrHasDependencyLoop(pool_name.slice)) {
             try writer.line("// TODO: this function pointer causes dependency loop problems, so it's stubbed out");
@@ -1814,14 +1813,14 @@ const AnonTypes = struct {
     }
 };
 
-fn generateStructOrUnion(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap, arches: ArchFlags, pool_name: StringPool.Val, def_prefix: []const u8, def_suffix: []const u8, kind: ContainerKind, nested_context: ?*const NestedContext) !void {
-    std.debug.assert(getAnonKind(pool_name.slice) == null);
+fn generateStructOrUnion(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap, arches: ArchFlags, pool_name: StringPool.Val, def_prefix: []const u8, def_suffix: []const u8, nested_context: ?*const NestedContext) !void {
+    std.debug.assert(!isAnonymousTypeName(pool_name.slice));
     try writer.writef("{s}", .{def_prefix}, .{ .nl = false });
-    try generateStructOrUnionDef(sdk_file, writer, type_obj, arches, kind, nested_context);
+    try generateStructOrUnionDef(sdk_file, writer, type_obj, arches, nested_context);
     try writer.linef("}}{s}", .{def_suffix});
 }
 
-fn generateStructOrUnionDef(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap, arches: ArchFlags, kind: ContainerKind, nested_context: ?*const NestedContext) anyerror!void {
+fn generateStructOrUnionDef(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: json.ObjectMap, arches: ArchFlags, nested_context: ?*const NestedContext) anyerror!void {
     try jsonObjEnforceKnownFieldsOnly(type_obj, &[_][]const u8{ "Kind", "Name", "Platform", "Architectures", "Size", "PackingSize", "Fields", "Comment", "NestedTypes" }, sdk_file);
     const struct_size = (try jsonObjGetRequired(type_obj, "Size", sdk_file)).integer;
     _ = struct_size; // ignored for now
@@ -1829,7 +1828,12 @@ fn generateStructOrUnionDef(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: j
     const struct_fields = (try jsonObjGetRequired(type_obj, "Fields", sdk_file)).array;
     const struct_nested_types = (try jsonObjGetRequired(type_obj, "NestedTypes", sdk_file)).array;
 
-    const zig_type = if (kind == .Struct) "struct" else "union";
+    const zig_type = blk: {
+        const kind = (try jsonObjGetRequired(type_obj, "Kind", sdk_file)).string;
+        if (std.mem.eql(u8, kind, "Struct")) break :blk "struct";
+        if (std.mem.eql(u8, kind, "Union")) break :blk "union";
+        jsonPanic();
+    };
 
     try writer.writef("extern {s} {{", .{zig_type}, .{ .start = .any });
     writer.depth += 1;
@@ -1850,7 +1854,7 @@ fn generateStructOrUnionDef(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: j
         const nested_tmp_name = (try jsonObjGetRequired(nested_type_obj, "Name", sdk_file)).string;
         const architectures = (try jsonObjGetRequired(nested_type_obj, "Architectures", sdk_file)).array;
         const pool_name = try global_symbol_pool.add(nested_tmp_name);
-        if (getAnonKind(nested_tmp_name)) |_| {
+        if (isAnonymousTypeName(nested_tmp_name)) {
             if (architectures.items.len > 0) // we don't handle architectures in this case
                 jsonPanicMsg("not impl", .{});
             try anon_types.types.put(pool_name, nested_type_obj);
@@ -1860,9 +1864,9 @@ fn generateStructOrUnionDef(sdk_file: *SdkFile, writer: *CodeWriter, type_obj: j
             //defer allocator.free(def_prefix);
             try writer.writef("pub const {s} = ", .{pool_name}, .{ .nl = false });
             if (std.mem.eql(u8, nested_kind, "Union")) {
-                try generateStructOrUnionDef(sdk_file, writer, nested_type_obj, arches, .Union, this_nested_context);
+                try generateStructOrUnionDef(sdk_file, writer, nested_type_obj, arches, this_nested_context);
             } else if (std.mem.eql(u8, nested_kind, "Struct")) {
-                try generateStructOrUnionDef(sdk_file, writer, nested_type_obj, arches, .Struct, this_nested_context);
+                try generateStructOrUnionDef(sdk_file, writer, nested_type_obj, arches, this_nested_context);
             } else jsonPanicMsg("not impl", .{});
             try writer.line("};");
         }
