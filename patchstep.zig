@@ -2,8 +2,8 @@ const builtin = @import("builtin");
 const std = @import("std");
 const Step = std.Build.Step;
 
-pub const MakeFn = *const fn (self: *Step, prog_node: std.Progress.Node) anyerror!void;
-const PatchFn = *const fn (step: *Step, prog_node: std.Progress.Node, original_make_fn: MakeFn) anyerror!void;
+pub const MakeFn = *const fn (self: *Step, options: Step.MakeOptions) anyerror!void;
+const PatchFn = *const fn (step: *Step, options: Step.MakeOptions, original_make_fn: MakeFn) anyerror!void;
 
 const Patch = struct {
     original_make_fn: MakeFn,
@@ -31,8 +31,8 @@ pub fn patch(step: *Step, patch_fn: PatchFn) void {
     step.makeFn = patchMake;
 }
 
-fn patchMake(step: *Step, prog_node: std.Progress.Node) anyerror!void {
+fn patchMake(step: *Step, options: Step.MakeOptions) anyerror!void {
     const p = global_step_map.?.get(step) orelse
         std.debug.panic("patchMake was used on a step ({s}) that wasn't in the global step map???", .{step.name});
-    return p.patch_make_fn(step, prog_node, p.original_make_fn);
+    return p.patch_make_fn(step, options, p.original_make_fn);
 }

@@ -458,7 +458,7 @@ fn readComOverloads(api_map: *std.StringHashMap(ComTypeMap), filename: []const u
     var line_number: u32 = 1;
     while (lines.next()) |line| : (line_number += 1) {
         if (line.len == 0) continue;
-        var field_it = std.mem.tokenize(u8, line, " ");
+        var field_it = std.mem.tokenizeScalar(u8, line, ' ');
         const api = field_it.next() orelse continue;
         const com_type = field_it.next() orelse fatal(
             "{s} line {}: missing type field", .{filename, line_number}
@@ -684,7 +684,7 @@ fn readAndGenerateApiFile(
     var depth: u2 = 0;
 
     {
-        var it = std.mem.tokenize(u8, zig_name, ".");
+        var it = std.mem.tokenizeScalar(u8, zig_name, '.');
         while (it.next()) |name_part| {
             if (module != root_module) {
                 depth += 1;
@@ -1013,18 +1013,18 @@ fn addTypeRefs(
 fn addTypeRefsNoFormatter(sdk_file: *SdkFile, arches: metadata.Architectures, type_ref: metadata.TypeRef) anyerror!void {
 
     switch (type_ref) {
-        .Native => |native| switch (native.Name) {
+        .native => |native| switch (native.Name) {
             .Guid => sdk_file.uses_guid = true,
             else => {},
         },
-        .ApiRef => |api_ref| {
+        .api_ref => |api_ref| {
             const name = getApiRefSubstitute(api_ref.Name, api_ref.Parents) orelse api_ref.Name;
             try sdk_file.addApiImport(arches, name, api_ref.Api, api_ref.Parents);
         },
-        .PointerTo => |to| try addTypeRefsNoFormatter(sdk_file, arches, to.Child.*),
-        .Array => |a| try addTypeRefsNoFormatter(sdk_file, arches, a.Child.*),
-        .LPArray => |a| try addTypeRefsNoFormatter(sdk_file, arches, a.Child.*),
-        .MissingClrType => {},
+        .pointer_to => |to| try addTypeRefsNoFormatter(sdk_file, arches, to.Child.*),
+        .array => |a| try addTypeRefsNoFormatter(sdk_file, arches, a.Child.*),
+        .lp_array => |a| try addTypeRefsNoFormatter(sdk_file, arches, a.Child.*),
+        .missing_clr_type => {},
     }
 }
 
@@ -1172,11 +1172,11 @@ fn generateTypeRefRec(
     depth_context: DepthContext,
 ) anyerror!void {
     switch (self.type_ref) {
-        .Native => |native| {
+        .native => |native| {
             const zig_type = zigTypeFromTypeRefNative(native.Name, depth_context);
             try writer.writef("{s}", .{zig_type}, .{ .start = .any, .nl = false });
         },
-        .ApiRef => |api_ref| {
+        .api_ref => |api_ref| {
             const name = getApiRefSubstitute(api_ref.Name, api_ref.Parents) orelse api_ref.Name;
             if (isAnonymousTypeName(name)) {
                 const anon_types = self.options.anon_types orelse
@@ -1185,12 +1185,8 @@ fn generateTypeRefRec(
                 const t = anon_types.types.get(name_pool) orelse
                     jsonPanicMsg("missing anonymous type '{s}'!", .{name_pool});
                 switch (t.Kind) {
-                    .Struct => try generateStructOrUnionDef(
-                        sdk_file, writer, t, self.nested_context
-                    ),
-                    .Union => try generateStructOrUnionDef(
-                        sdk_file, writer, t, self.nested_context
-                    ),
+                    .Struct => try generateStructOrUnionDef(sdk_file, writer, t, self.nested_context),
+                    .Union => try generateStructOrUnionDef(sdk_file, writer, t, self.nested_context),
                     else => jsonPanic(),
                 }
                 try writer.write("}", .{ .nl = false });
@@ -1271,7 +1267,7 @@ fn generateTypeRefRec(
             //}
             try writer.writef("{s}", .{name}, .{ .start = .any, .nl = false });
         },
-        .PointerTo => |to| {
+        .pointer_to => |to| {
             var child_options = self.options;
             if (self.options.reason == .var_decl and self.options.null_modifier & 1 == 0) {
                 try writer.write("?", .{ .start = .any, .nl = false });
@@ -1289,7 +1285,7 @@ fn generateTypeRefRec(
                 to.Child.*, self.arches, child_options, self.nested_context
             ), .child);
         },
-        .Array => |array| {
+        .array => |array| {
             const shape_size: u32 = init: {
                 if (array.Shape) |shape| break :init shape.Size;
                 // TODO: should we use size 1 here?
@@ -1300,7 +1296,7 @@ fn generateTypeRefRec(
                 array.Child.*, self.arches, self.options, self.nested_context
             ), .child);
         },
-        .LPArray => |array| {
+        .lp_array => |array| {
             var child_options = self.options;
             if (self.options.optional) {
                 child_options.optional = false;
@@ -1329,7 +1325,7 @@ fn generateTypeRefRec(
                 ), .array);
             }
         },
-        .MissingClrType => |t| try writer.writef(
+        .missing_clr_type => |t| try writer.writef(
             "*struct{{comment: []const u8 = \"MissingClrType {s}.{s}\"}}",
             .{ t.Name, t.Namespace },
             .{ .start = .any, .nl = false },
@@ -1370,7 +1366,7 @@ fn zigTypeFromTypeRefNative(
 
 fn isByteOrCharOrUInt16Type(type_ref: metadata.TypeRef) bool {
     return switch (type_ref) {
-        .Native => |t| switch (t.Name) {
+        .native => |t| switch (t.Name) {
             .Byte, .Char, .UInt16 => true,
             else => false,
         },
@@ -1457,9 +1453,9 @@ fn generateConstant(sdk_file: *SdkFile, writer: *CodeWriter, constant: metadata.
 
     const zig_type_formatter = try addTypeRefs(sdk_file, .{}, constant.Type, options, null);
 
-    if (constant.Type == .Native) {
+    if (constant.Type == .native) {
         jsonEnforce(constant.ValueType != .PropertyKey);
-        if (constant.Type.Native.Name == .Guid) {
+        if (constant.Type.native.Name == .Guid) {
             try writer.linef("pub const {s} = Guid.initString({});", .{
                 name_pool,
                 fmtConstValue(constant.ValueType, constant.Value, sdk_file),
@@ -1546,7 +1542,7 @@ const CodeWriter = struct {
             }
             self.midline = true;
         }
-        if (@typeInfo(@TypeOf(args)).Struct.fields.len == 0) {
+        if (@typeInfo(@TypeOf(args)).@"struct".fields.len == 0) {
             try self.writer.writeAll(fmt ++ (if (opt.nl) "\n" else ""));
         } else {
             try self.writer.print(fmt ++ (if (opt.nl) "\n" else ""), args);
@@ -1671,14 +1667,14 @@ fn generateTypeDefinition(
                 // verify the definition is what we expect, if not, we might be able to remove out workaround
                 //
                 const child_generic = switch (typedef.Def) {
-                    .PointerTo => |to| to.Child,
+                    .pointer_to => |to| to.Child,
                     else => jsonPanicMsg(
                         "definition of {s} has changed! (Def.Kind != PointerTo, it is {s})",
                         .{ t.Name, @tagName(typedef.Def) },
                     ),
                 };
                 const child_native = switch (child_generic.*) {
-                    .Native => |*n| n,
+                    .native => |*n| n,
                     else => jsonPanicMsg(
                         "definition of {s} has changed! (Def.Child.Kind != Native, it is {s})",
                         .{pool_name, @tagName(child_generic.*)},
