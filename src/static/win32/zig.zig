@@ -180,20 +180,15 @@ pub fn fmtError(error_code: u32) FormatError(300) {
 pub fn FormatError(comptime max_len: usize) type {
     return struct {
         error_code: u32,
-        pub fn format(
-            self: @This(),
-            comptime fmt: []const u8,
-            options: std.fmt.FormatOptions,
-            writer: anytype,
-        ) @TypeOf(writer).Error!void {
-            _ = options;
 
-            const with_code = comptime blk: {
-                if (std.mem.eql(u8, fmt, "")) break :blk true;
-                if (std.mem.eql(u8, fmt, "s")) break :blk false;
-                @compileError("expected '{}' or '{s}' but got '{" ++ fmt ++ "}'");
-            };
-            if (with_code) try writer.print("{} (", .{self.error_code});
+        // TODO: Need to call this via std.fmt.alt(FormatError, .formatWithCode) where needed
+        pub fn formatWithCode(self: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
+            try writer.print("{} (", .{self.error_code});
+            try self.format(writer);
+            try writer.writeAll(")");
+        }
+
+        pub fn format(self: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
             var buf: [max_len]u8 = undefined;
             const len = win32.FormatMessageA(
                 .{ .FROM_SYSTEM = 1, .IGNORE_INSERTS = 1 },
@@ -212,7 +207,6 @@ pub fn FormatError(comptime max_len: usize) type {
             if (len + 1 >= buf.len) {
                 try writer.writeAll("...");
             }
-            if (with_code) try writer.writeAll(")");
         }
     };
 }
@@ -476,19 +470,19 @@ fn typedConst2_0_13(comptime ReturnType: type, comptime SwitchType: type, compti
     const value_type_error = @as([]const u8, "typedConst cannot convert " ++ @typeName(@TypeOf(value)) ++ " to " ++ @typeName(ReturnType));
 
     switch (@typeInfo(SwitchType)) {
-        .Int => |target_type_info| {
+        .int => |target_type_info| {
             if (value >= std.math.maxInt(SwitchType)) {
                 if (target_type_info.signedness == .signed) {
-                    const UnsignedT = @Type(std.builtin.Type{ .Int = .{ .signedness = .unsigned, .bits = target_type_info.bits } });
+                    const UnsignedT = @Type(std.builtin.Type{ .int = .{ .signedness = .unsigned, .bits = target_type_info.bits } });
                     return @as(SwitchType, @bitCast(@as(UnsignedT, value)));
                 }
             }
             return value;
         },
-        .Pointer => |target_type_info| switch (target_type_info.size) {
+        .pointer => |target_type_info| switch (target_type_info.size) {
             .One, .Many, .C => {
                 switch (@typeInfo(@TypeOf(value))) {
-                    .ComptimeInt, .Int => {
+                    .comptime_int, .int => {
                         const usize_value = if (value >= 0) value else @as(usize, @bitCast(@as(isize, value)));
                         return @as(ReturnType, @ptrFromInt(usize_value));
                     },
@@ -497,12 +491,12 @@ fn typedConst2_0_13(comptime ReturnType: type, comptime SwitchType: type, compti
             },
             else => target_type_error,
         },
-        .Optional => |target_type_info| switch (@typeInfo(target_type_info.child)) {
-            .Pointer => return typedConst2_0_13(ReturnType, target_type_info.child, value),
+        .optional => |target_type_info| switch (@typeInfo(target_type_info.child)) {
+            .pointer => return typedConst2_0_13(ReturnType, target_type_info.child, value),
             else => target_type_error,
         },
-        .Enum => |_| switch (@typeInfo(@TypeOf(value))) {
-            .Int => return @as(ReturnType, @enumFromInt(value)),
+        .@"enum" => |_| switch (@typeInfo(@TypeOf(value))) {
+            .int => return @as(ReturnType, @enumFromInt(value)),
             else => target_type_error,
         },
         else => @compileError(target_type_error),

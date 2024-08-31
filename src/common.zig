@@ -38,14 +38,7 @@ pub fn asciiLessThanIgnoreCase(_: void, lhs: []const u8, rhs: []const u8) bool {
 fn SliceFormatter(comptime T: type, comptime spec: []const u8) type {
     return struct {
         slice: []const T,
-        pub fn format(
-            self: @This(),
-            comptime fmt: []const u8,
-            options: std.fmt.FormatOptions,
-            writer: anytype,
-        ) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
             var first: bool = true;
             for (self.slice) |e| {
                 if (first) {
@@ -53,7 +46,7 @@ fn SliceFormatter(comptime T: type, comptime spec: []const u8) type {
                 } else {
                     try writer.writeAll(", ");
                 }
-                try std.fmt.format(writer, "{" ++ spec ++ "}", .{e});
+                try writer.printValue(spec, .{}, e, std.options.fmt_max_depth);
             }
         }
     };
@@ -86,20 +79,16 @@ pub fn jsonEnforceMsg(cond: bool, comptime msg: []const u8, args: anytype) void 
 
 const JsonFormatter = struct {
     value: std.json.Value,
-    pub fn format(
-        self: JsonFormatter,
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        _ = fmt;
-        _ = options;
+    pub fn format(self: JsonFormatter, writer: *std.io.Writer) std.io.Writer.Error!void {
         switch (self.value) {
             // avoid issues where std.json adds quotes to big numbers
             // (potential fix: https://github.com/ziglang/zig/pull/16707)
-            .integer => |i| try std.fmt.formatIntValue(i, "", .{}, writer),
+            .integer => |i| try writer.printInt(i, 10, .lower, .{}),
             .number_string => |s| try writer.writeAll(s),
-            else => try std.json.stringify(self.value, .{}, writer),
+
+            // TODO: Compile error until https://github.com/ziglang/zig/issues/24468 is resolved
+            //else => try std.json.stringify(self.value, .{}, writer),
+            else => try writer.writeAll("TODO"),
         }
     }
 };
@@ -119,14 +108,7 @@ pub fn fmtJson(value: anytype) JsonFormatter {
 pub const ComInterface = struct {
     name: []const u8,
     api: []const u8,
-    pub fn format(
-        self: ComInterface,
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        _ = fmt;
-        _ = options;
+    pub fn format(self: ComInterface, writer: *std.io.Writer) std.io.Writer.Error!void {
         try writer.print(
             "{{\"Kind\":\"ApiRef\",\"Name\":\"{s}\",\"TargetKind\":\"Com\",\"Api\":\"{s}\",\"Parents\":[]}}",
             .{ self.name, self.api },
@@ -136,7 +118,7 @@ pub const ComInterface = struct {
 
 pub fn getComInterface(type_ref: metadata.TypeRef) ComInterface {
     const api_ref = switch (type_ref) {
-        .ApiRef => |r| r,
+        .api_ref => |r| r,
         else => jsonPanic(),
     };
     jsonEnforce(api_ref.TargetKind == .Com);
