@@ -43,7 +43,7 @@ pub const StringPool = struct {
     /// of the given string, return the existing string from this pool.
     /// Otherwise, create a copy of this string, add it to the pool and return
     /// the new copy.
-    pub fn add(self: *@This(), s: []const u8) !Val {
+    pub fn add(self: *@This(), s: []const u8) error{OutOfMemory}!Val {
         if (self.map.get(s)) |entry| {
             return entry;
         }
@@ -89,6 +89,9 @@ pub const StringPool = struct {
 
     pub fn HashMap(comptime V: type) type {
         return std.HashMap(Val, V, HashContext, std.hash_map.default_max_load_percentage);
+    }
+    pub fn HashMapUnmanaged(comptime V: type) type {
+        return std.HashMapUnmanaged(Val, V, HashContext, std.hash_map.default_max_load_percentage);
     }
 };
 

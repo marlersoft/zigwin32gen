@@ -65,6 +65,21 @@ pub fn build(b: *Build) !void {
         break :blk out_file;
     };
 
+    const newpass1_out_dir = blk: {
+        const exe = b.addExecutable(.{
+            .name = "newpass1",
+            .root_source_file = b.path("src/newpass1.zig"),
+            .optimize = optimize,
+            .target = b.host,
+        });
+        const run = b.addRunArtifact(exe);
+        run.addDirectoryArg(win32json_dep.path(""));
+        const out_dir = run.addOutputDirectoryArg("newpass1");
+        b.step("newpass1", "Reorganize metadata by DLL").dependOn(&run.step);
+        break :blk out_dir;
+    };
+    _ = newpass1_out_dir;
+
     const gen_out_dir = blk: {
         const exe = b.addExecutable(.{
             .name = "genzig",

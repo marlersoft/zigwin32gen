@@ -292,7 +292,7 @@ pub fn main() !u8 {
     // no need to free
     try readComOverloads(&global_com_overloads, com_overloads_filename);
 
-    try cleanDir(std.fs.cwd(), zigwin32_out_path);
+    try common.cleanDir(std.fs.cwd(), zigwin32_out_path);
     var out_dir = try std.fs.cwd().openDir(zigwin32_out_path, .{});
     defer out_dir.close();
     try out_dir.makeDir("win32");
@@ -3252,26 +3252,5 @@ fn removeCr(comptime s: []const u8) [withoutCrLen(s):0]u8 {
         }
         std.debug.assert(i == len);
         return without_cr;
-    }
-}
-
-fn cleanDir(dir: std.fs.Dir, sub_path: []const u8) !void {
-    std.log.info("cleandir '{s}'", .{sub_path});
-    try dir.deleteTree(sub_path);
-    const MAX_ATTEMPTS = 30;
-    var attempt: u32 = 1;
-    while (true) : (attempt += 1) {
-        if (attempt > MAX_ATTEMPTS)
-            fatal("failed to delete '{s}' after {} attempts", .{ sub_path, MAX_ATTEMPTS });
-
-        // ERROR: windows.OpenFile is not handling error.Unexpected NTSTATUS=0xc0000056
-        dir.makeDir(sub_path) catch |e| switch (e) {
-            else => {
-                std.debug.print("[DEBUG] makedir failed with {}\n", .{e});
-                //std.process.exit(0xff);
-                continue;
-            },
-        };
-        break;
     }
 }
