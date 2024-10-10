@@ -299,7 +299,6 @@ pub fn main() !u8 {
 
     const static_zig_files = [_][]const u8 {
         "zig",
-        "missing",
         "windowlongptr",
     };
 
@@ -528,8 +527,6 @@ fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !vo
         \\
         \\pub const zig = @import("zig.zig");
         \\pub const L = zig.L;
-        \\
-        \\pub usingnamespace @import("missing.zig");
         \\
     ));
 
