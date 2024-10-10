@@ -48,11 +48,12 @@ pub export fn wWinMain(
         )) |hwnd| {
             std.log.info("atom={} CreateWindow success", .{atom});
             if (0 == win32.DestroyWindow(hwnd))
-                fatal("DestroyWindow failed, error={s}", .{@tagName(win32.GetLastError())});
+                fatal("DestroyWindow failed with {}", .{win32.GetLastError().fmt()});
         } else {
-            std.log.info("atom={} CreateWindow failed with {s} (this is fine)", .{atom, @tagName(win32.GetLastError())});
+            std.log.info("atom={} CreateWindow failed with {} (this is fine)", .{atom, win32.GetLastError().fmt()});
         }
     }
+
     {
         const CLASS_NAME = L("Sample Window Class");
         const wc = win32.WNDCLASS {
@@ -70,7 +71,7 @@ pub export fn wWinMain(
         };
         const atom = win32.RegisterClass(&wc);
         if (0 == atom)
-            fatal("RegisterClass failed, error={s}", .{@tagName(win32.GetLastError())});
+            fatal("RegisterClass failed with {}", .{win32.GetLastError().fmt()});
         const hwnd = win32.CreateWindowEx(
             .{},
             @ptrFromInt(atom),
@@ -82,9 +83,9 @@ pub export fn wWinMain(
             null,       // Menu
             hInstance,  // Instance handle
             null        // Additional application data
-        ) orelse fatal("CreateWindow failed, error={s}", .{@tagName(win32.GetLastError())});
+        ) orelse fatal("CreateWindow failed with {}", .{win32.GetLastError().fmt()});
         if (0 == win32.DestroyWindow(hwnd))
-            fatal("DestroyWindow failed, error={s}", .{@tagName(win32.GetLastError())});
+            fatal("DestroyWindow failed with {}", .{win32.GetLastError().fmt()});
     }
 
     {

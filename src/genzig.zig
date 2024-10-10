@@ -2224,7 +2224,35 @@ fn generateEnum(
             }
         }
         if (non_exhaustive_enums.get(pool_name.slice)) |_| {
-            try writer.linef("    _,", .{});
+            writer.depth += 1;
+            defer writer.depth -= 1;
+            try writer.linef("_,", .{});
+            try writer.linef("pub fn tagName(self: {s}) ?[:0]const u8 {{", .{pool_name});
+            try writer.line( "    return switch (self) {");
+            for (values) |val| {
+                if (val.conflict_index) |_| continue;
+                try writer.linef("        .{p} => \"{}\",", .{
+                    std.zig.fmtId(val.short_name),
+                    std.zig.fmtEscapes(val.short_name),
+                });
+            }
+            try writer.line( "        else => null,");
+            try writer.line( "    };");
+            try writer.line( "}");
+            try writer.linef("pub fn fmt(self: {s}) Fmt {{ return .{{ .value = self }}; }}", .{pool_name});
+            try writer.line( "pub const Fmt = struct {");
+            try writer.linef("    value: {s},", .{pool_name});
+            try writer.line( "    pub fn format(");
+            try writer.line( "        self: Fmt,");
+            try writer.line( "        comptime fmt_spec: []const u8,");
+            try writer.line( "        options: @import(\"std\").fmt.FormatOptions,");
+            try writer.line( "        writer: anytype,");
+            try writer.line( "    ) !void {");
+            try writer.line( "        _ = fmt_spec;");
+            try writer.line( "        _ = options;");
+            try writer.line( "        try writer.print(\"{s}({})\", .{self.value.tagName() orelse \"?\", @intFromEnum(self.value)});");
+            try writer.line( "    }");
+            try writer.line( "};");
         }
     }
     if (type_enum.Flags) {

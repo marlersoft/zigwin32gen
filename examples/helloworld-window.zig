@@ -47,7 +47,7 @@ pub export fn wWinMain(
     };
 
     if (0 == win32.RegisterClass(&wc))
-        fatal("RegisterClass failed, error={s}", .{@tagName(win32.GetLastError())});
+        fatal("RegisterClass failed with {}", .{win32.GetLastError().fmt()});
 
     const hwnd = win32.CreateWindowEx(
         .{},
@@ -60,7 +60,7 @@ pub export fn wWinMain(
         null,       // Menu
         hInstance,  // Instance handle
         null        // Additional application data
-    ) orelse fatal("CreateWindow failed, error={s}", .{@tagName(win32.GetLastError())});
+    ) orelse fatal("CreateWindow failedwith {}", .{win32.GetLastError().fmt()});
 
     _ = win32.ShowWindow(hwnd, .{ .SHOWNORMAL = 1 });
 
