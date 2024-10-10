@@ -142,6 +142,7 @@ pub fn build(b: *Build) !void {
     try addExample(b, arches, optimize, win32, "helloworld", .Console, examples_step);
     try addExample(b, arches, optimize, win32, "wasapi", .Console, examples_step);
     try addExample(b, arches, optimize, win32, "net", .Console, examples_step);
+    try addExample(b, arches, optimize, win32, "tests", .Console, examples_step);
 
     try addExample(b, arches, optimize, win32, "helloworld-window", .Windows, examples_step);
     try addExample(b, arches, optimize, win32, "d2dcircle", .Windows, examples_step);
