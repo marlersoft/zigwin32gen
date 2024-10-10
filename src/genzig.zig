@@ -526,7 +526,8 @@ fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !vo
         \\//! This module contains aliases to ALL symbols inside the Win32 SDK.  It allows
         \\//! an application to access any and all symbols through a single import.
         \\
-        \\pub const L = @import("zig.zig").L;
+        \\pub const zig = @import("zig.zig");
+        \\pub const L = zig.L;
         \\
         \\pub usingnamespace @import("missing.zig");
         \\
