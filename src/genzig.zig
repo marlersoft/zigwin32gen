@@ -1951,6 +1951,7 @@ fn generateStructOrUnionDef(
 // I'll default to all of them being exhaustive except the ones
 // in this list that I know are currently not exhaustive.
 const non_exhaustive_enums = std.StaticStringMap(void).initComptime(.{
+    .{ "WIN32_ERROR" },
     // This enum is not exhaustive because it is missing a value, see
     //     https://github.com/microsoft/win32metadata/issues/203
     .{ "CLSCTX" },
