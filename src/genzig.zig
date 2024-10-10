@@ -527,6 +527,12 @@ fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !vo
         \\
         \\pub const zig = @import("zig.zig");
         \\pub const L = zig.L;
+        \\pub const getWindowLongPtr = zig.getWindowLongPtr;
+        \\pub const setWindowLongPtr = zig.setWindowLongPtr;
+        \\pub const getWindowLongPtrA = zig.getWindowLongPtrA;
+        \\pub const setWindowLongPtrA = zig.setWindowLongPtrA;
+        \\pub const getWindowLongPtrW = zig.getWindowLongPtrW;
+        \\pub const setWindowLongPtrW = zig.setWindowLongPtrW;
         \\
     ));
 
