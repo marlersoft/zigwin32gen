@@ -533,6 +533,9 @@ fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !vo
         \\pub const setWindowLongPtrA = zig.setWindowLongPtrA;
         \\pub const getWindowLongPtrW = zig.getWindowLongPtrW;
         \\pub const setWindowLongPtrW = zig.setWindowLongPtrW;
+        \\pub const scaleDpi = zig.scaleDpi;
+        \\pub const dpiFromHwnd = zig.dpiFromHwnd;
+        \\pub const invalidateHwnd = zig.invalidateHwnd;
         \\
     ));
 

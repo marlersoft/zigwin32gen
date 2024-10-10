@@ -57,13 +57,27 @@ pub export fn wWinMain(
         win32.WS_OVERLAPPEDWINDOW,
         win32.CW_USEDEFAULT, // x
         win32.CW_USEDEFAULT, // y
-        400, // width
-        200, // height
+        0, // width
+        0, // height
         null, // parent window
         null, // menu
         hInstance,
         null, // Additional application data
     ) orelse std.debug.panic("CreateWindow failed with {}", .{win32.GetLastError().fmt()});
+
+    const dpi = win32.dpiFromHwnd(hwnd);
+    if (0 == win32.SetWindowPos(
+        hwnd,
+        null,
+        0,
+        0,
+        win32.scaleDpi(i32, 600, dpi),
+        win32.scaleDpi(i32, 400, dpi),
+        .{ .NOMOVE = 1 },
+    )) std.debug.panic(
+        "SetWindowPos failed with {}",
+        .{win32.GetLastError().fmt()},
+    );
 
     _ = win32.ShowWindow(hwnd, .{ .SHOWNORMAL = 1 });
 
@@ -90,12 +104,23 @@ fn WindowProc(
             win32.PostQuitMessage(0);
             return 0;
         },
+        win32.WM_DPICHANGED => win32.invalidateHwnd(hwnd),
         win32.WM_PAINT => {
             var ps: win32.PAINTSTRUCT = undefined;
             const hdc = win32.BeginPaint(hwnd, &ps);
             _ = win32.FillRect(hdc, &ps.rcPaint, @ptrFromInt(@intFromEnum(win32.COLOR_WINDOW) + 1));
             const msg = win32.L("A window for testing things.");
             _ = win32.TextOutW(hdc, 20, 20, msg.ptr, msg.len);
+            {
+                var buf: [100]u8 = undefined;
+                const text = std.fmt.bufPrint(
+                    @ptrCast(&buf),
+                    "dpi is {}",
+                    .{win32.dpiFromHwnd(hwnd)},
+                ) catch unreachable;
+                // TODO: the text.ptr argument doesn't require null termination, fix the binding
+                _ = win32.TextOutA(hdc, 20, 50, @ptrCast(text.ptr), @intCast(text.len));
+            }
             _ = win32.EndPaint(hwnd, &ps);
             return 0;
         },
