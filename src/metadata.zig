@@ -375,7 +375,7 @@ pub const Architectures = struct {
         _ = allocator;
         _ = options;
         if (.array_begin != try source.next()) return error.UnexpectedToken;
-        const filter_struct_info = @typeInfo(Filter).Struct;
+        const filter_struct_info = @typeInfo(Filter).@"struct";
         var result: Architectures = .{};
         while (true) {
             switch (try source.next()) {
@@ -473,28 +473,28 @@ const TargetKind = enum {
 };
 
 const TypeRefKind = enum {
-    Native,
-    ApiRef,
-    PointerTo,
-    Array,
-    LPArray,
-    MissingClrType,
+    native,
+    api_ref,
+    pointer_to,
+    array,
+    lp_array,
+    missing_clr_type,
 };
 const type_ref_kinds = std.StaticStringMap(TypeRefKind).initComptime(.{
-    .{ "Native", .Native },
-    .{ "ApiRef", .ApiRef },
-    .{ "PointerTo", .PointerTo },
-    .{ "Array", .Array },
-    .{ "LPArray", .LPArray },
-    .{ "MissingClrType", .MissingClrType },
+    .{ "Native", .native },
+    .{ "ApiRef", .api_ref },
+    .{ "PointerTo", .pointer_to },
+    .{ "Array", .array },
+    .{ "LPArray", .lp_array },
+    .{ "MissingClrType", .missing_clr_type },
 });
 pub const TypeRef = union(TypeRefKind) {
-    Native: TypeRef.Native,
-    ApiRef: ApiRef,
-    PointerTo: PointerTo,
-    Array: Array,
-    LPArray: LPArray,
-    MissingClrType: MissingClrType,
+    native: TypeRef.Native,
+    api_ref: ApiRef,
+    pointer_to: PointerTo,
+    array: Array,
+    lp_array: LPArray,
+    missing_clr_type: MissingClrType,
     pub const Native = struct {
         Name: TypeRefNative,
     };
@@ -544,23 +544,23 @@ pub const TypeRef = union(TypeRefKind) {
     ) std.json.ParseError(@TypeOf(source.*))!TypeRef {
         if (.object_begin != try source.next()) return error.UnexpectedToken;
         switch (try jsonParseUnionKind(TypeRefKind, "TypeRef", source, type_ref_kinds)) {
-            .Native => return .{
-                .Native = try parseUnionObject(TypeRef.Native, allocator, source, options),
+            .native => return .{
+                .native = try parseUnionObject(TypeRef.Native, allocator, source, options),
             },
-            .ApiRef => return .{
-                .ApiRef = try parseUnionObject(ApiRef, allocator, source, options),
+            .api_ref => return .{
+                .api_ref = try parseUnionObject(ApiRef, allocator, source, options),
             },
-            .PointerTo => return .{
-                .PointerTo = try parseUnionObject(PointerTo, allocator, source, options),
+            .pointer_to => return .{
+                .pointer_to = try parseUnionObject(PointerTo, allocator, source, options),
             },
-            .Array => return .{
-                .Array = try parseUnionObject(Array, allocator, source, options),
+            .array => return .{
+                .array = try parseUnionObject(Array, allocator, source, options),
             },
-            .LPArray => return .{
-                .LPArray = try parseUnionObject(LPArray, allocator, source, options),
+            .lp_array => return .{
+                .lp_array = try parseUnionObject(LPArray, allocator, source, options),
             },
-            .MissingClrType => return .{
-                .MissingClrType = try parseUnionObject(MissingClrType, allocator, source, options),
+            .missing_clr_type => return .{
+                .missing_clr_type = try parseUnionObject(MissingClrType, allocator, source, options),
             },
         }
     }
@@ -573,7 +573,7 @@ fn parseAttrsArray(
     options: std.json.ParseOptions,
 ) std.json.ParseError(@TypeOf(source.*))!Attrs {
     const structInfo = switch (@typeInfo(Attrs)) {
-        .Struct => |i| i,
+        .@"struct" => |i| i,
         else => @compileError("Unable to parse attribute array into non-struct type '" ++ @typeName(Attrs) ++ "'"),
     };
 
@@ -682,7 +682,7 @@ pub fn parseUnionObject(
     options: std.json.ParseOptions,
 ) !T {
     const structInfo = switch (@typeInfo(T)) {
-        .Struct => |i| i,
+        .@"struct" => |i| i,
         else => @compileError("Unable to parse into non-struct type '" ++ @typeName(T) ++ "'"),
     };
 
