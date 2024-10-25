@@ -7,9 +7,9 @@
       "EnumResourceLanguagesExW": ["lpType"],
       "EnumResourceNamesW": ["lpType"],
       "EnumResourceNamesExW": ["lpType"],
-      "FindResourceW": ["lpType"],
-      "FindResourceExW": ["lpType"],
-      "UpdateResourceW": ["lpType"]
+      "FindResourceW": ["lpType", "lpName"],
+      "FindResourceExW": ["lpType", "lpName"],
+      "UpdateResourceW": ["lpType", "lpName"]
     },
     "Constants": []
   },
