@@ -97,8 +97,10 @@ fn WindowProc(
 ) callconv(WINAPI) win32.LRESULT {
     switch (uMsg) {
         win32.WM_CREATE => {
-            std.debug.assert(0 == win32.setWindowLongPtrW(hwnd, 0, 0x1234));
-            std.debug.assert(0x1234 == win32.getWindowLongPtrW(hwnd, 0));
+            if (win32.has_window_longptr) {
+                std.debug.assert(0 == win32.setWindowLongPtrW(hwnd, 0, 0x1234));
+                std.debug.assert(0x1234 == win32.getWindowLongPtrW(hwnd, 0));
+            }
         },
         win32.WM_DESTROY => {
             win32.PostQuitMessage(0);
