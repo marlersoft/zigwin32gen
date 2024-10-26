@@ -135,10 +135,10 @@ pub const ComInterface = struct {
 };
 
 pub fn getComInterface(
-    type_ref: metadata.TypeRef
+    type_ref: metadata.TypeRef,
 ) ComInterface {
     const api_ref = switch (type_ref) {
-        .ApiRef => |r| r,
+        .api_ref => |r| r,
         else => jsonPanic(),
     };
     jsonEnforce(api_ref.TargetKind == .Com);
