@@ -4,19 +4,11 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const desc_line_prefix = [_]u8{ ' ' } **  31;
-    const nofetch = b.option(
-        bool,
-        "nofetch",
-        "disable fetching from main on every build"
-    ) orelse false;
-    const noclean = b.option(
-        bool,
-        "noclean",
-        "disable cleaning the zigwin32gen repo on every build.\n" ++ desc_line_prefix ++
+    const desc_line_prefix = [_]u8{' '} ** 31;
+    const nofetch = b.option(bool, "nofetch", "disable fetching from main on every build") orelse false;
+    const noclean = b.option(bool, "noclean", "disable cleaning the zigwin32gen repo on every build.\n" ++ desc_line_prefix ++
         "useful if you know zigwin32gen doesn't have junk and\n" ++ desc_line_prefix ++
-        "you're wanting a faster edit/test for release.zig."
-    ) orelse false;
+        "you're wanting a faster edit/test for release.zig.") orelse false;
 
     const gen_repo = b.path("zigwin32gen");
 
@@ -31,11 +23,9 @@ pub fn build(b: *std.Build) void {
         run.has_side_effects = if (nofetch) false else true;
         run.addDirectoryArg(gen_repo);
         const sha_file = run.addOutputFileArg("mainsha");
-        b.step("fetchmain", (
-            "Fetches the main branch in zigwin32gen\n" ++ desc_line_prefix ++
+        b.step("fetchmain", ("Fetches the main branch in zigwin32gen\n" ++ desc_line_prefix ++
             "and stores its sha in a file for other\n" ++ desc_line_prefix ++
-            "steps to use as an input."
-        )).dependOn(&run.step);
+            "steps to use as an input.")).dependOn(&run.step);
         break :blk sha_file;
     };
 

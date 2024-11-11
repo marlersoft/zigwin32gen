@@ -38,7 +38,7 @@ pub fn run(
     try child.spawn();
     const term = try child.wait();
     if (childProcFailed(term)) {
-        fatal("{s} {}", .{name, fmtTerm(term)});
+        fatal("{s} {}", .{ name, fmtTerm(term) });
     }
 }
 
@@ -54,7 +54,7 @@ const FormatArgv = struct {
         _ = options;
         var prefix: []const u8 = "";
         for (self.argv) |arg| {
-            try writer.print("{s}{s}", .{prefix, arg});
+            try writer.print("{s}{s}", .{ prefix, arg });
             prefix = " ";
         }
     }
@@ -110,16 +110,18 @@ fn gitInit(repo: []const u8) !void {
     try std.fs.cwd().makeDir(tmp_repo);
     try run(allocator, "git init", &.{
         "git",
-        "-C", tmp_repo,
+        "-C",
+        tmp_repo,
         "init",
     });
     try std.fs.cwd().rename(tmp_repo, repo);
 }
 
 pub fn gitStatusPorcelain(allocator: std.mem.Allocator, repo: []const u8) ![]const u8 {
-    const argv = [_][]const u8 {
+    const argv = [_][]const u8{
         "git",
-        "-C", repo,
+        "-C",
+        repo,
         "status",
         "--porcelain",
     };

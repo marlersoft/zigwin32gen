@@ -22,14 +22,15 @@ pub fn main() !u8 {
     const repo_url = "https://github.com/marlersoft/zigwin32gen";
     try common.run(allocator, "git fetch", &.{
         "git",
-        "-C", gen_repo,
+        "-C",
+        gen_repo,
         "fetch",
         repo_url,
         "main",
     });
 
     const latest_sha = blk: {
-        const argv = [_][]const u8 {
+        const argv = [_][]const u8{
             "git",
             "-C",
             gen_repo,
@@ -79,11 +80,10 @@ pub fn main() !u8 {
 
     // sanity check
     switch (try common.readSha(out_file_path)) {
-        .invalid => |reason| fatal(
-            "can't read sha after writing it: {s}", .{reason}
-        ),
+        .invalid => |reason| fatal("can't read sha after writing it: {s}", .{reason}),
         .good => |sha_from_file| if (!std.mem.eql(u8, &sha_from_file, latest_sha)) fatal(
-            "sha changed to '{s}'", .{sha_from_file}
+            "sha changed to '{s}'",
+            .{sha_from_file},
         ),
     }
     std.log.info("{s}", .{out_file_path});
