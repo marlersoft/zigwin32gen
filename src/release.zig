@@ -249,12 +249,14 @@ pub fn main() !u8 {
 
     {
         const commit_count = try gitRevListCount(gen_repo, latest_release.gen_commit, main_sha);
+        std.debug.assert(commit_count >= 1);
         const gen_repo_commit_msg = try gitLogGenRepo(gen_repo, latest_release.gen_commit, main_sha);
         defer allocator.free(gen_repo_commit_msg);
+        const plural_suffix: []const u8 = if (commit_count == 1) "" else "s";
         const full_commit_msg = try std.fmt.allocPrint(
             allocator,
-            "release {} commits from zigwin32gen commit {s}\n\n{s}\n",
-            .{ commit_count, &main_sha, gen_repo_commit_msg },
+            "release {} commit{s} from zigwin32gen commit {s}\n\n{s}\n",
+            .{ commit_count, plural_suffix, &main_sha, gen_repo_commit_msg },
         );
         defer allocator.free(full_commit_msg);
         try common.run(allocator, "git status", &.{ "git", "-C", zigwin32_repo, "commit", "-m", full_commit_msg });
