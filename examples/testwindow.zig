@@ -32,6 +32,9 @@ pub export fn wWinMain(
     _ = pCmdLine;
     _ = nCmdShow;
 
+    std.debug.assert(0x5678 == win32.loword(@as(i32, 0x12345678)));
+    std.debug.assert(0x1234 == win32.hiword(@as(i32, 0x12345678)));
+
     const CLASS_NAME = L("ZigTestWindow");
     const wc = win32.WNDCLASSW{
         .style = .{},
