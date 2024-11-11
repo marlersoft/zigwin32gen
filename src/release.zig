@@ -121,7 +121,7 @@ pub fn main() !u8 {
         var ahead: u32 = 1;
         var it = std.mem.splitAny(u8, revlist, "\r\n");
         while (it.next()) |rev| : (ahead += 1) {
-            if (std.mem.eql(u8, latest_release.gen_commit, rev))
+            if (std.mem.eql(u8, &latest_release.gen_commit, rev))
                 break :blk ahead;
         }
         fatal(
@@ -248,12 +248,13 @@ pub fn main() !u8 {
     try common.run(allocator, "git status", &.{ "git", "-C", zigwin32_repo, "add", "." });
 
     {
-        const gen_repo_commit_msg = try gitLogGenRepo(gen_repo, main_sha);
+        const commit_count = try gitRevListCount(gen_repo, latest_release.gen_commit, main_sha);
+        const gen_repo_commit_msg = try gitLogGenRepo(gen_repo, latest_release.gen_commit, main_sha);
         defer allocator.free(gen_repo_commit_msg);
         const full_commit_msg = try std.fmt.allocPrint(
             allocator,
-            "{s}\n\ngenerated from zigwin32gen commit {s}\n",
-            .{ gen_repo_commit_msg, &main_sha },
+            "release {} commits from zigwin32gen commit {s}\n\n{s}\n",
+            .{ commit_count, &main_sha, gen_repo_commit_msg },
         );
         defer allocator.free(full_commit_msg);
         try common.run(allocator, "git status", &.{ "git", "-C", zigwin32_repo, "commit", "-m", full_commit_msg });
@@ -320,19 +321,57 @@ pub fn main() !u8 {
     return 0;
 }
 
+fn shaDotDotSha(a: [40]u8, b: [40]u8) [82]u8 {
+    var result: [82]u8 = undefined;
+    @memcpy(result[0..40], &a);
+    result[40] = '.';
+    result[41] = '.';
+    @memcpy(result[42..], &b);
+    return result;
+}
+
+fn gitRevListCount(repo: []const u8, a: [40]u8, b: [40]u8) !u32 {
+    const shas_arg = shaDotDotSha(a, b);
+    const argv = [_][]const u8{
+        "git",
+        "-C",
+        repo,
+        "rev-list",
+        "--count",
+        &shas_arg,
+    };
+    std.log.info("{}", .{common.fmtArgv(&argv)});
+    const result = try std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = &argv,
+    });
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
+    if (result.stderr.len > 0) {
+        try std.io.getStdErr().writer().writeAll(result.stderr);
+    }
+    if (common.childProcFailed(result.term))
+        fatal("git rev-list --count {}", .{common.fmtTerm(result.term)});
+    const count_str = std.mem.trimRight(u8, result.stdout, "\n\r");
+    return std.fmt.parseInt(u32, count_str, 10) catch std.debug.panic(
+        "failed to parsse 'git rev-list --count' output as a number: '{s}'",
+        .{count_str},
+    );
+}
+
 fn gitLogGenRepo(
     gen_repo: []const u8,
+    release_sha: [40]u8,
     main_sha: [40]u8,
 ) ![]const u8 {
+    const shas_arg = shaDotDotSha(release_sha, main_sha);
     const argv = [_][]const u8{
         "git",
         "-C",
         gen_repo,
         "log",
-        "-n",
-        "1",
-        "--format=%B",
-        &main_sha,
+        "--format=commit %H%n%B",
+        &shas_arg,
     };
     std.log.info("{}", .{common.fmtArgv(&argv)});
     const result = try std.process.Child.run(.{
@@ -362,7 +401,7 @@ fn isReleased(releases_file_path: []const u8, sha: [40]u8) !bool {
             ),
             .ok => |release| release,
         };
-        if (std.mem.eql(u8, release.gen_commit, &sha))
+        if (std.mem.eql(u8, &release.gen_commit, &sha))
             return true;
     }
     return false;
@@ -376,13 +415,13 @@ fn readReleases(file_path: []const u8) ![]u8 {
 
 const Release = struct {
     number: u32,
-    gen_commit: []const u8,
+    gen_commit: [40]u8,
     result_commit: []const u8,
 };
 const ParseResult = union(enum) {
     err: []const u8,
     ok: struct {
-        gen_commit: []const u8,
+        gen_commit: [40]u8,
         result_commit: []const u8,
     },
 };
@@ -403,7 +442,7 @@ fn parseLine(line: []const u8) ParseResult {
     };
     return .{
         .ok = .{
-            .gen_commit = gen_commit,
+            .gen_commit = gen_commit[0..40].*,
             .result_commit = result_commit,
         },
     };
