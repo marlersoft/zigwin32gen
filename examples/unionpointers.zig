@@ -14,7 +14,7 @@ const HWND = win32.HWND;
 fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     if (std.fmt.allocPrintZ(std.heap.page_allocator, fmt, args)) |msg| {
         _ = win32.MessageBoxA(null, msg, "Fatal Error", .{});
-    } else |e| switch(e) {
+    } else |e| switch (e) {
         error.OutOfMemory => _ = win32.MessageBoxA(null, "Out of memory", "Fatal Error", .{}),
     }
     std.process.exit(1);
@@ -25,13 +25,11 @@ pub export fn wWinMain(
     _: ?win32.HINSTANCE,
     pCmdLine: [*:0]u16,
     nCmdShow: u32,
-) callconv(std.os.windows.WINAPI) c_int
-{
+) callconv(std.os.windows.WINAPI) c_int {
     _ = pCmdLine;
     _ = nCmdShow;
 
-
-    for (0 .. 20) |atom| {
+    for (0..20) |atom| {
         // we don't care if this works, we're just verifying @ptrFromInt(atom)
         // doesn't trigger a runtime panic
         if (win32.CreateWindowEx(
@@ -39,8 +37,10 @@ pub export fn wWinMain(
             @ptrFromInt(atom),
             L("Test Window"),
             .{},
-            0, 0,
-            0, 0,
+            0,
+            0,
+            0,
+            0,
             null,
             null,
             hInstance,
@@ -50,13 +50,13 @@ pub export fn wWinMain(
             if (0 == win32.DestroyWindow(hwnd))
                 fatal("DestroyWindow failed with {}", .{win32.GetLastError().fmt()});
         } else {
-            std.log.info("atom={} CreateWindow failed with {} (this is fine)", .{atom, win32.GetLastError().fmt()});
+            std.log.info("atom={} CreateWindow failed with {} (this is fine)", .{ atom, win32.GetLastError().fmt() });
         }
     }
 
     {
         const CLASS_NAME = L("Sample Window Class");
-        const wc = win32.WNDCLASS {
+        const wc = win32.WNDCLASS{
             .style = .{},
             .lpfnWndProc = WindowProc,
             .cbClsExtra = 0,
@@ -77,12 +77,14 @@ pub export fn wWinMain(
             @ptrFromInt(atom),
             L("Test Window"),
             .{},
-            0, 0,
-            0, 0,
-            null,       // Parent window
-            null,       // Menu
-            hInstance,  // Instance handle
-            null        // Additional application data
+            0,
+            0,
+            0,
+            0,
+            null, // Parent window
+            null, // Menu
+            hInstance, // Instance handle
+            null, // Additional application data
         ) orelse fatal("CreateWindow failed with {}", .{win32.GetLastError().fmt()});
         if (0 == win32.DestroyWindow(hwnd))
             fatal("DestroyWindow failed with {}", .{win32.GetLastError().fmt()});
@@ -96,14 +98,12 @@ pub export fn wWinMain(
         _ = win32.SetCursor(@constCast(@ptrCast(win32.IDC_WAIT)));
     }
 
-
     std.log.info("success!", .{});
     return 0;
 }
 
-
 fn WindowProc(
-    hwnd: HWND ,
+    hwnd: HWND,
     uMsg: u32,
     wParam: win32.WPARAM,
     lParam: win32.LPARAM,

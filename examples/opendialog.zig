@@ -16,14 +16,13 @@ const win32 = struct {
 fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     if (std.fmt.allocPrintZ(std.heap.page_allocator, fmt, args)) |msg| {
         _ = win32.MessageBoxA(null, msg, "Fatal Error", .{});
-    } else |e| switch(e) {
+    } else |e| switch (e) {
         error.OutOfMemory => _ = win32.MessageBoxA(null, "Out of memory", "Fatal Error", .{}),
     }
     std.process.exit(1);
 }
 
-pub export fn wWinMain(__: win32.HINSTANCE, _: ?win32.HINSTANCE, ___: [*:0]u16, ____: u32) callconv(WINAPI) c_int
-{
+pub export fn wWinMain(__: win32.HINSTANCE, _: ?win32.HINSTANCE, ___: [*:0]u16, ____: u32) callconv(WINAPI) c_int {
     _ = __;
     _ = ___;
     _ = ____;
@@ -38,7 +37,7 @@ pub export fn wWinMain(__: win32.HINSTANCE, _: ?win32.HINSTANCE, ___: [*:0]u16, 
     defer win32.CoUninitialize();
 
     const dialog = blk: {
-        var dialog : ?*win32.IFileOpenDialog = undefined;
+        var dialog: ?*win32.IFileOpenDialog = undefined;
         const hr = win32.CoCreateInstance(
             win32.CLSID_FileOpenDialog,
             null,
@@ -67,7 +66,7 @@ pub export fn wWinMain(__: win32.HINSTANCE, _: ?win32.HINSTANCE, ___: [*:0]u16, 
     defer _ = pItem.?.IUnknown.Release();
 
     const file_path = blk: {
-        var file_path : ?[*:0]u16 = undefined;
+        var file_path: ?[*:0]u16 = undefined;
         const hr = pItem.?.GetDisplayName(win32.SIGDN_FILESYSPATH, &file_path);
         if (win32.FAILED(hr))
             fatal("GetDisplayName failed, hr={}", .{hr});

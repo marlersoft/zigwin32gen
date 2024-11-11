@@ -22,7 +22,7 @@ pub fn main() !u8 {
     const win32json_path = cmd_args[0];
     const out_filename = cmd_args[1];
 
-    const api_path = try std.fs.path.join(allocator, &.{win32json_path, "api"});
+    const api_path = try std.fs.path.join(allocator, &.{ win32json_path, "api" });
     var api_dir = try std.fs.cwd().openDir(api_path, .{ .iterate = true });
     defer api_dir.close();
 
@@ -73,9 +73,7 @@ fn pass1OnFile(out: OutWriter, api_dir: []const u8, filename: []const u8, file: 
     // no need to free, owned by json_arena
     const parse_start = std.time.milliTimestamp();
 
-    const api = metadata.Api.parse(
-        json_arena, api_dir, filename, content
-    );
+    const api = metadata.Api.parse(json_arena, api_dir, filename, content);
     // no need to free, owned by json_arena
     const parse_time = std.time.milliTimestamp() - parse_start;
     std.log.info("{} ms: parse time for '{s}'", .{ parse_time, filename });
@@ -154,9 +152,7 @@ fn generateNativeTypedef(
     switch (native_typedef.Def) {
         .Native => |native| if (isIntegral(native.Name)) {
             try writeType(out, json_obj_prefix, t.Name, "Integral");
-        } else std.debug.panic(
-            "unhandled Native kind in NativeTypedef '{s}'", .{@tagName(native.Name)}
-        ),
+        } else std.debug.panic("unhandled Native kind in NativeTypedef '{s}'", .{@tagName(native.Name)}),
         .PointerTo => try writeType(out, json_obj_prefix, t.Name, "Pointer"),
         else => |kind| std.debug.panic("unhandled NativeTypedef kind '{s}'", .{@tagName(kind)}),
     }
@@ -201,6 +197,6 @@ fn writeComType(
 
     try out.print(
         "        {s}\"{s}\": {{\"Kind\":\"Com\",\"Interface\":{?}}}\n",
-        .{ json_obj_prefix, t.Name,  iface },
+        .{ json_obj_prefix, t.Name, iface },
     );
 }

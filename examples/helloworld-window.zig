@@ -15,7 +15,7 @@ const HWND = win32.HWND;
 fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     if (std.fmt.allocPrintZ(std.heap.page_allocator, fmt, args)) |msg| {
         _ = win32.MessageBoxA(null, msg, "Fatal Error", .{});
-    } else |e| switch(e) {
+    } else |e| switch (e) {
         error.OutOfMemory => _ = win32.MessageBoxA(null, "Out of memory", "Fatal Error", .{}),
     }
     std.process.exit(1);
@@ -26,13 +26,12 @@ pub export fn wWinMain(
     _: ?win32.HINSTANCE,
     pCmdLine: [*:0]u16,
     nCmdShow: u32,
-) callconv(WINAPI) c_int
-{
+) callconv(WINAPI) c_int {
     _ = pCmdLine;
     _ = nCmdShow;
 
     const CLASS_NAME = L("Sample Window Class");
-    const wc = win32.WNDCLASS {
+    const wc = win32.WNDCLASS{
         .style = .{},
         .lpfnWndProc = WindowProc,
         .cbClsExtra = 0,
@@ -49,22 +48,17 @@ pub export fn wWinMain(
     if (0 == win32.RegisterClass(&wc))
         fatal("RegisterClass failed with {}", .{win32.GetLastError().fmt()});
 
-    const hwnd = win32.CreateWindowEx(
-        .{},
-        CLASS_NAME,
-        L("Hello Windows"),
-        win32.WS_OVERLAPPEDWINDOW,
-        win32.CW_USEDEFAULT, win32.CW_USEDEFAULT, // Position
-        400, 200,   // Size
-        null,       // Parent window
-        null,       // Menu
-        hInstance,  // Instance handle
-        null        // Additional application data
+    const hwnd = win32.CreateWindowEx(.{}, CLASS_NAME, L("Hello Windows"), win32.WS_OVERLAPPEDWINDOW, win32.CW_USEDEFAULT, win32.CW_USEDEFAULT, // Position
+        400, 200, // Size
+        null, // Parent window
+        null, // Menu
+        hInstance, // Instance handle
+        null // Additional application data
     ) orelse fatal("CreateWindow failedwith {}", .{win32.GetLastError().fmt()});
 
     _ = win32.ShowWindow(hwnd, .{ .SHOWNORMAL = 1 });
 
-    var msg : win32.MSG = undefined;
+    var msg: win32.MSG = undefined;
     while (win32.GetMessage(&msg, null, 0, 0) != 0) {
         _ = win32.TranslateMessage(&msg);
         _ = win32.DispatchMessage(&msg);
@@ -73,7 +67,7 @@ pub export fn wWinMain(
 }
 
 fn WindowProc(
-    hwnd: HWND ,
+    hwnd: HWND,
     uMsg: u32,
     wParam: win32.WPARAM,
     lParam: win32.LPARAM,
@@ -86,7 +80,7 @@ fn WindowProc(
         win32.WM_PAINT => {
             var ps: win32.PAINTSTRUCT = undefined;
             const hdc = win32.BeginPaint(hwnd, &ps);
-            _ = win32.FillRect(hdc, &ps.rcPaint, @ptrFromInt(@intFromEnum(win32.COLOR_WINDOW)+1));
+            _ = win32.FillRect(hdc, &ps.rcPaint, @ptrFromInt(@intFromEnum(win32.COLOR_WINDOW) + 1));
             _ = win32.TextOutA(hdc, 20, 20, "Hello", 5);
             _ = win32.EndPaint(hwnd, &ps);
             return 0;

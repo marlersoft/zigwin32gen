@@ -53,7 +53,7 @@ const type_kinds = std.StaticStringMap(TypeKind).initComptime(.{
     .{ "Com", .Com },
 });
 
-const EmptyStruct = struct { };
+const EmptyStruct = struct {};
 pub const Type = union(TypeKind) {
     Integral: EmptyStruct,
     Enum: EmptyStruct,

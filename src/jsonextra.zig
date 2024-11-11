@@ -14,7 +14,6 @@ pub fn ArrayHashMap(comptime T: type) type {
             source: anytype,
             options: std.json.ParseOptions,
         ) std.json.ParseError(@TypeOf(source.*))!Self {
-
             var map = std.StringArrayHashMap(T).init(allocator);
             errdefer map.deinit();
 

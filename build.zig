@@ -24,11 +24,13 @@ pub fn build(b: *Build) !void {
     const test_step = b.step("test", "Run all the tests (except the examples)");
     const unittest_step = b.step("unittest", "Unit test the generated bindings");
     test_step.dependOn(unittest_step);
-    const desc_line_prefix = [_]u8{ ' ' } **  31;
-    const diff_step = b.step("diff", (
-        "Updates 'diffrepo' then installs the latest generated\n" ++ desc_line_prefix ++
-        "files so they can be diffed via git."
-    ));
+    const desc_line_prefix = [_]u8{' '} ** 31;
+    const diff_step = b.step(
+        "diff",
+        ("Updates 'diffrepo' then installs the latest generated\n" ++
+            desc_line_prefix ++
+            "files so they can be diffed via git."),
+    );
     addDefaultStepDeps(b, default_steps);
 
     {
@@ -40,7 +42,7 @@ pub fn build(b: *Build) !void {
     const pass1_step = b.step(
         "pass1",
         "Only perform pass1 of zig binding generation.\n" ++ desc_line_prefix ++
-        "(generates pass1.json in .zig-cache)",
+            "(generates pass1.json in .zig-cache)",
     );
     const gen_step = b.step("gen", "Generate the bindings (in .zig-cache)");
     const examples_step = b.step("examples", "Build/run examples. Use -j1 to run one at a time");
@@ -51,7 +53,7 @@ pub fn build(b: *Build) !void {
     const pass1_out_file = blk: {
         const pass1_exe = b.addExecutable(.{
             .name = "pass1",
-            .root_source_file = b.path("src/pass1.zig" ),
+            .root_source_file = b.path("src/pass1.zig"),
             .optimize = optimize,
             .target = b.host,
         });
@@ -87,9 +89,7 @@ pub fn build(b: *Build) !void {
     b.step(
         "show-path",
         "Print the zigwin32 cache directory",
-    ).dependOn(
-        &PrintLazyPath.create(b, gen_out_dir).step
-    );
+    ).dependOn(&PrintLazyPath.create(b, gen_out_dir).step);
 
     b.installDirectory(.{
         .source_dir = gen_out_dir,
@@ -165,12 +165,13 @@ pub fn build(b: *Build) !void {
         const compile = b.addSystemCommand(&.{
             b.graph.zig_exe,
             "build-exe",
-            "--dep", "win32",
+            "--dep",
+            "win32",
         });
         compile.addPrefixedFileArg("-Mroot=", b.path("test/badcomoverload.zig"));
         compile.addPrefixedFileArg("-Mwin32=", gen_out_dir.path(b, "win32.zig"));
-        compile.addCheck(.{ .expect_stderr_match =
-            "COM method 'GetAttributeValue' must be called using one of the following overload names: GetAttributeValueString, GetAttributeValueObj, GetAttributeValuePod"
+        compile.addCheck(.{
+            .expect_stderr_match = "COM method 'GetAttributeValue' must be called using one of the following overload names: GetAttributeValueString, GetAttributeValueObj, GetAttributeValuePod",
         });
         test_step.dependOn(&compile.step);
     }
@@ -200,7 +201,8 @@ const PrintLazyPath = struct {
         _ = prog_node;
         const print: *PrintLazyPath = @fieldParentPtr("step", step);
         try std.io.getStdOut().writer().print(
-            "{s}\n", .{print.lazy_path.getPath(step.owner)}
+            "{s}\n",
+            .{print.lazy_path.getPath(step.owner)},
         );
     }
 };
@@ -208,7 +210,7 @@ const PrintLazyPath = struct {
 fn runStepMake(
     step: *Step,
     prog_node: std.Progress.Node,
-    original_make_fn: patchstep.MakeFn
+    original_make_fn: patchstep.MakeFn,
 ) anyerror!void {
     original_make_fn(step, prog_node) catch |err| switch (err) {
         // just exit if subprocess failed with error exit code
@@ -232,14 +234,14 @@ fn addExample(
 ) !void {
     const basename = concat(b, &.{ root, ".zig" });
     for (arches) |cross_arch_opt| {
-        const name = if (cross_arch_opt) |arch| concat(b, &.{ root, "-", arch}) else root;
+        const name = if (cross_arch_opt) |arch| concat(b, &.{ root, "-", arch }) else root;
 
-        const arch_os_abi = if (cross_arch_opt) |arch| concat(b, &.{ arch, "-windows"}) else "native";
+        const arch_os_abi = if (cross_arch_opt) |arch| concat(b, &.{ arch, "-windows" }) else "native";
         const target_query = std.Target.Query.parse(.{ .arch_os_abi = arch_os_abi }) catch unreachable;
         const target = b.resolveTargetQuery(target_query);
         const exe = b.addExecutable(.{
             .name = name,
-            .root_source_file = b.path(b.pathJoin(&.{ "examples", basename})),
+            .root_source_file = b.path(b.pathJoin(&.{ "examples", basename })),
             .target = target,
             .optimize = optimize,
             .single_threaded = true,
@@ -251,11 +253,11 @@ fn addExample(
         exe.pie = true;
 
         const desc_suffix: []const u8 = if (cross_arch_opt) |_| "" else " for the native target";
-        const build_desc = b.fmt("Build {s}{s}", .{name, desc_suffix});
+        const build_desc = b.fmt("Build {s}{s}", .{ name, desc_suffix });
         b.step(concat(b, &.{ name, "-build" }), build_desc).dependOn(&exe.step);
 
         const run_cmd = b.addRunArtifact(exe);
-        const run_desc = b.fmt("Run {s}{s}", .{name, desc_suffix});
+        const run_desc = b.fmt("Run {s}{s}", .{ name, desc_suffix });
         b.step(name, run_desc).dependOn(&run_cmd.step);
 
         if (builtin.os.tag == .windows) {
@@ -270,7 +272,8 @@ fn addDefaultStepDeps(b: *std.Build, default_steps: []const u8) void {
     var it = std.mem.tokenize(u8, default_steps, " ");
     while (it.next()) |step_name| {
         const step = b.top_level_steps.get(step_name) orelse std.debug.panic(
-            "step '{s}' not added yet", .{step_name}
+            "step '{s}' not added yet",
+            .{step_name},
         );
         b.default_step.dependOn(&step.step);
     }

@@ -134,9 +134,7 @@ pub const ComInterface = struct {
     }
 };
 
-pub fn getComInterface(
-    type_ref: metadata.TypeRef
-) ComInterface {
+pub fn getComInterface(type_ref: metadata.TypeRef) ComInterface {
     const api_ref = switch (type_ref) {
         .ApiRef => |r| r,
         else => jsonPanic(),
@@ -148,7 +146,6 @@ pub fn getComInterface(
         .name = api_ref.Name,
     };
 }
-
 
 // TODO: this should be in std, maybe  method on HashMap?
 pub fn allocMapValues(alloc: std.mem.Allocator, comptime T: type, map: anytype) ![]T {

@@ -46,13 +46,25 @@ const MainWindow = struct {
     pBrush: ?*win32.ID2D1SolidColorBrush = null,
     ellipse: win32.D2D1_ELLIPSE = undefined,
 
-    pub fn CalculateLayout(self: *MainWindow) callconv(.Inline) void { MainWindowCalculateLayout(self); }
-    pub fn CreateGraphicsResources(self: *MainWindow) callconv(.Inline) HRESULT { return MainWindowCreateGraphicsResources(self); }
-    pub fn DiscardGraphicsResources(self: *MainWindow) callconv(.Inline) void { MainWindowDiscardGraphicsResources(self); }
-    pub fn OnPaint(self: *MainWindow) callconv(.Inline) void { MainWindowOnPaint(self); }
-    pub fn Resize(self: *MainWindow) callconv(.Inline) void { MainWindowResize(self); }
+    pub inline fn CalculateLayout(self: *MainWindow) void {
+        MainWindowCalculateLayout(self);
+    }
+    pub inline fn CreateGraphicsResources(self: *MainWindow) HRESULT {
+        return MainWindowCreateGraphicsResources(self);
+    }
+    pub inline fn DiscardGraphicsResources(self: *MainWindow) void {
+        MainWindowDiscardGraphicsResources(self);
+    }
+    pub inline fn OnPaint(self: *MainWindow) void {
+        MainWindowOnPaint(self);
+    }
+    pub inline fn Resize(self: *MainWindow) void {
+        MainWindowResize(self);
+    }
 
-    pub fn ClassName() [*:0]const u16 { return L("Circle Window Class"); }
+    pub fn ClassName() [*:0]const u16 {
+        return L("Circle Window Class");
+    }
 
     pub fn HandleMessage(self: *MainWindow, uMsg: u32, wParam: WPARAM, lParam: LPARAM) LRESULT {
         return MainWindowHandleMessage(self, uMsg, wParam, lParam);
@@ -69,7 +81,7 @@ fn MainWindowCalculateLayout(self: *MainWindow) void {
         //       Zig unable to handle a return type of extern struct { x: f32, y: f32 } for WINAPI
         _ = pRenderTarget;
         //const size: D2D_SIZE_F = pRenderTarget.ID2D1RenderTarget_GetSize();
-        const size = D2D_SIZE_F { .width = 300, .height = 300 };
+        const size = D2D_SIZE_F{ .width = 300, .height = 300 };
         const x: f32 = size.width / 2;
         const y: f32 = size.height / 2;
         const radius = @min(x, y);
@@ -77,11 +89,9 @@ fn MainWindowCalculateLayout(self: *MainWindow) void {
     }
 }
 
-fn MainWindowCreateGraphicsResources(self: *MainWindow) HRESULT
-{
+fn MainWindowCreateGraphicsResources(self: *MainWindow) HRESULT {
     var hr = win32.S_OK;
-    if (self.pRenderTarget == null)
-    {
+    if (self.pRenderTarget == null) {
         var rc: RECT = undefined;
         _ = win32.GetClientRect(self.base.m_hwnd.?, &rc);
 
@@ -93,14 +103,12 @@ fn MainWindowCreateGraphicsResources(self: *MainWindow) HRESULT
             &self.pRenderTarget,
         );
 
-        if (SUCCEEDED(hr))
-        {
-            const color = D2D1.ColorF(.{ .r = 1, .g = 1, .b = 0});
+        if (SUCCEEDED(hr)) {
+            const color = D2D1.ColorF(.{ .r = 1, .g = 1, .b = 0 });
             // TODO: how do I do this ptrCast better by using COM base type?
             hr = self.pRenderTarget.?.ID2D1RenderTarget.CreateSolidColorBrush(&color, null, &self.pBrush);
 
-            if (SUCCEEDED(hr))
-            {
+            if (SUCCEEDED(hr)) {
                 self.CalculateLayout();
             }
         }
@@ -108,18 +116,15 @@ fn MainWindowCreateGraphicsResources(self: *MainWindow) HRESULT
     return hr;
 }
 
-fn MainWindowDiscardGraphicsResources(self: *MainWindow) void
-{
+fn MainWindowDiscardGraphicsResources(self: *MainWindow) void {
     SafeRelease(&self.pRenderTarget);
     SafeRelease(&self.pBrush);
 }
 
-fn MainWindowOnPaint(self: *MainWindow) void
-{
+fn MainWindowOnPaint(self: *MainWindow) void {
     var hr = self.CreateGraphicsResources();
-    if (SUCCEEDED(hr))
-    {
-        var ps : win32.PAINTSTRUCT = undefined;
+    if (SUCCEEDED(hr)) {
+        var ps: win32.PAINTSTRUCT = undefined;
         _ = win32.BeginPaint(self.base.m_hwnd.?, &ps);
 
         self.pRenderTarget.?.ID2D1RenderTarget.BeginDraw();
@@ -130,18 +135,15 @@ fn MainWindowOnPaint(self: *MainWindow) void
         self.pRenderTarget.?.ID2D1RenderTarget.FillEllipse(&self.ellipse, &self.pBrush.?.ID2D1Brush);
 
         hr = self.pRenderTarget.?.ID2D1RenderTarget.EndDraw(null, null);
-        if (FAILED(hr) or hr == win32.D2DERR_RECREATE_TARGET)
-        {
+        if (FAILED(hr) or hr == win32.D2DERR_RECREATE_TARGET) {
             self.DiscardGraphicsResources();
         }
         _ = win32.EndPaint(self.base.m_hwnd.?, &ps);
     }
 }
 
-fn MainWindowResize(self: *MainWindow) void
-{
-    if (self.pRenderTarget) |renderTarget|
-    {
+fn MainWindowResize(self: *MainWindow) void {
+    if (self.pRenderTarget) |renderTarget| {
         var rc: RECT = undefined;
         _ = win32.GetClientRect(self.base.m_hwnd.?, &rc);
 
@@ -153,15 +155,13 @@ fn MainWindowResize(self: *MainWindow) void
     }
 }
 
-pub export fn wWinMain(_: HINSTANCE, __: ?HINSTANCE, ___: [*:0]u16, nCmdShow: u32) callconv(WINAPI) c_int
-{
+pub export fn wWinMain(_: HINSTANCE, __: ?HINSTANCE, ___: [*:0]u16, nCmdShow: u32) callconv(WINAPI) c_int {
     _ = __;
     _ = ___;
 
-    var win = MainWindow { };
+    var win = MainWindow{};
 
-    if (win32.TRUE != win.base.Create(L("Circle"), win32.WS_OVERLAPPEDWINDOW, .{}))
-    {
+    if (win32.TRUE != win.base.Create(L("Circle"), win32.WS_OVERLAPPEDWINDOW, .{})) {
         return 0;
     }
 
@@ -169,9 +169,8 @@ pub export fn wWinMain(_: HINSTANCE, __: ?HINSTANCE, ___: [*:0]u16, nCmdShow: u3
 
     // Run the message loop.
 
-    var msg : MSG = undefined;
-    while (0 != win32.GetMessage(&msg, null, 0, 0))
-    {
+    var msg: MSG = undefined;
+    while (0 != win32.GetMessage(&msg, null, 0, 0)) {
         _ = win32.TranslateMessage(&msg);
         _ = win32.DispatchMessage(&msg);
     }
@@ -179,39 +178,37 @@ pub export fn wWinMain(_: HINSTANCE, __: ?HINSTANCE, ___: [*:0]u16, nCmdShow: u3
     return 0;
 }
 
-fn MainWindowHandleMessage(self: *MainWindow, uMsg: u32, wParam: WPARAM, lParam: LPARAM) LRESULT
-{
-    switch (uMsg)
-    {
-    win32.WM_CREATE => {
-        // TODO: Should I need to case &self.pFactory to **anyopaque? Maybe
-        //       D2D2CreateFactory probably doesn't have the correct type yet?
-        if (FAILED(win32.D2D1CreateFactory(
-            win32.D2D1_FACTORY_TYPE_SINGLE_THREADED,
-            win32.IID_ID2D1Factory,
-            null,
-            @ptrCast(&self.pFactory),
-        ))) {
-            return -1;  // Fail CreateWindowEx.
-        }
-        return 0;
-    },
-    win32.WM_DESTROY => {
-        self.DiscardGraphicsResources();
-        SafeRelease(&self.pFactory);
-        win32.PostQuitMessage(0);
-        return 0;
-    },
-    win32.WM_PAINT => {
-        self.OnPaint();
-        return 0;
-    },
-    // Other messages not shown...
-    win32.WM_SIZE => {
-        self.Resize();
-        return 0;
-    },
-    else => {},
+fn MainWindowHandleMessage(self: *MainWindow, uMsg: u32, wParam: WPARAM, lParam: LPARAM) LRESULT {
+    switch (uMsg) {
+        win32.WM_CREATE => {
+            // TODO: Should I need to case &self.pFactory to **anyopaque? Maybe
+            //       D2D2CreateFactory probably doesn't have the correct type yet?
+            if (FAILED(win32.D2D1CreateFactory(
+                win32.D2D1_FACTORY_TYPE_SINGLE_THREADED,
+                win32.IID_ID2D1Factory,
+                null,
+                @ptrCast(&self.pFactory),
+            ))) {
+                return -1; // Fail CreateWindowEx.
+            }
+            return 0;
+        },
+        win32.WM_DESTROY => {
+            self.DiscardGraphicsResources();
+            SafeRelease(&self.pFactory);
+            win32.PostQuitMessage(0);
+            return 0;
+        },
+        win32.WM_PAINT => {
+            self.OnPaint();
+            return 0;
+        },
+        // Other messages not shown...
+        win32.WM_SIZE => {
+            self.Resize();
+            return 0;
+        },
+        else => {},
     }
     return win32.DefWindowProc(self.base.m_hwnd.?, uMsg, wParam, lParam);
 }
@@ -230,8 +227,8 @@ const D2D1 = struct {
     pub fn ColorFU32(o: struct { rgb: u32, a: f32 = 1 }) win32.D2D_COLOR_F {
         return .{
             .r = @as(f32, @floatFromInt((o.rgb >> 16) & 0xff)) / 255,
-            .g = @as(f32, @floatFromInt((o.rgb >>  8) & 0xff)) / 255,
-            .b = @as(f32, @floatFromInt((o.rgb >>  0) & 0xff)) / 255,
+            .g = @as(f32, @floatFromInt((o.rgb >> 8) & 0xff)) / 255,
+            .b = @as(f32, @floatFromInt((o.rgb >> 0) & 0xff)) / 255,
             .a = o.a,
         };
     }
@@ -261,7 +258,7 @@ const D2D1 = struct {
     }
 
     // TODO: this is missing
-    pub fn PixelFormat() win32.D2D1_PIXEL_FORMAT  {
+    pub fn PixelFormat() win32.D2D1_PIXEL_FORMAT {
         return .{
             .format = win32.DXGI_FORMAT_UNKNOWN,
             .alphaMode = win32.D2D1_ALPHA_MODE_UNKNOWN,

@@ -26,10 +26,8 @@ pub const Api = struct {
             std.log.err(
                 "{s}{c}{s}:{}:{}: {s}",
                 .{
-                    api_path, std.fs.path.sep, filename,
-                    diagnostics.getLine(),
-                    diagnostics.getColumn(),
-                    @errorName(err),
+                    api_path,              std.fs.path.sep,         filename,
+                    diagnostics.getLine(), diagnostics.getColumn(), @errorName(err),
                 },
             );
             @panic("json error");
@@ -87,9 +85,7 @@ pub const ConstantAttrs = struct {
     }
 };
 
-pub const EnumIntegerBase = enum {
-    Byte, SByte, UInt16, UInt32, Int32, UInt64
-};
+pub const EnumIntegerBase = enum { Byte, SByte, UInt16, UInt32, Int32, UInt64 };
 
 const TypeKind = enum {
     NativeTypedef,
@@ -156,28 +152,27 @@ pub const Type = struct {
         switch (try jsonParseUnionKind(TypeKind, "Type", source, type_kinds)) {
             .NativeTypedef => return .{ .Name = name, .Architectures = arches, .Platform = platform, .Kind = .{
                 .NativeTypedef = try parseUnionObject(NativeTypedef, allocator, source, options),
-            }},
+            } },
             .Enum => return .{ .Name = name, .Architectures = arches, .Platform = platform, .Kind = .{
                 .Enum = try parseUnionObject(Enum, allocator, source, options),
-            }},
+            } },
             .Struct => return .{ .Name = name, .Architectures = arches, .Platform = platform, .Kind = .{
                 .Struct = try parseUnionObject(StructOrUnion, allocator, source, options),
-            }},
+            } },
             .Union => return .{ .Name = name, .Architectures = arches, .Platform = platform, .Kind = .{
                 .Union = try parseUnionObject(StructOrUnion, allocator, source, options),
-            }},
+            } },
             .ComClassID => return .{ .Name = name, .Architectures = arches, .Platform = platform, .Kind = .{
                 .ComClassID = try parseUnionObject(ComClassID, allocator, source, options),
-            }},
+            } },
             .Com => return .{ .Name = name, .Architectures = arches, .Platform = platform, .Kind = .{
                 .Com = try parseUnionObject(Com, allocator, source, options),
-            }},
+            } },
             .FunctionPointer => return .{ .Name = name, .Architectures = arches, .Platform = platform, .Kind = .{
                 .FunctionPointer = try parseUnionObject(FunctionPointer, allocator, source, options),
-            }},
+            } },
         }
     }
-
 };
 
 pub const FunctionPointer = struct {
@@ -304,12 +299,12 @@ pub const Function = struct {
     Params: []const Param,
 };
 pub const Platform = enum {
-    @"windowsServer2000",
-    @"windowsServer2003",
-    @"windowsServer2008",
-    @"windowsServer2012",
-    @"windowsServer2016",
-    @"windowsServer2020",
+    windowsServer2000,
+    windowsServer2003,
+    windowsServer2008,
+    windowsServer2012,
+    windowsServer2016,
+    windowsServer2020,
     @"windows5.0",
     @"windows5.1.2600",
     @"windows6.0.6000",
@@ -338,8 +333,7 @@ pub const Architectures = struct {
         //return self.X86 and self.X64 and self.Arm64;
         //}
         pub fn eql(self: Filter, other: Filter) bool {
-            return
-                self.X86 == other.X86 and
+            return self.X86 == other.X86 and
                 self.X64 == other.X64 and
                 self.Arm64 == other.Arm64;
         }
@@ -398,7 +392,7 @@ pub const Architectures = struct {
                 else => |token| {
                     std.log.err(
                         "expected string or array_close but got {s}",
-                        .{ @tagName(token) },
+                        .{@tagName(token)},
                     );
                     return error.UnexpectedToken;
                 },
@@ -670,7 +664,7 @@ pub fn jsonParseUnionKind(
         else => return error.UnexpectedToken,
     };
     return map.get(kind_str) orelse {
-        std.log.err("unknown {s} Kind '{s}'", .{type_name,kind_str});
+        std.log.err("unknown {s} Kind '{s}'", .{ type_name, kind_str });
         return error.UnexpectedToken;
     };
 }
@@ -690,9 +684,7 @@ pub fn parseUnionObject(
     var fields_seen = [_]bool{false} ** structInfo.fields.len;
 
     while (true) {
-        var name_token: ?std.json.Token = try source.nextAllocMax(
-            allocator, .alloc_if_needed, options.max_value_len.?
-        );
+        var name_token: ?std.json.Token = try source.nextAllocMax(allocator, .alloc_if_needed, options.max_value_len.?);
         const field_name = switch (name_token.?) {
             inline .string, .allocated_string => |slice| slice,
             .object_end => { // No more fields.
@@ -728,7 +720,7 @@ pub fn parseUnionObject(
             }
         } else {
             // Didn't match anything.
-            std.log.err("unknown field '{s}' on type {s}", .{field_name, @typeName(T)});
+            std.log.err("unknown field '{s}' on type {s}", .{ field_name, @typeName(T) });
             freeAllocated(allocator, name_token.?);
             if (options.ignore_unknown_fields) {
                 try source.skipValue();
@@ -739,7 +731,7 @@ pub fn parseUnionObject(
     }
     inline for (structInfo.fields, 0..) |field, i| {
         if (!fields_seen[i] and !std.mem.eql(u8, field.name, "Comment")) {
-            std.log.err("field '{s}' has not been set", .{ field.name });
+            std.log.err("field '{s}' has not been set", .{field.name});
             return error.MissingField;
         }
     }

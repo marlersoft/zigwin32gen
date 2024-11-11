@@ -108,7 +108,6 @@ const notnull_empty_function_map = NotNullFunctionMap{
     },
 };
 
-
 const Module = struct {
     optional_parent: ?*Module,
     name: StringPool.Val,
@@ -265,7 +264,7 @@ pub fn main() !u8 {
     };
     defer allocator.free(version);
     _ = std.SemanticVersion.parse(version) catch |err|
-        fatal("version '{s}' is not a valid semantic version: {s}", .{version, @errorName(err)});
+        fatal("version '{s}' is not a valid semantic version: {s}", .{ version, @errorName(err) });
 
     const pass1_json_content = blk: {
         var file = try std.fs.cwd().openFile(pass1_json, .{});
@@ -297,7 +296,7 @@ pub fn main() !u8 {
     defer out_dir.close();
     try out_dir.makeDir("win32");
 
-    const static_zig_files = [_][]const u8 {
+    const static_zig_files = [_][]const u8{
         "zig",
         "windowlongptr",
     };
@@ -306,7 +305,7 @@ pub fn main() !u8 {
         try installStaticFile(out_dir, "win32/" ++ name ++ ".zig");
     }
 
-    const static_files = [_][]const u8 {
+    const static_files = [_][]const u8{
         "build.zig",
         "LICENSE",
         "README.md",
@@ -320,7 +319,7 @@ pub fn main() !u8 {
     const root_module = try Module.alloc(null, try global_symbol_pool.add("win32"));
 
     {
-        const api_path = try std.fs.path.join(allocator, &.{win32json_path, "api"});
+        const api_path = try std.fs.path.join(allocator, &.{ win32json_path, "api" });
         var api_dir = try std.fs.cwd().openDir(api_path, .{ .iterate = true });
         defer api_dir.close();
 
@@ -389,7 +388,7 @@ pub fn main() !u8 {
         const w = zon.writer();
         try w.writeAll(".{\n");
         try w.writeAll("    .name = \"zigwin32\",\n");
-        try w.print(   "    .version = \"{s}\",\n", .{version});
+        try w.print("    .version = \"{s}\",\n", .{version});
         try w.writeAll("    .minimum_zig_version = \"0.12.0\",\n");
         try w.writeAll("    .paths = .{\n");
         for (static_files) |name| {
@@ -459,24 +458,17 @@ fn readComOverloads(api_map: *std.StringHashMap(ComTypeMap), filename: []const u
         if (line.len == 0) continue;
         var field_it = std.mem.tokenize(u8, line, " ");
         const api = field_it.next() orelse continue;
-        const com_type = field_it.next() orelse fatal(
-            "{s} line {}: missing type field", .{filename, line_number}
-        );
-        const method = field_it.next() orelse fatal(
-            "{s} line {}: missing method field", .{filename, line_number}
-        );
-        const method_index_str = field_it.next() orelse fatal(
-            "{s} line {}: missing method index field", .{filename, line_number}
-        );
+        const com_type = field_it.next() orelse fatal("{s} line {}: missing type field", .{ filename, line_number });
+        const method = field_it.next() orelse fatal("{s} line {}: missing method field", .{ filename, line_number });
+        const method_index_str = field_it.next() orelse fatal("{s} line {}: missing method index field", .{ filename, line_number });
         const method_index = std.fmt.parseInt(u16, method_index_str, 10) catch |err| fatal(
             "{s} line {}: invalid method index '{s}': {s}",
-            .{filename, line_number, method_index_str, @errorName(err)},
+            .{ filename, line_number, method_index_str, @errorName(err) },
         );
-        const suffix = field_it.next() orelse fatal(
-            "{s} line {}: missing suffix field", .{filename, line_number}
-        );
+        const suffix = field_it.next() orelse fatal("{s} line {}: missing suffix field", .{ filename, line_number });
         if (field_it.next()) |f| fatal(
-            "{s} line {}: has extra field '{s}'", .{filename, line_number, f},
+            "{s} line {}: has extra field '{s}'",
+            .{ filename, line_number, f },
         );
 
         const api_entry = try api_map.getOrPut(api);
@@ -497,7 +489,7 @@ fn readComOverloads(api_map: *std.StringHashMap(ComTypeMap), filename: []const u
         const suffix_entry = try suffix_map.getOrPut(method_index);
         if (suffix_entry.found_existing) fatal(
             "api '{s}' type '{s}' method '{s}' has duplicate entries for index {}",
-            .{ api, com_type, method, method_index},
+            .{ api, com_type, method, method_index },
         );
         suffix_entry.value_ptr.* = suffix;
     }
@@ -828,9 +820,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, api: metadata.Api) !voi
                 // If it doesn't we might need to update generateTypeDefinition to take an extra
                 // arches parameter.
                 std.debug.assert(object.obj.Architectures.eql(.{ .filter = object.filter }));
-                try generateTypeDefinition(
-                    sdk_file, writer, object.obj, &enum_alias_conflicts, name, def_prefix, ","
-                );
+                try generateTypeDefinition(sdk_file, writer, object.obj, &enum_alias_conflicts, name, def_prefix, ",");
             }
             if (combined_arches.filter != null) {
                 //try writer.line("    else => @compileError(\"unsupported on this arch\"),");
@@ -1022,7 +1012,6 @@ fn addTypeRefs(
 }
 
 fn addTypeRefsNoFormatter(sdk_file: *SdkFile, arches: metadata.Architectures, type_ref: metadata.TypeRef) anyerror!void {
-
     switch (type_ref) {
         .Native => |native| switch (native.Name) {
             .Guid => sdk_file.uses_guid = true,
@@ -1196,12 +1185,8 @@ fn generateTypeRefRec(
                 const t = anon_types.types.get(name_pool) orelse
                     jsonPanicMsg("missing anonymous type '{s}'!", .{name_pool});
                 switch (t.Kind) {
-                    .Struct => try generateStructOrUnionDef(
-                        sdk_file, writer, t, self.nested_context
-                    ),
-                    .Union => try generateStructOrUnionDef(
-                        sdk_file, writer, t, self.nested_context
-                    ),
+                    .Struct => try generateStructOrUnionDef(sdk_file, writer, t, self.nested_context),
+                    .Union => try generateStructOrUnionDef(sdk_file, writer, t, self.nested_context),
                     else => jsonPanic(),
                 }
                 try writer.write("}", .{ .nl = false });
@@ -1209,10 +1194,7 @@ fn generateTypeRefRec(
             }
 
             const type_kind_category: Pass1TypeCategory = blk: {
-                const pass1_api_map = global_pass1.get(api_ref.Api) orelse jsonPanicMsg(
-                    "type '{s}' is from API '{s}' that is missing from pass1 data",
-                    .{ name, api_ref.Api }
-                );
+                const pass1_api_map = global_pass1.get(api_ref.Api) orelse jsonPanicMsg("type '{s}' is from API '{s}' that is missing from pass1 data", .{ name, api_ref.Api });
 
                 const pass1_type: pass1data.Type = pass1_api_map.get(name) orelse {
                     if (api_ref.Parents.len == 0) {
@@ -1296,9 +1278,7 @@ fn generateTypeRefRec(
                 child_options.is_const = false; // TODO: is this right?
                 try writer.write("const ", .{ .start = .any, .nl = false });
             }
-            try generateTypeRefRec(sdk_file, writer, fmtTypeRef(
-                to.Child.*, self.arches, child_options, self.nested_context
-            ), .child);
+            try generateTypeRefRec(sdk_file, writer, fmtTypeRef(to.Child.*, self.arches, child_options, self.nested_context), .child);
         },
         .Array => |array| {
             const shape_size: u32 = init: {
@@ -1307,9 +1287,7 @@ fn generateTypeRefRec(
                 break :init 1;
             };
             try writer.writef("[{}]", .{shape_size}, .{ .start = .any, .nl = false });
-            try generateTypeRefRec(sdk_file, writer, fmtTypeRef(
-                array.Child.*, self.arches, self.options, self.nested_context
-            ), .child);
+            try generateTypeRefRec(sdk_file, writer, fmtTypeRef(array.Child.*, self.arches, self.options, self.nested_context), .child);
         },
         .LPArray => |array| {
             var child_options = self.options;
@@ -1335,9 +1313,7 @@ fn generateTypeRefRec(
                 }
                 if (array.CountConst <= 0 and self.options.is_const)
                     try writer.write("const ", .{ .start = .any, .nl = false });
-                try generateTypeRefRec(sdk_file, writer, fmtTypeRef(
-                    array.Child.*, self.arches, child_options, self.nested_context
-                ), .array);
+                try generateTypeRefRec(sdk_file, writer, fmtTypeRef(array.Child.*, self.arches, child_options, self.nested_context), .array);
             }
         },
         .MissingClrType => |t| try writer.writef(
@@ -1439,14 +1415,14 @@ const ConstValueFormatter = struct {
 
 const constants_to_skip = std.StaticStringMap(void).initComptime(.{
     // skip this constant because its name conflicts with the name of a type!
-    .{ "PEERDIST_RETRIEVAL_OPTIONS_CONTENTINFO_VERSION" },
+    .{"PEERDIST_RETRIEVAL_OPTIONS_CONTENTINFO_VERSION"},
 
     // HWND_DESKTOP and HWND_TOP are HWND types, but they are 0 so they need to be ?HWND
-    .{ "HWND_DESKTOP" },
-    .{ "HWND_TOP" },
+    .{"HWND_DESKTOP"},
+    .{"HWND_TOP"},
 
     // This is both a constant and a type definition in Networking.HttpServer
-    .{ "HTTP_VERSION" },
+    .{"HTTP_VERSION"},
 });
 fn generateConstant(sdk_file: *SdkFile, writer: *CodeWriter, constant: metadata.Constant) !void {
     const name_pool = try global_symbol_pool.add(constant.Name);
@@ -1600,11 +1576,10 @@ fn generateType(
     t: metadata.Type,
     enum_alias_conflicts: *StringPool.HashMap(StringPool.Val),
 ) !void {
-
     if (api_type_substitutes.get(t.Name)) |replacement| {
         try writer.linef(
             "// {s} Type '{s}' has been substituted with '{s}'",
-            .{@tagName(t.Kind), t.Name, replacement},
+            .{ @tagName(t.Kind), t.Name, replacement },
         );
         return;
     }
@@ -1692,7 +1667,7 @@ fn generateTypeDefinition(
                     .Native => |*n| n,
                     else => jsonPanicMsg(
                         "definition of {s} has changed! (Def.Child.Kind != Native, it is {s})",
-                        .{pool_name, @tagName(child_generic.*)},
+                        .{ pool_name, @tagName(child_generic.*) },
                     ),
                 };
                 // TODO: is something is referencing PSTR or PWSTR and is NotNullTerm, then
@@ -1749,15 +1724,9 @@ fn generateTypeDefinition(
             try generateTypeRef(sdk_file, writer, zig_type_formatter);
             try writer.writef("{s}", .{def_suffix}, .{ .start = .mid });
         },
-        .Enum => |type_enum| try generateEnum(
-            sdk_file, writer, type_enum, pool_name, enum_alias_conflicts, def_prefix, def_suffix
-        ),
-        .Struct => try generateStructOrUnion(
-            sdk_file, writer, t, def_prefix, def_suffix, null
-        ),
-        .Union => try generateStructOrUnion(
-            sdk_file, writer, t, def_prefix, def_suffix, null
-        ),
+        .Enum => |type_enum| try generateEnum(sdk_file, writer, type_enum, pool_name, enum_alias_conflicts, def_prefix, def_suffix),
+        .Struct => try generateStructOrUnion(sdk_file, writer, t, def_prefix, def_suffix, null),
+        .Union => try generateStructOrUnion(sdk_file, writer, t, def_prefix, def_suffix, null),
         .ComClassID => @panic("hasn't happened yet?"),
         .Com => |com| try generateCom(sdk_file, writer, t, com, pool_name, def_prefix),
         .FunctionPointer => |func| {
@@ -1774,7 +1743,7 @@ fn generateTypeDefinition(
                 .func = func,
                 .def_prefix = def_prefix,
                 .def_suffix = def_suffix,
-            }});
+            } });
             try sdk_file.tmp_func_ptr_workaround_list.append(pool_name);
         },
     }
@@ -1800,22 +1769,22 @@ const types_to_skip = std.StaticStringMap([]const u8).initComptime(.{
 });
 const types_that_conflict_with_consts = std.StaticStringMap(void).initComptime(.{
     // This symbol conflicts with a constant with the exact same name
-    .{ "AE_SRVSTATUS" },
-    .{ "AE_SESSLOGON" },
-    .{ "AE_SESSLOGOFF" },
-    .{ "AE_SESSPWERR" },
-    .{ "AE_CONNSTART" },
-    .{ "AE_CONNSTOP" },
-    .{ "AE_CONNREJ" },
-    .{ "AE_RESACCESS" },
-    .{ "AE_RESACCESSREJ" },
-    .{ "AE_CLOSEFILE" },
-    .{ "AE_SERVICESTAT" },
-    .{ "AE_ACLMOD" },
-    .{ "AE_UASMOD" },
-    .{ "AE_NETLOGON" },
-    .{ "AE_NETLOGOFF" },
-    .{ "AE_LOCKOUT" },
+    .{"AE_SRVSTATUS"},
+    .{"AE_SESSLOGON"},
+    .{"AE_SESSLOGOFF"},
+    .{"AE_SESSPWERR"},
+    .{"AE_CONNSTART"},
+    .{"AE_CONNSTOP"},
+    .{"AE_CONNREJ"},
+    .{"AE_RESACCESS"},
+    .{"AE_RESACCESSREJ"},
+    .{"AE_CLOSEFILE"},
+    .{"AE_SERVICESTAT"},
+    .{"AE_ACLMOD"},
+    .{"AE_UASMOD"},
+    .{"AE_NETLOGON"},
+    .{"AE_NETLOGOFF"},
+    .{"AE_LOCKOUT"},
 });
 const types_that_conflict_with_something = std.StaticStringMap(void).initComptime(.{
     // https://github.com/microsoft/win32metadata/issues/632
@@ -1823,16 +1792,16 @@ const types_that_conflict_with_something = std.StaticStringMap(void).initComptim
     // but they are also defined as nested types inside the other types that use them.
     // The reason they must be skipped right now is they are causing name conflict errors
     // becuase they are duplicated.
-    .{ "DHCP_SUBNET_ELEMENT_UNION" },
-    .{ "DHCP_OPTION_ELEMENT_UNION" },
-    .{ "DHCP_OPTION_SCOPE_UNION6" },
-    .{ "DHCP_CLIENT_SEARCH_UNION" },
-    .{ "DHCP_SUBNET_ELEMENT_UNION_V4" },
-    .{ "DHCP_SUBNET_ELEMENT_UNION_V6" },
+    .{"DHCP_SUBNET_ELEMENT_UNION"},
+    .{"DHCP_OPTION_ELEMENT_UNION"},
+    .{"DHCP_OPTION_SCOPE_UNION6"},
+    .{"DHCP_CLIENT_SEARCH_UNION"},
+    .{"DHCP_SUBNET_ELEMENT_UNION_V4"},
+    .{"DHCP_SUBNET_ELEMENT_UNION_V6"},
 });
 
 const com_types_to_skip = std.StaticStringMap(void).initComptime(.{
-    .{ "placeholder_ignore_me" },
+    .{"placeholder_ignore_me"},
 });
 
 fn generatePlatformComment(writer: *CodeWriter, maybe_platform: ?metadata.Platform) !void {
@@ -1912,12 +1881,8 @@ fn generateStructOrUnionDef(
             //defer allocator.free(def_prefix);
             try writer.writef("pub const {s} = ", .{pool_name}, .{ .nl = false });
             switch (nested_type.Kind) {
-                .Union => try generateStructOrUnionDef(
-                    sdk_file, writer, nested_type.*, this_nested_context
-                ),
-                .Struct => try generateStructOrUnionDef(
-                    sdk_file, writer, nested_type.*, this_nested_context
-                ),
+                .Union => try generateStructOrUnionDef(sdk_file, writer, nested_type.*, this_nested_context),
+                .Struct => try generateStructOrUnionDef(sdk_file, writer, nested_type.*, this_nested_context),
                 else => jsonPanicMsg("not impl", .{}),
             }
             try writer.line("};");
@@ -1945,9 +1910,7 @@ fn generateStructOrUnionDef(
             if (field.Attrs.Obselete) {
                 try writer.line("/// Deprecated");
             }
-            const field_type_formatter = try addTypeRefs(
-                sdk_file, t.Architectures, field.Type, field_options, this_nested_context
-            );
+            const field_type_formatter = try addTypeRefs(sdk_file, t.Architectures, field.Type, field_options, this_nested_context);
             try writer.writef("{p}: ", .{std.zig.fmtId(field.Name)}, .{ .nl = false });
             try generateTypeRef(sdk_file, writer, field_type_formatter);
             if (container.PackingSize >= 1) {
@@ -1962,13 +1925,13 @@ fn generateStructOrUnionDef(
 // I'll default to all of them being exhaustive except the ones
 // in this list that I know are currently not exhaustive.
 const non_exhaustive_enums = std.StaticStringMap(void).initComptime(.{
-    .{ "WIN32_ERROR" },
+    .{"WIN32_ERROR"},
     // This enum is not exhaustive because it is missing a value, see
     //     https://github.com/microsoft/win32metadata/issues/203
-    .{ "CLSCTX" },
+    .{"CLSCTX"},
     // SEND_FLAGS is missing the value 0
-    .{ "SEND_FLAGS" },
-    .{ "WINDOW_LONG_PTR_INDEX" },
+    .{"SEND_FLAGS"},
+    .{"WINDOW_LONG_PTR_INDEX"},
 });
 
 fn shortEnumValueName(enum_type_name: []const u8, full_value_name: []const u8) []const u8 {
@@ -1998,100 +1961,100 @@ const suppress_enum_aliases = blk: {
     break :blk std.StaticStringMap(void).initComptime(.{
 
         // suppress this one because the CFE_UNDERLINE enum value alias conflicts with the name of an enum type
-        .{ "CFE_EFFECTS" },
+        .{"CFE_EFFECTS"},
         // these types have values that conflict with their own enum type name
-        .{ "INTERNET_DEFAULT_PORT" },
-        .{ "PDH_VERSION" },
-        .{ "POWER_PLATFORM_ROLE_VERSION" },
+        .{"INTERNET_DEFAULT_PORT"},
+        .{"PDH_VERSION"},
+        .{"POWER_PLATFORM_ROLE_VERSION"},
         // --------------------------------------------------------------------------------
         // suppress these enum value aliases because there is already a constant with the same name
         // --------------------------------------------------------------------------------
-        .{ "JsRuntimeVersion" },
-        .{ "GetIconInfo_hicon" },
-        .{ "PFN_WdsCliCallback_dwMessageIdFlags" },
-        .{ "MIB_IPFORWARD_TYPE" },
-        .{ "OLEMISC" },
-        .{ "IMAGEHLP_CBA_EVENT_SEVERITY" },
-        .{ "PFN_WDS_CLI_CALLBACK_MESSAGE_ID" },
+        .{"JsRuntimeVersion"},
+        .{"GetIconInfo_hicon"},
+        .{"PFN_WdsCliCallback_dwMessageIdFlags"},
+        .{"MIB_IPFORWARD_TYPE"},
+        .{"OLEMISC"},
+        .{"IMAGEHLP_CBA_EVENT_SEVERITY"},
+        .{"PFN_WDS_CLI_CALLBACK_MESSAGE_ID"},
         // --------------------------------------------------------------------------------
         // suppress the rest because there is another enum with the same enum value alias
         // --------------------------------------------------------------------------------
         // Security
-        .{ "NCrypt_dwFlags" },
-        .{ "IAzClientContext3_GetGroups_ulOptionsFlags" },
-        .{ "NCryptNotifyChangeKey_dwFlags" },
-        .{ "SECPKG_ATTR_1" },
-        .{ "CryptImportPKCS8_dwFlags" },
-        .{ "NCryptDecrypt_dwFlags" },
-        .{ "KERB_CERTIFICATE_LOGON_MessageTypeFlags" },
-        .{ "SC_ACTION_TypeFlags" },
-        .{ "IIdentityProvider_Advise_dwIdentityUpdateEventsFlags" },
-        .{ "CRYPT_KEY_PROV_FLAGS" },
+        .{"NCrypt_dwFlags"},
+        .{"IAzClientContext3_GetGroups_ulOptionsFlags"},
+        .{"NCryptNotifyChangeKey_dwFlags"},
+        .{"SECPKG_ATTR_1"},
+        .{"CryptImportPKCS8_dwFlags"},
+        .{"NCryptDecrypt_dwFlags"},
+        .{"KERB_CERTIFICATE_LOGON_MessageTypeFlags"},
+        .{"SC_ACTION_TypeFlags"},
+        .{"IIdentityProvider_Advise_dwIdentityUpdateEventsFlags"},
+        .{"CRYPT_KEY_PROV_FLAGS"},
         // WindowsProgramming
-        .{ "VER_MASK" },
-        .{ "SetHandleInformation_dwFlags" },
-        .{ "DuplicateHandle_dwOptionsFlags" },
-        .{ "REG_OPEN_CREATE_OPTIONS" },
+        .{"VER_MASK"},
+        .{"SetHandleInformation_dwFlags"},
+        .{"DuplicateHandle_dwOptionsFlags"},
+        .{"REG_OPEN_CREATE_OPTIONS"},
         // SystemServices
-        .{ "QueryInformationJobObject_JobObjectInformationClassFlags" },
-        .{ "HeapSetInformation_HeapInformationClassFlags" },
-        .{ "JOBOBJECT_NOTIFICATION_LIMIT_INFORMATION_2_IoRateControlToleranceInterval" },
-        .{ "JOBOBJECT_RATE_CONTROL_TOLERANCE_INTERVAL" },
-        .{ "JOBOBJECT_LIMIT_VIOLATION_INFORMATION_2_RateControlTolerance" },
-        .{ "JOBOBJECT_IO_RATE_CONTROL_INFORMATIONFlags" },
-        .{ "CreateFileMapping_flProtect" },
-        .{ "PFM_FLAGS" },
-        .{ "JOBOBJECT_BASIC_LIMIT_INFORMATIONFlags" },
-        .{ "JOBOBJECT_SECURITY_LIMIT_INFORMATIONFlags" },
-        .{ "JOBOBJECT_BASIC_UI_RESTRICTIONS_UIRestrictionsClassFlags" },
+        .{"QueryInformationJobObject_JobObjectInformationClassFlags"},
+        .{"HeapSetInformation_HeapInformationClassFlags"},
+        .{"JOBOBJECT_NOTIFICATION_LIMIT_INFORMATION_2_IoRateControlToleranceInterval"},
+        .{"JOBOBJECT_RATE_CONTROL_TOLERANCE_INTERVAL"},
+        .{"JOBOBJECT_LIMIT_VIOLATION_INFORMATION_2_RateControlTolerance"},
+        .{"JOBOBJECT_IO_RATE_CONTROL_INFORMATIONFlags"},
+        .{"CreateFileMapping_flProtect"},
+        .{"PFM_FLAGS"},
+        .{"JOBOBJECT_BASIC_LIMIT_INFORMATIONFlags"},
+        .{"JOBOBJECT_SECURITY_LIMIT_INFORMATIONFlags"},
+        .{"JOBOBJECT_BASIC_UI_RESTRICTIONS_UIRestrictionsClassFlags"},
         // NetManagement
-        .{ "NetWkstaSetInfo_levelFlags" },
+        .{"NetWkstaSetInfo_levelFlags"},
         // ComponentServices
-        .{ "ICOMAdminCatalog2_IsSafeToDelete_pCOMAdminInUseFlags" },
-        .{ "ImportUnconfiguredComponents_pVarComponentType" },
-        .{ "ICOMAdminCatalog_InstallApplication_lOptionsFlags" },
-        .{ "ICOMAdminCatalog_ExportApplication_lOptionsFlags" },
-        .{ "WerRegisterFile_regFileTypeFlags" },
-        .{ "WerReportSubmit_pSubmitResultFlags" },
-        .{ "WerReportCreate_repTypeFlags" },
-        .{ "WerReportSubmit_consentFlags" },
+        .{"ICOMAdminCatalog2_IsSafeToDelete_pCOMAdminInUseFlags"},
+        .{"ImportUnconfiguredComponents_pVarComponentType"},
+        .{"ICOMAdminCatalog_InstallApplication_lOptionsFlags"},
+        .{"ICOMAdminCatalog_ExportApplication_lOptionsFlags"},
+        .{"WerRegisterFile_regFileTypeFlags"},
+        .{"WerReportSubmit_pSubmitResultFlags"},
+        .{"WerReportCreate_repTypeFlags"},
+        .{"WerReportSubmit_consentFlags"},
         // FileSystem
-        .{ "DefineDosDevice_dwFlags" },
-        .{ "CreateFile_dwShareMode" },
-        .{ "CreateLogFile_fCreateDispositionFlags" },
-        .{ "ReOpenFile_dwFlagsAndAttributes" },
+        .{"DefineDosDevice_dwFlags"},
+        .{"CreateFile_dwShareMode"},
+        .{"CreateLogFile_fCreateDispositionFlags"},
+        .{"ReOpenFile_dwFlagsAndAttributes"},
         // Parental Controls
-        .{ "IWindowsParentalControlsCore_GetVisibility_peVisibilityFlags" },
-        .{ "GetRestrictions_pdwRestrictions" },
-        .{ "IWPCWebSettings_GetSettings_pdwSettingsFlags" },
+        .{"IWindowsParentalControlsCore_GetVisibility_peVisibilityFlags"},
+        .{"GetRestrictions_pdwRestrictions"},
+        .{"IWPCWebSettings_GetSettings_pdwSettingsFlags"},
         // Gdi
-        .{ "CombineRgn_iMode" },
-        .{ "CreateDIBitmap_iUsage" },
-        .{ "PatBlt_ropFlags" },
-        .{ "GetCurrentObject_typeFlags" },
-        .{ "SetROP2_rop2Flags" },
+        .{"CombineRgn_iMode"},
+        .{"CreateDIBitmap_iUsage"},
+        .{"PatBlt_ropFlags"},
+        .{"GetCurrentObject_typeFlags"},
+        .{"SetROP2_rop2Flags"},
         // MachineLearning
-        .{ "MLOperatorTensorDataType" },
-        .{ "MLOperatorExecutionType" },
-        .{ "MLOperatorEdgeType" },
+        .{"MLOperatorTensorDataType"},
+        .{"MLOperatorExecutionType"},
+        .{"MLOperatorEdgeType"},
         // Com
-        .{ "IPropertyPageSite_OnStatusChangeFlags" },
-        .{ "IOleControlSite_TransformCoordsFlags" },
+        .{"IPropertyPageSite_OnStatusChangeFlags"},
+        .{"IOleControlSite_TransformCoordsFlags"},
         // ApplicationInstallationAndServicing
-        .{ "LPDISPLAYVAL_uiTypeFlags" },
-        .{ "MsiSourceList_dwContext" },
-        .{ "MsiAdvertiseScript_dwFlags" },
-        .{ "MsiViewModify_eModifyModeFlags" },
-        .{ "MsiCreateTransformSummaryInfo_iErrorConditions" },
-        .{ "MsiCreateTransformSummaryInfo_iValidation" },
-        .{ "MsiEnumClientsEx_dwContext" },
+        .{"LPDISPLAYVAL_uiTypeFlags"},
+        .{"MsiSourceList_dwContext"},
+        .{"MsiAdvertiseScript_dwFlags"},
+        .{"MsiViewModify_eModifyModeFlags"},
+        .{"MsiCreateTransformSummaryInfo_iErrorConditions"},
+        .{"MsiCreateTransformSummaryInfo_iValidation"},
+        .{"MsiEnumClientsEx_dwContext"},
         // WindowsAndMessaging
-        .{ "DrawIconEx_diFlags" },
+        .{"DrawIconEx_diFlags"},
         // Debug
-        .{ "SymGetHomeDirectory_type" },
-        .{ "SymGetSymbolFile_Type" },
+        .{"SymGetHomeDirectory_type"},
+        .{"SymGetSymbolFile_Type"},
         // Multimedia
-        .{ "MIDI_OPEN_TYPE" },
+        .{"MIDI_OPEN_TYPE"},
     });
 };
 
@@ -2131,7 +2094,7 @@ const EnumValue = struct {
                     return .{ .flag = 63 }; // TODO: verify this is not off-by-one
                 std.debug.panic(
                     "todo: handle enum flag value json number string '{s}' ('{s}' '{s}')",
-                    .{s, self.pool_name, self.short_name },
+                    .{ s, self.pool_name, self.short_name },
                 );
             },
             else => {
@@ -2217,7 +2180,7 @@ fn generateEnum(
             }
         }
     }
-    var flag_map = [1]?*EnumValue{ null } ** 64;
+    var flag_map = [1]?*EnumValue{null} ** 64;
 
     const enum_type = if (type_enum.Flags) "packed struct" else "enum";
 
@@ -2238,7 +2201,7 @@ fn generateEnum(
             defer writer.depth -= 1;
             try writer.linef("_,", .{});
             try writer.linef("pub fn tagName(self: {s}) ?[:0]const u8 {{", .{pool_name});
-            try writer.line( "    return switch (self) {");
+            try writer.line("    return switch (self) {");
             for (values) |val| {
                 if (val.conflict_index) |_| continue;
                 try writer.linef("        .{p} => \"{}\",", .{
@@ -2246,23 +2209,23 @@ fn generateEnum(
                     std.zig.fmtEscapes(val.short_name),
                 });
             }
-            try writer.line( "        else => null,");
-            try writer.line( "    };");
-            try writer.line( "}");
+            try writer.line("        else => null,");
+            try writer.line("    };");
+            try writer.line("}");
             try writer.linef("pub fn fmt(self: {s}) Fmt {{ return .{{ .value = self }}; }}", .{pool_name});
-            try writer.line( "pub const Fmt = struct {");
+            try writer.line("pub const Fmt = struct {");
             try writer.linef("    value: {s},", .{pool_name});
-            try writer.line( "    pub fn format(");
-            try writer.line( "        self: Fmt,");
-            try writer.line( "        comptime fmt_spec: []const u8,");
-            try writer.line( "        options: @import(\"std\").fmt.FormatOptions,");
-            try writer.line( "        writer: anytype,");
-            try writer.line( "    ) !void {");
-            try writer.line( "        _ = fmt_spec;");
-            try writer.line( "        _ = options;");
-            try writer.line( "        try writer.print(\"{s}({})\", .{self.value.tagName() orelse \"?\", @intFromEnum(self.value)});");
-            try writer.line( "    }");
-            try writer.line( "};");
+            try writer.line("    pub fn format(");
+            try writer.line("        self: Fmt,");
+            try writer.line("        comptime fmt_spec: []const u8,");
+            try writer.line("        options: @import(\"std\").fmt.FormatOptions,");
+            try writer.line("        writer: anytype,");
+            try writer.line("    ) !void {");
+            try writer.line("        _ = fmt_spec;");
+            try writer.line("        _ = options;");
+            try writer.line("        try writer.print(\"{s}({})\", .{self.value.tagName() orelse \"?\", @intFromEnum(self.value)});");
+            try writer.line("    }");
+            try writer.line("};");
         }
     }
     if (type_enum.Flags) {
@@ -2291,7 +2254,7 @@ fn generateEnum(
                 try writer.linef("    _{}: u1 = 0,", .{i});
                 continue;
             };
-            try writer.linef("    {p}: u1 = 0,", .{ std.zig.fmtId(flag.short_name) });
+            try writer.linef("    {p}: u1 = 0,", .{std.zig.fmtId(flag.short_name)});
         }
         for (flag_map[bit_count..]) |maybe_flag| {
             if (maybe_flag) |_|
@@ -2349,16 +2312,10 @@ fn generateEnum(
         try sdk_file.const_exports.append(val.pool_name);
         const target_short_name = if (val.conflict_index) |i| values[i].short_name else val.short_name;
         if (type_enum.Flags) switch (val.flagsValue()) {
-            .zero => try writer.linef("pub const {} = {}{{ }};", .{
-                val.pool_name, pool_name
-            }),
-            .flag => try writer.linef("pub const {} = {}{{ .{p} = 1 }};", .{
-                val.pool_name, pool_name, std.zig.fmtId(target_short_name)
-            }),
+            .zero => try writer.linef("pub const {} = {}{{ }};", .{ val.pool_name, pool_name }),
+            .flag => try writer.linef("pub const {} = {}{{ .{p} = 1 }};", .{ val.pool_name, pool_name, std.zig.fmtId(target_short_name) }),
             .mask => |mask| {
-                try writer.linef("pub const {} = {}{{", .{
-                    val.pool_name, pool_name
-                });
+                try writer.linef("pub const {} = {}{{", .{ val.pool_name, pool_name });
                 var mask_left = mask;
                 var index: u6 = 0;
                 while (true) : (index += 1) {
@@ -2383,12 +2340,10 @@ fn generateEnum(
 }
 
 fn getComInterface(api: []const u8, name: []const u8) ?metadata.TypeRef {
-    const pass1_api_map = global_pass1.get(api) orelse jsonPanicMsg(
-        "com interface inside unknown api '{s}'", .{api}
-    );
+    const pass1_api_map = global_pass1.get(api) orelse jsonPanicMsg("com interface inside unknown api '{s}'", .{api});
     const pass1_type = pass1_api_map.get(name) orelse jsonPanicMsg(
         "com interface '{s}' does not exist in api '{s}'",
-        .{name, api},
+        .{ name, api },
     );
     return switch (pass1_type) {
         .Com => |com| com.Interface,
@@ -2449,7 +2404,7 @@ fn generateCom(
             const state = method_set.get(method.Name).?;
             switch (state) {
                 .unique => {
-                    if (maybe_overload_suffixes)  |_| fatal(
+                    if (maybe_overload_suffixes) |_| fatal(
                         "api '{s}' COM type '{s}' method '{s}' has a unique name but also entries in ComOverloads.txt?",
                         .{ sdk_file.json_name, com_pool_name, method.Name },
                     );
@@ -2457,7 +2412,7 @@ fn generateCom(
                 .conflicts => {
                     const have_overload = blk: {
                         const overload_suffixes = maybe_overload_suffixes orelse break :blk false;
-                        const suffix  = overload_suffixes.get(@intCast(method_index)) orelse break :blk false;
+                        const suffix = overload_suffixes.get(@intCast(method_index)) orelse break :blk false;
                         std.debug.assert(suffix.len > 0);
                         break :blk true;
                     };
@@ -2504,14 +2459,14 @@ fn generateCom(
             const zig_name = try std.fmt.bufPrint(
                 &zig_name_buf,
                 "{s}{s}",
-                .{method.Name, suffix},
+                .{ method.Name, suffix },
             );
 
             try generateFunction(sdk_file, writer, .{ .com = .{
                 .method = method,
                 .type_name = com_pool_name.slice,
                 .zig_name = zig_name,
-            }});
+            } });
             writer.depth -= 2;
         }
     }
@@ -2527,7 +2482,7 @@ fn generateCom(
                 .reason = .direct_type_access,
             }), null);
 
-            try writer.write("    ", .{ .nl = false});
+            try writer.write("    ", .{ .nl = false });
             try generateTypeRef(sdk_file, writer, iface_formatter);
             try writer.write(": ", .{ .start = .mid, .nl = false });
             try generateTypeRef(sdk_file, writer, iface_formatter);
@@ -2539,7 +2494,12 @@ fn generateCom(
     }
 
     try generateComMethods(
-        sdk_file, writer, t.Architectures, com_pool_name.slice, type_com.Methods, maybe_overloads,
+        sdk_file,
+        writer,
+        t.Architectures,
+        com_pool_name.slice,
+        type_com.Methods,
+        maybe_overloads,
     );
     try writer.line("};");
 }
@@ -2565,7 +2525,7 @@ fn generateComMethods(
             var sep: []const u8 = "";
             while (suffix_it.next()) |suffix_entry| {
                 const suffix = suffix_entry.value_ptr.*;
-                try writer.writef("{s} {s}{s}", .{sep, name, suffix}, .{ .start = .mid, .nl = false });
+                try writer.writef("{s} {s}{s}", .{ sep, name, suffix }, .{ .start = .mid, .nl = false });
                 sep = ",";
             }
             try writer.write("\");", .{ .start = .mid });
@@ -2588,7 +2548,7 @@ fn generateComMethods(
         const method_name = try std.fmt.bufPrint(
             &method_name_buf,
             "{s}{s}",
-            .{method.Name, suffix},
+            .{ method.Name, suffix },
         );
         try writer.writef("{}", .{
             fmtComMethodId(method_name, sdk_file.method_conflict_map),
@@ -2602,18 +2562,14 @@ fn generateComMethods(
             // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             const modifiers = ParamModifiers{};
 
-            const param_options = TypeRefFormatter.Options.fromParamAttrs(
-                param.Attrs, .var_decl, modifiers
-            );
+            const param_options = TypeRefFormatter.Options.fromParamAttrs(param.Attrs, .var_decl, modifiers);
             // NOTE: don't need to call addTypeRefs because it was already called in generateFunction above
             const param_type_formatter = fmtTypeRef(param.Type, arches, param_options, null);
             if (param_options.optional_bytes_param_index) |bytes_param_index| {
                 _ = bytes_param_index; // NOTE: can't print this because we are currently inline
                 //try writer.linef("// TODO: what to do with BytesParamIndex {}?", .{bytes_param_index});
             }
-            try writer.writef(", {s}: ", .{
-                fmtParamId(param.Name, sdk_file.param_conflict_map)
-            }, .{ .start = .mid, .nl = false });
+            try writer.writef(", {s}: ", .{fmtParamId(param.Name, sdk_file.param_conflict_map)}, .{ .start = .mid, .nl = false });
             try generateTypeRef(sdk_file, writer, param_type_formatter);
         }
         // NOTE: don't need to call addTypeRefs because it was already called in generateFunction above
@@ -2635,13 +2591,11 @@ fn generateComMethods(
         try writer.write("        return ", .{ .nl = false });
         try writer.writef(
             "self.vtable.{}(self",
-            .{ fmtComMethodId(method_name, sdk_file.method_conflict_map) },
+            .{fmtComMethodId(method_name, sdk_file.method_conflict_map)},
             .{ .start = .mid, .nl = false },
         );
         for (method.Params) |*param| {
-            try writer.writef(", {s}", .{
-                fmtParamId(param.Name, sdk_file.param_conflict_map)
-            }, .{ .start = .mid, .nl = false });
+            try writer.writef(", {s}", .{fmtParamId(param.Name, sdk_file.param_conflict_map)}, .{ .start = .mid, .nl = false });
         }
         try writer.write(");", .{ .start = .any });
         try writer.line("    }");
@@ -2657,63 +2611,63 @@ fn funcPtrHasDependencyLoop(name: []const u8) bool {
     return std.mem.startsWith(u8, name, "UText") or std.mem.startsWith(u8, name, "UCharIterator");
 }
 const func_ptr_dependency_loop_problems = std.StaticStringMap(void).initComptime(.{
-    .{ "FREEOBJPROC" },
-    .{ "LPEXCEPFINO_DEFERRED_FILLIN" },
-    .{ "LPDDENUMSURFACESCALLBACK" },
-    .{ "LPDDENUMSURFACESCALLBACK2" },
-    .{ "LPDDENUMSURFACESCALLBACK7" },
-    .{ "OEMCUIPCALLBACK" },
-    .{ "PAudioStateMonitorCallback" },
-    .{ "PFN_IO_COMPLETION" },
-    .{ "PFN_RPCNOTIFICATION_ROUTINE" },
-    .{ "PFNFILLTEXTBUFFER" },
-    .{ "WSD_STUB_FUNCTION" },
-    .{ "PWSD_SOAP_MESSAGE_HANDLER" },
-    .{ "WS_ASYNC_FUNCTION" },
-    .{ "CALLERRELEASE" },
-    .{ "PIO_IRP_EXT_PROCESS_TRACKED_OFFSET_CALLBACK" },
-    .{ "MI_MethodDecl_Invoke" },
-    .{ "MI_ProviderFT_GetInstance" },
-    .{ "MI_ProviderFT_CreateInstance" },
-    .{ "MI_ProviderFT_ModifyInstance" },
-    .{ "MI_ProviderFT_DeleteInstance" },
-    .{ "MI_ProviderFT_AssociatorInstances" },
-    .{ "MI_ProviderFT_ReferenceInstances" },
-    .{ "MI_ProviderFT_Invoke" },
-    .{ "PCMSCALLBACKW" },
-    .{ "PCMSCALLBACKA" },
-    .{ "PEVENT_TRACE_BUFFER_CALLBACKW" },
-    .{ "PEVENT_TRACE_BUFFER_CALLBACKA" },
-    .{ "EXPR_EVAL" },
-    .{ "XMIT_HELPER_ROUTINE" },
+    .{"FREEOBJPROC"},
+    .{"LPEXCEPFINO_DEFERRED_FILLIN"},
+    .{"LPDDENUMSURFACESCALLBACK"},
+    .{"LPDDENUMSURFACESCALLBACK2"},
+    .{"LPDDENUMSURFACESCALLBACK7"},
+    .{"OEMCUIPCALLBACK"},
+    .{"PAudioStateMonitorCallback"},
+    .{"PFN_IO_COMPLETION"},
+    .{"PFN_RPCNOTIFICATION_ROUTINE"},
+    .{"PFNFILLTEXTBUFFER"},
+    .{"WSD_STUB_FUNCTION"},
+    .{"PWSD_SOAP_MESSAGE_HANDLER"},
+    .{"WS_ASYNC_FUNCTION"},
+    .{"CALLERRELEASE"},
+    .{"PIO_IRP_EXT_PROCESS_TRACKED_OFFSET_CALLBACK"},
+    .{"MI_MethodDecl_Invoke"},
+    .{"MI_ProviderFT_GetInstance"},
+    .{"MI_ProviderFT_CreateInstance"},
+    .{"MI_ProviderFT_ModifyInstance"},
+    .{"MI_ProviderFT_DeleteInstance"},
+    .{"MI_ProviderFT_AssociatorInstances"},
+    .{"MI_ProviderFT_ReferenceInstances"},
+    .{"MI_ProviderFT_Invoke"},
+    .{"PCMSCALLBACKW"},
+    .{"PCMSCALLBACKA"},
+    .{"PEVENT_TRACE_BUFFER_CALLBACKW"},
+    .{"PEVENT_TRACE_BUFFER_CALLBACKA"},
+    .{"EXPR_EVAL"},
+    .{"XMIT_HELPER_ROUTINE"},
 });
 
 const dll_funcs_with_issues = std.StaticStringMap(void).initComptime(.{
     // These functions don't work yet because Zig doesn't support the 16-byte Guid struct in the C ABI yet
     // See: https://github.com/ziglang/zig/issues/1481
-    .{ "CorePrinterDriverInstalledA" },
-    .{ "CorePrinterDriverInstalledW" },
+    .{"CorePrinterDriverInstalledA"},
+    .{"CorePrinterDriverInstalledW"},
     // workaround https://github.com/microsoft/win32metadata/issues/520
-    .{ "AuthzInitializeResourceManagerEx" },
+    .{"AuthzInitializeResourceManagerEx"},
     // The 3rd parameter "ObjectType" is "Optional" but is typed as an enum?
     // but the docs says it's a pointer?? wtf is going on with this one?
-    .{ "BuildTrusteeWithObjectsAndNameA" },
-    .{ "BuildTrusteeWithObjectsAndNameW" },
+    .{"BuildTrusteeWithObjectsAndNameA"},
+    .{"BuildTrusteeWithObjectsAndNameW"},
     // these functions contain invalid optional types (https://github.com/microsoft/win32metadata/issues/519)
-    .{ "NCryptOpenKey" },
-    .{ "NCryptTranslateHandle" },
-    .{ "CryptSignAndEncodeCertificate" },
-    .{ "MFPCreateMediaPlayer" },
-    .{ "QOSRemoveSocketFromFlow" },
-    .{ "PrjUpdateFileIfNeeded" },
-    .{ "PrjDeleteFile" },
-    .{ "JetSetSystemParameterA" },
-    .{ "JetSetSystemParameterW" },
-    .{ "MsiGetComponentPathExA" },
-    .{ "MsiGetComponentPathExW" },
-    .{ "SymLoadModuleEx" },
-    .{ "SymLoadModuleExW" },
-    .{ "PssDuplicateSnapshot" },
+    .{"NCryptOpenKey"},
+    .{"NCryptTranslateHandle"},
+    .{"CryptSignAndEncodeCertificate"},
+    .{"MFPCreateMediaPlayer"},
+    .{"QOSRemoveSocketFromFlow"},
+    .{"PrjUpdateFileIfNeeded"},
+    .{"PrjDeleteFile"},
+    .{"JetSetSystemParameterA"},
+    .{"JetSetSystemParameterW"},
+    .{"MsiGetComponentPathExA"},
+    .{"MsiGetComponentPathExW"},
+    .{"SymLoadModuleEx"},
+    .{"SymLoadModuleExW"},
+    .{"PssDuplicateSnapshot"},
 });
 
 const ArchCaseContext = enum { outside_arch_case, inside_arch_case };
@@ -2855,9 +2809,7 @@ fn generateFunction(
     const params = func.Params();
 
     switch (func) {
-        .dll => |dll| sdk_file.func_exports.put(
-            try global_symbol_pool.add(dll.Name), {}
-        ) catch |e| oom(e),
+        .dll => |dll| sdk_file.func_exports.put(try global_symbol_pool.add(dll.Name), {}) catch |e| oom(e),
         .com => {},
         .ptr => {},
     }
@@ -2942,9 +2894,7 @@ fn generateFunction(
         try writer.write("noreturn", .{ .start = .mid, .nl = false });
     } else {
         // TODO: set is_const, in and out properly
-        const return_opts = TypeRefFormatter.Options.fromParamAttrs(
-            return_attrs, .var_decl, modifier_set.ret
-        );
+        const return_opts = TypeRefFormatter.Options.fromParamAttrs(return_attrs, .var_decl, modifier_set.ret);
         const return_type_formatter = try addTypeRefs(sdk_file, arches, return_type, return_opts, null);
         try generateTypeRef(sdk_file, writer, return_type_formatter);
     }
@@ -2965,9 +2915,7 @@ fn generateParams(
 ) !void {
     for (params, 0..) |*param, i| {
         const modifiers = modifier_set.params[i];
-        const param_options = TypeRefFormatter.Options.fromParamAttrs(
-            param.Attrs, .var_decl, modifiers
-        );
+        const param_options = TypeRefFormatter.Options.fromParamAttrs(param.Attrs, .var_decl, modifiers);
         const param_type_formatter = try addTypeRefs(sdk_file, arches, param.Type, param_options, null);
         if (param_options.optional_bytes_param_index) |bytes_param_index| {
             try writer.linef("    // TODO: what to do with BytesParamIndex {}?", .{bytes_param_index});
@@ -3091,7 +3039,7 @@ pub fn jsonEql(a: std.json.Value, b: std.json.Value) bool {
 
 fn getMethodConflictMap(json_name: []const u8) std.StaticStringMap(void) {
     if (std.mem.eql(u8, json_name, "Media.MediaPlayer")) return std.StaticStringMap(void).initComptime(.{
-        .{ "Guid" }, // conflicts with an imported type
+        .{"Guid"}, // conflicts with an imported type
     });
     return std.StaticStringMap(void).initComptime(.{});
 }
@@ -3100,101 +3048,99 @@ fn getMethodConflictMap(json_name: []const u8) std.StaticStringMap(void) {
 fn getParamConflictMap(json_name: []const u8) std.StaticStringMap(void) {
     @setEvalBranchQuota(9999);
     if (std.mem.eql(u8, json_name, "System.Mmc")) return std.StaticStringMap(void).initComptime(.{
-        .{ "Node" },
-        .{ "Nodes" },
-        .{ "Frame" },
-        .{ "Column" },
-        .{ "Columns" },
-        .{ "ScopeNamespace" },
-        .{ "SnapIn" },
-        .{ "Extension" },
-        .{ "View" },
-        .{ "Document" },
-        .{ "MenuItem" },
-        .{ "Views" },
-        .{ "SnapIns" },
-        .{ "Property" },
-        .{ "Properties" },
-        .{ "Extensions" },
-        .{ "ContextMenu" },
-        .{ "Guid" },
-        .{ "IsScopeNode" },
-        .{ "Enable" },
-        .{ "Name" },
-        .{ "IsSortColumn" },
-        .{ "IsSelected" },
+        .{"Node"},
+        .{"Nodes"},
+        .{"Frame"},
+        .{"Column"},
+        .{"Columns"},
+        .{"ScopeNamespace"},
+        .{"SnapIn"},
+        .{"Extension"},
+        .{"View"},
+        .{"Document"},
+        .{"MenuItem"},
+        .{"Views"},
+        .{"SnapIns"},
+        .{"Property"},
+        .{"Properties"},
+        .{"Extensions"},
+        .{"ContextMenu"},
+        .{"Guid"},
+        .{"IsScopeNode"},
+        .{"Enable"},
+        .{"Name"},
+        .{"IsSortColumn"},
+        .{"IsSelected"},
     });
-    if (std.mem.eql(
-        u8, json_name, "System.SettingsManagementInfrastructure"
-    )) return std.StaticStringMap(void).initComptime(.{
-        .{ "Attributes" },
-        .{ "Children" },
-        .{ "Settings" },
+    if (std.mem.eql(u8, json_name, "System.SettingsManagementInfrastructure")) return std.StaticStringMap(void).initComptime(.{
+        .{"Attributes"},
+        .{"Children"},
+        .{"Settings"},
     });
     if (std.mem.eql(u8, json_name, "UI.TabletPC")) return std.StaticStringMap(void).initComptime(.{
-        .{ "EventMask" },
-        .{ "InkDisplayMode" },
-        .{ "Guid" },
-        .{ "Item" },
-        .{ "DoesPropertyExist" },
-        .{ "Transform" },
-        .{ "ToString" },
-        .{ "CanPaste" },
-        .{ "AlternatesFromSelection" },
-        .{ "GetStrokesFromStrokeRanges" },
-        .{ "GetStrokesFromTextRange" },
-        .{ "AlternatesWithConstantPropertyValues" },
-        .{ "GetStrokesFromStrokeRanges" },
-        .{ "GetStrokesFromTextRange" },
-        .{ "AlternatesWithConstantPropertyValues" },
-        .{ "RemoveWord" },
+        .{"EventMask"},
+        .{"InkDisplayMode"},
+        .{"Guid"},
+        .{"Item"},
+        .{"DoesPropertyExist"},
+        .{"Transform"},
+        .{"ToString"},
+        .{"CanPaste"},
+        .{"AlternatesFromSelection"},
+        .{"GetStrokesFromStrokeRanges"},
+        .{"GetStrokesFromTextRange"},
+        .{"AlternatesWithConstantPropertyValues"},
+        .{"GetStrokesFromStrokeRanges"},
+        .{"GetStrokesFromTextRange"},
+        .{"AlternatesWithConstantPropertyValues"},
+        .{"RemoveWord"},
     });
     if (std.mem.eql(u8, json_name, "UI.Shell")) return std.StaticStringMap(void).initComptime(.{
-        .{ "Folder" },
+        .{"Folder"},
     });
     if (std.mem.eql(u8, json_name, "Media.DirectShow")) return std.StaticStringMap(void).initComptime(.{
-        .{ "Quality" },
-        .{ "ScanModulationTypes" },
-        .{ "AnalogVideoStandard" },
-        .{ "Guid" },
-        .{ "HideCursor" },
-        .{ "UseScanLine" },
-        .{ "UseOverlayStretch" },
-        .{ "UseWhenFullScreen" },
-        .{ "UseScanLine" },
-        .{ "UseWhenFullScreen" },
+        .{"Quality"},
+        .{"ScanModulationTypes"},
+        .{"AnalogVideoStandard"},
+        .{"Guid"},
+        .{"HideCursor"},
+        .{"UseScanLine"},
+        .{"UseOverlayStretch"},
+        .{"UseWhenFullScreen"},
+        .{"UseScanLine"},
+        .{"UseWhenFullScreen"},
     });
     if (std.mem.eql(u8, json_name, "Media.Speech")) return std.StaticStringMap(void).initComptime(.{
-        .{ "Guid" },
-        .{ "Alternates" },
+        .{"Guid"},
+        .{"Alternates"},
     });
     if (std.mem.eql(u8, json_name, "Media.MediaFoundation")) return std.StaticStringMap(void).initComptime(.{
-        .{ "Guid" },
+        .{"Guid"},
     });
     if (std.mem.eql(u8, json_name, "System.Diagnostics.Debug")) return std.StaticStringMap(void).initComptime(.{
-        .{ "Guid" },
-        .{ "Symbol" },
-        .{ "Request" },
-        .{ "Exception" },
+        .{"Guid"},
+        .{"Symbol"},
+        .{"Request"},
+        .{"Exception"},
     });
     if (std.mem.eql(u8, json_name, "System.RemoteDesktop")) return std.StaticStringMap(void).initComptime(.{
-        .{ "DisplayIOCtl" },
+        .{"DisplayIOCtl"},
     });
     if (std.mem.eql(u8, json_name, "System.Performance")) return std.StaticStringMap(void).initComptime(.{
-        .{ "Stop" },
+        .{"Stop"},
     });
     if (std.mem.eql(u8, json_name, "Web.MsHtml")) return std.StaticStringMap(void).initComptime(.{
-        .{ "item" },
-        .{ "Gravity" },
+        .{"item"},
+        .{"Gravity"},
     });
     if (std.mem.eql(u8, json_name, "Data.Xml.MsXml")) return std.StaticStringMap(void).initComptime(.{
-        .{ "hasFeature" },
+        .{"hasFeature"},
     });
     if (std.mem.eql(u8, json_name, "UI.Controls.RichEdit")) return std.StaticStringMap(void).initComptime(.{
-        .{ "Notify" },
+        .{"Notify"},
     });
     if (std.mem.eql(u8, json_name, "Devices.ImageAcquisition")) return std.StaticStringMap(void).initComptime(.{
-        .{ "hResult" },
+        .{"hResult"},
     });
     return std.StaticStringMap(void).initComptime(.{});
 }
@@ -3216,7 +3162,7 @@ pub const FmtId = struct {
                 .param => "_param_",
                 .com_method => "_method_",
             };
-            try writer.print("{s}{s}", .{prefix, self.s});
+            try writer.print("{s}{s}", .{ prefix, self.s });
         } else {
             try writer.print("{}", .{std.zig.fmtId(self.s)});
         }

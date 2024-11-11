@@ -7,5 +7,5 @@
             .hash = "1220291dc459981dc6ee070519ca40d5747c41be2130721a6772eda155a0f932acf1",
         },
     },
-    .paths = .{ "build.zig.zon" },
+    .paths = .{"build.zig.zon"},
 }

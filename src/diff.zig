@@ -33,7 +33,7 @@ fn usage(zigbuild: bool) !void {
         \\ --nofetch | -n   Disable fetching the latest 'main' branch for
         \\                  {0s}.
         \\
-        ,
+    ,
         .{ parts.diffrepo, parts.generated },
     );
 }
@@ -67,41 +67,27 @@ pub fn main() !void {
                 std.process.exit(1);
             } else if (std.mem.eql(u8, arg, "--nofetch") or std.mem.eql(u8, arg, "-n")) {
                 opt.fetch = false;
-            } else fatal(
-                "unknown cmline option '{s}'", .{arg}
-            );
+            } else fatal("unknown cmline option '{s}'", .{arg});
         }
-        break :blk all_args[0 .. pos_arg_count];
+        break :blk all_args[0..pos_arg_count];
     };
     if (cmd_pos_args.len == 0) {
         try usage(opt.zigbuild);
         std.process.exit(1);
     }
-    if (cmd_pos_args.len != 2) fatal(
-        "expected 2 positional cmdline arguments but got {}", .{cmd_pos_args.len}
-    );
+    if (cmd_pos_args.len != 2) fatal("expected 2 positional cmdline arguments but got {}", .{cmd_pos_args.len});
     const diff_repo = cmd_pos_args[0];
     const generated_path = cmd_pos_args[1];
 
     try makeRepo(diff_repo);
 
     if (opt.fetch) {
-        try run(arena, "git fetch", &.{
-            "git", "-C", diff_repo, "fetch", "origin", "main"
-        });
+        try run(arena, "git fetch", &.{ "git", "-C", diff_repo, "fetch", "origin", "main" });
     }
-    try run(arena, "git clean", &.{
-        "git", "-C", diff_repo, "clean", "-xffd"
-    });
-    try run(arena, "git reset", &.{
-        "git", "-C", diff_repo, "reset", "--hard"
-    });
-    try run(arena, "git checkout", &.{
-        "git", "-C", diff_repo, "checkout", "origin/main"
-    });
-    try run(arena, "git clean", &.{
-        "git", "-C", diff_repo, "clean", "-xffd"
-    });
+    try run(arena, "git clean", &.{ "git", "-C", diff_repo, "clean", "-xffd" });
+    try run(arena, "git reset", &.{ "git", "-C", diff_repo, "reset", "--hard" });
+    try run(arena, "git checkout", &.{ "git", "-C", diff_repo, "checkout", "origin/main" });
+    try run(arena, "git clean", &.{ "git", "-C", diff_repo, "clean", "-xffd" });
 
     {
         var dir = try std.fs.cwd().openDir(diff_repo, .{ .iterate = true });
@@ -109,22 +95,21 @@ pub fn main() !void {
         var it = dir.iterate();
         while (try it.next()) |entry| {
             if (std.mem.eql(u8, entry.name, ".git")) continue;
-            std.log.info("rm -rf '{s}/{s}'", .{diff_repo, entry.name});
+            std.log.info("rm -rf '{s}/{s}'", .{ diff_repo, entry.name });
             try dir.deleteTree(entry.name);
         }
     }
 
     std.log.info("copying generated files from '{s}'...", .{generated_path});
     try copyDir(
-        std.fs.cwd(), generated_path,
-        std.fs.cwd(), diff_repo,
+        std.fs.cwd(),
+        generated_path,
+        std.fs.cwd(),
+        diff_repo,
     );
 
-    try run(arena, "git status", &.{
-        "git", "-C", diff_repo, "status"
-    });
+    try run(arena, "git status", &.{ "git", "-C", diff_repo, "status" });
 }
-
 
 pub fn makeRepo(path: []const u8) !void {
     std.fs.cwd().access(path, .{}) catch |err| switch (err) {
@@ -143,14 +128,19 @@ fn gitInit(repo: []const u8) !void {
     try std.fs.cwd().makeDir(tmp_repo);
     try run(allocator, "git init", &.{
         "git",
-        "-C", tmp_repo,
+        "-C",
+        tmp_repo,
         "init",
     });
     const zigwin32_repo_url = "https://github.com/marlersoft/zigwin32";
     try run(allocator, "git init", &.{
         "git",
-        "-C", tmp_repo,
-        "remote", "add", "origin", zigwin32_repo_url,
+        "-C",
+        tmp_repo,
+        "remote",
+        "add",
+        "origin",
+        zigwin32_repo_url,
     });
     try std.fs.cwd().rename(tmp_repo, repo);
 }
@@ -167,7 +157,7 @@ const FormatArgv = struct {
         _ = options;
         var prefix: []const u8 = "";
         for (self.argv) |arg| {
-            try writer.print("{s}{s}", .{prefix, arg});
+            try writer.print("{s}{s}", .{ prefix, arg });
             prefix = " ";
         }
     }
@@ -216,7 +206,7 @@ pub fn run(
     try child.spawn();
     const term = try child.wait();
     if (childProcFailed(term)) {
-        fatal("{s} {}", .{name, fmtTerm(term)});
+        fatal("{s} {}", .{ name, fmtTerm(term) });
     }
 }
 
@@ -235,9 +225,7 @@ fn copyDir(
         switch (entry.kind) {
             .directory => {
                 try dst_dir.makeDir(entry.name);
-                try copyDir(
-                    src_dir, entry.name, dst_dir, entry.name
-                );
+                try copyDir(src_dir, entry.name, dst_dir, entry.name);
             },
             .file => try src_dir.copyFile(
                 entry.name,
