@@ -12,6 +12,43 @@ pub fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.process.exit(0xff);
 }
 
+const NativeType = enum {
+    Boolean,
+    SByte,
+    Byte,
+    Int16,
+    UInt16,
+    Int32,
+    UInt32,
+    Int64,
+    UInt64,
+    Char,
+    Single,
+    Double,
+    String,
+    IntPtr,
+    UIntPtr,
+    Guid,
+};
+pub const native_type_map = std.StaticStringMap(NativeType).initComptime(.{
+    .{ "Boolean", .Boolean },
+    .{ "SByte", .SByte },
+    .{ "Byte", .Byte },
+    .{ "Int16", .Int16 },
+    .{ "UInt16", .UInt16 },
+    .{ "Int32", .Int32 },
+    .{ "UInt32", .UInt32 },
+    .{ "Int64", .Int64 },
+    .{ "UInt64", .UInt64 },
+    .{ "Char", .Char },
+    .{ "Single", .Single },
+    .{ "Double", .Double },
+    .{ "String", .String },
+    .{ "IntPtr", .IntPtr },
+    .{ "UIntPtr", .UIntPtr },
+    .{ "Guid", .Guid },
+});
+
 pub fn getcwd(a: std.mem.Allocator) ![]u8 {
     var path_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
     const path = try std.os.getcwd(&path_buf);
@@ -65,6 +102,27 @@ pub fn formatSliceT(comptime T: type, comptime spec: []const u8, slice: []const 
 //pub fn formatSlice(slice: anytype) SliceFormatter(T) {
 //    return .{ .slice = slice };
 //}
+
+pub fn cleanDir(dir: std.fs.Dir, sub_path: []const u8) !void {
+    std.log.info("cleandir '{s}'", .{sub_path});
+    try dir.deleteTree(sub_path);
+    const MAX_ATTEMPTS = 30;
+    var attempt: u32 = 1;
+    while (true) : (attempt += 1) {
+        if (attempt > MAX_ATTEMPTS)
+            fatal("failed to delete '{s}' after {} attempts", .{ sub_path, MAX_ATTEMPTS });
+
+        // ERROR: windows.OpenFile is not handling error.Unexpected NTSTATUS=0xc0000056
+        dir.makeDir(sub_path) catch |e| switch (e) {
+            else => {
+                std.debug.print("[DEBUG] makedir failed with {}\n", .{e});
+                //std.process.exit(0xff);
+                continue;
+            },
+        };
+        break;
+    }
+}
 
 pub fn jsonPanic() noreturn {
     @panic("an assumption about the json format was violated");
