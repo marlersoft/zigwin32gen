@@ -8,6 +8,7 @@ const cameltosnake = @import("cameltosnake.zig");
 
 const common = @import("common.zig");
 const metadata = @import("metadata.zig");
+const extra = @import("extra.zig");
 const jsonextra = @import("jsonextra.zig");
 const pass1data = @import("pass1data.zig");
 const oom = common.oom;
@@ -31,8 +32,7 @@ var global_symbol_none: StringPool.Val = undefined;
 var global_symbol_None: StringPool.Val = undefined;
 
 var global_pass1: pass1data.Root = undefined;
-var global_notnull: NotNullRoot = undefined;
-var global_union_pointers: UnionPointersRoot = undefined;
+var global_extra: extra.Root = undefined;
 var global_com_overloads: StringPool.HashMapUnmanaged(ComTypeMap) = .{};
 const MissingOverload = struct {
     api: StringPool.Val,
@@ -80,34 +80,6 @@ pub fn getPass1TypeCategory(kind: pass1data.TypeKind) Pass1TypeCategory {
     };
 }
 
-const UnionPointersRoot = jsonextra.ArrayHashMap(UnionPointersApi);
-const UnionPointersApi = struct {
-    Functions: UnionPointersFunctionMap,
-    Constants: []const []const u8,
-};
-const UnionPointersFunctionMap = jsonextra.ArrayHashMap([]const []const u8);
-const empty_strings_map = jsonextra.ArrayHashMap([]const []const u8){
-    .map = .{
-        .ctx = .{},
-        .allocator = fail_allocator,
-        .unmanaged = .{},
-    },
-};
-
-const NotNullRoot = jsonextra.ArrayHashMap(NotNullApi);
-const NotNullApi = struct {
-    Functions: NotNullFunctionMap,
-};
-const NullModifier = u3;
-const NotNullFunctionMap = jsonextra.ArrayHashMap([]const NullModifier);
-const notnull_empty_function_map = NotNullFunctionMap{
-    .map = .{
-        .ctx = .{},
-        .allocator = fail_allocator,
-        .unmanaged = .{},
-    },
-};
-
 const Module = struct {
     optional_parent: ?*Module,
     name: StringPool.Val,
@@ -140,23 +112,6 @@ const ApiImport = struct {
     api: StringPool.Val,
 };
 
-// TODO: this is defined in std, maybe it should be pub?
-const fail_allocator = std.mem.Allocator{
-    .ptr = undefined,
-    .vtable = &fail_allocator_vtable,
-};
-const fail_allocator_vtable = std.mem.Allocator.VTable{
-    .alloc = failAllocatorAlloc,
-    .resize = std.mem.Allocator.noResize,
-    .free = std.mem.Allocator.noFree,
-};
-fn failAllocatorAlloc(_: *anyopaque, n: usize, alignment: u8, ra: usize) ?[*]u8 {
-    _ = n;
-    _ = alignment;
-    _ = ra;
-    return null;
-}
-
 fn StringPoolArrayHashMap(comptime T: type) type {
     return std.ArrayHashMap(StringPool.Val, T, StringPool.ArrayHashContext, false);
 }
@@ -177,12 +132,10 @@ const SdkFile = struct {
     tmp_func_ptr_workaround_list: ArrayList(StringPool.Val),
     method_conflict_map: std.StaticStringMap(void),
     param_conflict_map: std.StaticStringMap(void),
-    not_null_funcs: NotNullFunctionMap,
-    not_null_funcs_applied: StringPool.HashMap(void),
-    union_pointer_funcs: UnionPointersFunctionMap,
-    union_pointer_funcs_applied: StringPool.HashMap(void),
-    union_pointer_consts: StringPool.HashMap(void),
-    union_pointer_consts_applied: StringPool.HashMap(void),
+    extra_funcs: extra.Functions,
+    extra_funcs_applied: StringPool.HashMap(void),
+    extra_consts: extra.Constants,
+    extra_consts_applied: StringPool.HashMap(void),
     com_type_overloads: ?std.StringHashMapUnmanaged(ComMethodMap),
 
     pub fn getWin32DirImportPrefix(self: SdkFile) []const u8 {
@@ -243,16 +196,15 @@ pub fn main() !u8 {
     // don't care about freeing args
 
     const cmd_args = all_args[1..];
-    if (cmd_args.len != 6) {
-        std.log.err("expected 6 cmdline arguments but got {}", .{cmd_args.len});
+    if (cmd_args.len != 5) {
+        std.log.err("expected 5 cmdline arguments but got {}", .{cmd_args.len});
         return 1;
     }
-    const notnull_filename = cmd_args[0];
-    const union_pointers_filename = cmd_args[1];
-    const win32json_path = cmd_args[2];
-    const pass1_json = cmd_args[3];
-    const com_overloads_filename = cmd_args[4];
-    const zigwin32_out_path = stripDotDir(cmd_args[5]);
+    const extra_filename = cmd_args[0];
+    const win32json_path = cmd_args[1];
+    const pass1_json = cmd_args[2];
+    const com_overloads_filename = cmd_args[3];
+    const zigwin32_out_path = stripDotDir(cmd_args[4]);
 
     const version = blk: {
         var win32json_dir = try std.fs.cwd().openDir(win32json_path, .{});
@@ -300,20 +252,13 @@ pub fn main() !u8 {
         break :blk api_set;
     };
 
-    const notnull_json_content = blk: {
-        var file = try std.fs.cwd().openFile(notnull_filename, .{});
+    const extra_content = blk: {
+        var file = try std.fs.cwd().openFile(extra_filename, .{});
         defer file.close();
         break :blk try file.readToEndAlloc(allocator, std.math.maxInt(usize));
     };
-    // no need to free notnull_json_content
-    global_notnull = readJson(NotNullRoot, notnull_filename, notnull_json_content);
-    const union_pointers_json_content = blk: {
-        var file = try std.fs.cwd().openFile(union_pointers_filename, .{});
-        defer file.close();
-        break :blk try file.readToEndAlloc(allocator, std.math.maxInt(usize));
-    };
-    // no need to free union_pointers_json_content
-    global_union_pointers = readJson(UnionPointersRoot, union_pointers_filename, union_pointers_json_content);
+    // no need to free extra_content
+    global_extra = extra.read(api_set, &global_symbol_pool, allocator, extra_filename, extra_content);
     // no need to free
     try readComOverloads(api_set, &global_com_overloads, com_overloads_filename);
 
@@ -736,17 +681,11 @@ fn readAndGenerateApiFile(
         jsonPanicMsg("qualified name '{s}' already has an sdk file?", .{zig_name});
     }
 
-    var not_null_funcs: NotNullFunctionMap = notnull_empty_function_map;
-    if (global_notnull.get(json_name.slice)) |api_obj| {
-        not_null_funcs = api_obj.Functions;
-    }
-    var union_pointer_funcs = empty_strings_map;
-    var union_pointer_consts = StringPool.HashMap(void).init(allocator);
-    if (global_union_pointers.get(json_name.slice)) |api_obj| {
-        union_pointer_funcs = api_obj.Functions;
-        for (api_obj.Constants) |name| {
-            try union_pointer_consts.put(try global_symbol_pool.add(name), {});
-        }
+    var extra_funcs: extra.Functions = .{};
+    var extra_consts: extra.Constants = .{};
+    if (global_extra.get(json_name)) |api_obj| {
+        extra_funcs = api_obj.functions;
+        extra_consts = api_obj.constants;
     }
 
     module.file = SdkFile{
@@ -762,12 +701,10 @@ fn readAndGenerateApiFile(
         .tmp_func_ptr_workaround_list = ArrayList(StringPool.Val).init(allocator),
         .method_conflict_map = getMethodConflictMap(json_name.slice),
         .param_conflict_map = getParamConflictMap(json_name.slice),
-        .not_null_funcs = not_null_funcs,
-        .not_null_funcs_applied = StringPool.HashMap(void).init(allocator),
-        .union_pointer_funcs = union_pointer_funcs,
-        .union_pointer_funcs_applied = StringPool.HashMap(void).init(allocator),
-        .union_pointer_consts = union_pointer_consts,
-        .union_pointer_consts_applied = StringPool.HashMap(void).init(allocator),
+        .extra_funcs = extra_funcs,
+        .extra_funcs_applied = StringPool.HashMap(void).init(allocator),
+        .extra_consts = extra_consts,
+        .extra_consts_applied = StringPool.HashMap(void).init(allocator),
         .com_type_overloads = global_com_overloads.get(json_name),
     };
 
@@ -958,49 +895,33 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, api: metadata.Api) !voi
         \\
     ));
 
-    // check that all notnull stuff was applied
+    // check that all extra stuff was applied
     {
-        var it = sdk_file.not_null_funcs.map.iterator();
+        var it = sdk_file.extra_funcs.iterator();
         var error_count: u32 = 0;
         while (it.next()) |notnull_api| {
-            const pool_name = try global_symbol_pool.add(notnull_api.key_ptr.*);
-            if (sdk_file.not_null_funcs_applied.get(pool_name)) |_| {} else {
-                std.log.err("notnull.json api '{s}' function '{s}' was not applied", .{ sdk_file.json_name, pool_name });
+            const name = notnull_api.key_ptr.*;
+            if (sdk_file.extra_funcs_applied.get(name)) |_| {} else {
+                std.log.err("extra.txt api '{s}' function '{s}' was not applied", .{ sdk_file.json_name, name });
                 error_count += 1;
             }
         }
-        sdk_file.not_null_funcs_applied.deinit();
-        if (error_count > 0) {
-            std.process.exit(0xff);
-        }
-    }
-    // check that all union_pointer data was applied
-    {
-        var it = sdk_file.union_pointer_funcs.map.iterator();
-        var error_count: u32 = 0;
-        while (it.next()) |up_api| {
-            const pool_name = try global_symbol_pool.add(up_api.key_ptr.*);
-            if (sdk_file.union_pointer_funcs_applied.get(pool_name)) |_| {} else {
-                std.log.err("unionpointers.json api '{s}' function '{s}' was not applied", .{ sdk_file.json_name, pool_name });
-                error_count += 1;
-            }
-        }
-        sdk_file.union_pointer_funcs_applied.deinit();
+        sdk_file.extra_funcs_applied.deinit();
         if (error_count > 0) {
             std.process.exit(0xff);
         }
     }
     {
-        var it = sdk_file.union_pointer_consts.iterator();
+        var it = sdk_file.extra_consts.iterator();
         var error_count: u32 = 0;
         while (it.next()) |up_api| {
             const pool_name = up_api.key_ptr.*;
-            if (sdk_file.union_pointer_consts_applied.get(pool_name)) |_| {} else {
-                std.log.err("unionpointers.json api '{s}' constant '{s}' was not applied", .{ sdk_file.json_name, pool_name });
+            if (sdk_file.extra_consts_applied.get(pool_name)) |_| {} else {
+                std.log.err("extra.txt api '{s}' constant '{s}' was not applied", .{ sdk_file.json_name, pool_name });
                 error_count += 1;
             }
         }
-        sdk_file.union_pointer_consts_applied.deinit();
+        sdk_file.extra_consts_applied.deinit();
         if (error_count > 0) {
             std.process.exit(0xff);
         }
@@ -1105,8 +1026,7 @@ const TypeRefFormatter = struct {
         optional_bytes_param_index: ?u16,
 
         anon_types: ?*const AnonTypes,
-        union_pointer: bool,
-        null_modifier: NullModifier,
+        extra_mod: extra.TypeModifier,
 
         pub fn defaults(opt: struct {
             reason: Reason,
@@ -1118,8 +1038,7 @@ const TypeRefFormatter = struct {
             null_null_term: bool = false,
             optional_bytes_param_index: ?u16 = null,
             anon_types: ?*const AnonTypes = null,
-            union_pointer: bool = false,
-            null_modifier: NullModifier = 0,
+            extra_mod: extra.TypeModifier = .{},
         }) Options {
             return .{
                 .reason = opt.reason,
@@ -1131,14 +1050,13 @@ const TypeRefFormatter = struct {
                 .null_null_term = opt.null_null_term,
                 .optional_bytes_param_index = opt.optional_bytes_param_index,
                 .anon_types = opt.anon_types,
-                .union_pointer = opt.union_pointer,
-                .null_modifier = opt.null_modifier,
+                .extra_mod = opt.extra_mod,
             };
         }
         pub fn fromParamAttrs(
             attrs: metadata.ParamAttrs,
             reason: TypeRefFormatter.Reason,
-            modifiers: ParamModifiers,
+            modifiers: extra.TypeModifier,
         ) Options {
             if (attrs.FreeWith) |free_with| {
                 // TODO: what do we do with this
@@ -1160,8 +1078,7 @@ const TypeRefFormatter = struct {
                 .optional_bytes_param_index = if (attrs.MemorySize) |m| m.BytesParamIndex else null,
 
                 .anon_types = null,
-                .union_pointer = modifiers.union_pointer,
-                .null_modifier = modifiers.not_null,
+                .extra_mod = modifiers,
             };
         }
     };
@@ -1236,12 +1153,12 @@ fn generateTypeRefRec(
                 switch (type_kind_category) {
                     .default => {},
                     .ptr => {
-                        if (self.options.null_modifier & 1 == 0) {
+                        if (self.options.extra_mod.null_modifier & 1 == 0) {
                             try writer.write("?", .{ .start = .any, .nl = false });
                         }
                     },
                     .com => {
-                        if (self.options.null_modifier & 1 == 0) {
+                        if (self.options.extra_mod.null_modifier & 1 == 0) {
                             try writer.write("?", .{ .start = .any, .nl = false });
                         }
                         try writer.write("*", .{ .start = .any, .nl = false });
@@ -1267,7 +1184,7 @@ fn generateTypeRefRec(
                     // can't put these expressions in the print argument tuple because of https://github.com/ziglang/zig/issues/8036
                     const base_type = if (special == .pstr) "u8" else "u16";
                     const sentinel_suffix = if (self.options.not_null_term) "" else ":0";
-                    const align_str = if (self.options.union_pointer) "align(1) " else "";
+                    const align_str = if (self.options.extra_mod.union_pointer) "align(1) " else "";
                     const const_str = if (self.options.is_const) "const " else "";
                     try writer.writef(
                         "[*{s}]{s}{s}{s}",
@@ -1288,12 +1205,12 @@ fn generateTypeRefRec(
         },
         .PointerTo => |to| {
             var child_options = self.options;
-            if (self.options.reason == .var_decl and self.options.null_modifier & 1 == 0) {
+            if (self.options.reason == .var_decl and self.options.extra_mod.null_modifier & 1 == 0) {
                 try writer.write("?", .{ .start = .any, .nl = false });
             }
-            child_options.null_modifier = self.options.null_modifier >> 1;
+            child_options.extra_mod.null_modifier = self.options.extra_mod.null_modifier >> 1;
             try writer.write("*", .{ .start = .any, .nl = false });
-            if (self.options.union_pointer) {
+            if (self.options.extra_mod.union_pointer) {
                 try writer.write("align(1) ", .{ .start = .any, .nl = false });
             }
             if (self.options.is_const) {
@@ -1459,9 +1376,9 @@ fn generateConstant(sdk_file: *SdkFile, writer: *CodeWriter, constant: metadata.
         .reason = .direct_type_access,
         .is_const = true,
     });
-    if (sdk_file.union_pointer_consts.get(name_pool)) |_| {
-        try sdk_file.union_pointer_consts_applied.put(name_pool, {});
-        options.union_pointer = true;
+    if (sdk_file.extra_consts.get(name_pool)) |_| {
+        try sdk_file.extra_consts_applied.put(name_pool, {});
+        options.extra_mod.union_pointer = true;
     }
 
     const zig_type_formatter = try addTypeRefs(sdk_file, .{}, constant.Type, options, null);
@@ -1928,7 +1845,7 @@ fn generateStructOrUnionDef(
                 .not_null_term = field.Attrs.NotNullTerminated,
                 .null_null_term = field.Attrs.NullNullTerminated,
                 .anon_types = &anon_types,
-                .null_modifier = 0,
+                .extra_mod = .{},
             });
             if (field.Attrs.Obselete) {
                 try writer.line("/// Deprecated");
@@ -2583,7 +2500,7 @@ fn generateComMethods(
             // TODO: set null_modifier properly
             // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-            const modifiers = ParamModifiers{};
+            const modifiers = extra.TypeModifier{};
 
             const param_options = TypeRefFormatter.Options.fromParamAttrs(param.Attrs, .var_decl, modifiers);
             // NOTE: don't need to call addTypeRefs because it was already called in generateFunction above
@@ -2729,14 +2646,10 @@ fn generateArchSuffix(writer: *CodeWriter) void {
     writer.line("}, else => struct { } };") catch @panic("here");
 }
 
-const ParamModifiers = struct {
-    not_null: NullModifier = 0,
-    union_pointer: bool = false,
-};
 const ParamModifierSet = struct {
     const max_params = 30;
-    ret: ParamModifiers = .{},
-    params: [max_params]ParamModifiers = [_]ParamModifiers{.{}} ** max_params,
+    ret: extra.TypeModifier = .{},
+    params: [max_params]extra.TypeModifier = [_]extra.TypeModifier{.{}} ** max_params,
 };
 
 fn findParam(
@@ -2767,7 +2680,7 @@ const Function = union(enum) {
     },
 
     // The name of the function when it's referred to in our configuration
-    // such as notnull.json or unionpointers.json
+    // such as extra.txt
     pub fn ConfigName(self: Function) []const u8 {
         return switch (self) {
             .dll => |dll| dll.Name,
@@ -2839,27 +2752,20 @@ fn generateFunction(
 
     var modifier_set = ParamModifierSet{};
     {
-        //const zig_name_pool = try global_symbol_pool.add(zig_name);
-        if (sdk_file.not_null_funcs.get(func.ConfigName())) |notnull_mods| {
-            const config_name_pool = try global_symbol_pool.add(func.ConfigName());
-            try sdk_file.not_null_funcs_applied.put(config_name_pool, {});
-            jsonEnforce(notnull_mods.len > 0);
-            modifier_set.ret.not_null = notnull_mods[0];
-            for (notnull_mods[1..], 0..) |mod, i| {
-                jsonEnforce(i < modifier_set.params.len); // if we hit this, increase max param count
-                jsonEnforce(i < params.len);
-                modifier_set.params[i].not_null = mod;
-            }
-        }
-        if (sdk_file.union_pointer_funcs.get(func.ConfigName())) |union_pointer_funcs| {
-            const config_name_pool = try global_symbol_pool.add(func.ConfigName());
-            try sdk_file.union_pointer_funcs_applied.put(config_name_pool, {});
-            for (union_pointer_funcs) |name| {
-                const index = findParam(params, name) orelse jsonPanicMsg(
-                    "function '{s}' from unionpointers.json does not have a parameter named '{s}'",
-                    .{ config_name_pool, name },
+        const config_name = global_symbol_pool.add(func.ConfigName()) catch |e| oom(e);
+        if (sdk_file.extra_funcs.get(config_name)) |extra_func| {
+            try sdk_file.extra_funcs_applied.put(config_name, {});
+            modifier_set.ret = extra_func.ret orelse .{};
+            var it = extra_func.params.iterator();
+            while (it.next()) |entry| {
+                const name = entry.key_ptr.*;
+                if (std.mem.eql(u8, name.slice, "Return")) @panic("todo");
+
+                const index = findParam(params, name.slice) orelse std.debug.panic(
+                    "function '{s}' from extra.txt does not have a parameter named '{s}'",
+                    .{ config_name, name },
                 );
-                modifier_set.params[index].union_pointer = true;
+                modifier_set.params[index] = entry.value_ptr.*;
             }
         }
     }

@@ -1,0 +1,104 @@
+#
+# Format
+# --------------------------------------------------------------------------------
+# <root>:
+#     <api> Constant <named_type_modifier>
+#     <api> Function <name> <named_type_modifier>+
+#
+# <named_type_modifier>:
+#     <name> '(' <type_modifier>+ ')'
+# <type_modifier>:
+#     UnionPointer
+#     NotNull '=' [01]+
+#
+Graphics.Direct2D Function D2D1CreateFactory ppIFactory(NotNull=11)
+
+Graphics.Direct3D11 Function D3D11CreateDevice             ppDevice(NotNull=10) ppImmediateContext(NotNull=10)
+Graphics.Direct3D11 Function D3D11CreateDeviceAndSwapChain ppDevice(NotNull=10) ppImmediateContext(NotNull=10) ppSwapChain(NotNull=10)
+
+Networking.WinSock Function accept return(NotNull=1)
+Networking.WinSock Function shutdown return(NotNull=1)
+Networking.WinSock Function socket return(NotNull=1)
+Networking.WinSock Function WSASocketA return(NotNull=1)
+Networking.WinSock Function WSASocketW return(NotNull=1)
+
+Storage.FileSystem Function CreateFileA return(NotNull=1)
+Storage.FileSystem Function CreateFileW return(NotNull=1)
+
+System.Com Function CoCreateInstance riid(NotNull=1)
+#System.Com ComMethod IUnknown QueryInterface riid=1 ppvObject=1
+
+System.Console Function GetStdHandle return(NotNull=1)
+
+System.LibraryLoader Function ENUMRESLANGPROCW         lpType(UnionPointer)
+System.LibraryLoader Function ENUMRESNAMEPROCW         lpType(UnionPointer)
+System.LibraryLoader Function EnumResourceLanguagesW   lpType(UnionPointer)
+System.LibraryLoader Function EnumResourceLanguagesExW lpType(UnionPointer)
+System.LibraryLoader Function EnumResourceNamesW       lpType(UnionPointer)
+System.LibraryLoader Function EnumResourceNamesExW     lpType(UnionPointer)
+System.LibraryLoader Function FindResourceW            lpType(UnionPointer) lpName(UnionPointer)
+System.LibraryLoader Function FindResourceExW          lpType(UnionPointer) lpName(UnionPointer)
+System.LibraryLoader Function UpdateResourceW          lpType(UnionPointer) lpName(UnionPointer)
+
+UI.Controls Constant TD_WARNING_ICON(UnionPointer)
+UI.Controls Constant TD_ERROR_ICON(UnionPointer)
+UI.Controls Constant TD_INFORMATION_ICON(UnionPointer)
+UI.Controls Constant TD_SHIELD_ICON(UnionPointer)
+
+UI.WindowsAndMessaging Constant IDC_ARROW(UnionPointer)
+UI.WindowsAndMessaging Constant IDC_IBEAM(UnionPointer)
+UI.WindowsAndMessaging Constant IDC_WAIT(UnionPointer)
+UI.WindowsAndMessaging Constant IDC_CROSS(UnionPointer)
+UI.WindowsAndMessaging Constant IDC_UPARROW(UnionPointer)
+UI.WindowsAndMessaging Constant IDC_SIZE(UnionPointer)
+UI.WindowsAndMessaging Constant IDC_ICON(UnionPointer)
+UI.WindowsAndMessaging Constant IDC_SIZENWSE(UnionPointer)
+UI.WindowsAndMessaging Constant IDC_SIZENESW(UnionPointer)
+UI.WindowsAndMessaging Constant IDC_SIZEWE(UnionPointer)
+UI.WindowsAndMessaging Constant IDC_SIZENS(UnionPointer)
+UI.WindowsAndMessaging Constant IDC_SIZEALL(UnionPointer)
+UI.WindowsAndMessaging Constant IDC_NO(UnionPointer)
+UI.WindowsAndMessaging Constant IDC_HAND(UnionPointer)
+UI.WindowsAndMessaging Constant IDC_APPSTARTING(UnionPointer)
+UI.WindowsAndMessaging Constant IDC_HELP(UnionPointer)
+UI.WindowsAndMessaging Constant IDC_PIN(UnionPointer)
+UI.WindowsAndMessaging Constant IDC_PERSON(UnionPointer)
+UI.WindowsAndMessaging Constant IDI_APPLICATION(UnionPointer)
+UI.WindowsAndMessaging Constant IDI_HAND(UnionPointer)
+UI.WindowsAndMessaging Constant IDI_QUESTION(UnionPointer)
+UI.WindowsAndMessaging Constant IDI_EXCLAMATION(UnionPointer)
+UI.WindowsAndMessaging Constant IDI_ASTERISK(UnionPointer)
+UI.WindowsAndMessaging Constant IDI_WINLOGO(UnionPointer)
+UI.WindowsAndMessaging Constant IDI_SHIELD(UnionPointer)
+UI.WindowsAndMessaging Constant RT_VERSION(UnionPointer)
+UI.WindowsAndMessaging Constant RT_DLGINCLUDE(UnionPointer)
+UI.WindowsAndMessaging Constant RT_PLUGPLAY(UnionPointer)
+UI.WindowsAndMessaging Constant RT_VXD(UnionPointer)
+UI.WindowsAndMessaging Constant RT_ANICURSOR(UnionPointer)
+UI.WindowsAndMessaging Constant RT_ANIICON(UnionPointer)
+UI.WindowsAndMessaging Constant RT_HTML(UnionPointer)
+UI.WindowsAndMessaging Constant RT_CURSOR(UnionPointer)
+UI.WindowsAndMessaging Constant RT_BITMAP(UnionPointer)
+UI.WindowsAndMessaging Constant RT_ICON(UnionPointer)
+UI.WindowsAndMessaging Constant RT_MENU(UnionPointer)
+UI.WindowsAndMessaging Constant RT_DIALOG(UnionPointer)
+UI.WindowsAndMessaging Constant RT_FONTDIR(UnionPointer)
+UI.WindowsAndMessaging Constant RT_FONT(UnionPointer)
+UI.WindowsAndMessaging Constant RT_ACCELERATOR(UnionPointer)
+UI.WindowsAndMessaging Constant RT_MESSAGETABLE(UnionPointer)
+
+UI.WindowsAndMessaging Function CreateWindowExA lpClassName(UnionPointer)
+UI.WindowsAndMessaging Function CreateWindowExW lpClassName(UnionPointer)
+UI.WindowsAndMessaging Function LoadCursorW lpCursorName(UnionPointer)
+UI.WindowsAndMessaging Function LoadIconW lpIconName(UnionPointer)
+UI.WindowsAndMessaging Function LoadImageA name(UnionPointer)
+UI.WindowsAndMessaging Function LoadImageW name(UnionPointer)
+UI.WindowsAndMessaging Function SENDASYNCPROC   param0(NotNull=1)
+UI.WindowsAndMessaging Function DLGPROC         param0(NotNull=1)
+UI.WindowsAndMessaging Function PROPENUMPROCA   param0(NotNull=1)
+UI.WindowsAndMessaging Function PROPENUMPROCW   param0(NotNull=1)
+UI.WindowsAndMessaging Function PROPENUMPROCEXA param0(NotNull=1)
+UI.WindowsAndMessaging Function PROPENUMPROCEXW param0(NotNull=1)
+UI.WindowsAndMessaging Function TIMERPROC       param0(NotNull=1)
+UI.WindowsAndMessaging Function WNDENUMPROC     param0(NotNull=1)
+UI.WindowsAndMessaging Function WNDPROC         param0(NotNull=1)
