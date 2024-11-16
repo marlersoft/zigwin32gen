@@ -272,6 +272,34 @@ pub fn main() !u8 {
     };
     // no need to free pass1_json_content
     global_pass1 = pass1data.parseRoot(allocator, pass1_json, pass1_json_content);
+    const api_list: []StringPool.Val = blk: {
+        var api_list = std.ArrayList(StringPool.Val).init(allocator);
+        const api_path = try std.fs.path.join(allocator, &.{ win32json_path, "api" });
+        var api_dir = try std.fs.cwd().openDir(api_path, .{ .iterate = true });
+        defer api_dir.close();
+        var it = api_dir.iterate();
+        while (try it.next()) |entry| {
+            if (!std.mem.endsWith(u8, entry.name, ".json")) {
+                std.log.err("expected all files to end in '.json' but got '{s}'\n", .{entry.name});
+                return error.AlreadyReported;
+            }
+            const name_len = entry.name.len - ".json".len;
+            const api = try global_symbol_pool.add(entry.name[0..name_len]);
+            try api_list.append(api);
+        }
+        break :blk try api_list.toOwnedSlice();
+    };
+    // sort the list of APIs so our api order is not dependent on the file-system ordering
+    std.mem.sort(StringPool.Val, api_list, {}, StringPool.asciiLessThanIgnoreCase);
+
+    const api_set = blk: {
+        var api_set: StringPool.HashMapUnmanaged(void) = .{};
+        for (api_list) |api| {
+            try api_set.putNoClobber(allocator, api, {});
+        }
+        break :blk api_set;
+    };
+
     const notnull_json_content = blk: {
         var file = try std.fs.cwd().openFile(notnull_filename, .{});
         defer file.close();
@@ -288,7 +316,7 @@ pub fn main() !u8 {
     global_union_pointers = readJson(UnionPointersRoot, union_pointers_filename, union_pointers_json_content);
     global_com_overloads = StringPool.HashMap(ComTypeMap).init(allocator);
     // no need to free
-    try readComOverloads(&global_com_overloads, com_overloads_filename);
+    try readComOverloads(api_set, &global_com_overloads, com_overloads_filename);
 
     try cleanDir(std.fs.cwd(), zigwin32_out_path);
     var out_dir = try std.fs.cwd().openDir(zigwin32_out_path, .{});
@@ -322,33 +350,23 @@ pub fn main() !u8 {
         var api_dir = try std.fs.cwd().openDir(api_path, .{ .iterate = true });
         defer api_dir.close();
 
-        var api_list = std.ArrayList([]const u8).init(allocator);
-        defer {
-            for (api_list.items) |api_name| {
-                allocator.free(api_name);
-            }
-            api_list.deinit();
-        }
-        try common.readApiList(api_dir, &api_list);
-
-        // sort the list of APIs so our api order is not dependent on the file-system ordering
-        std.mem.sort([]const u8, api_list.items, {}, common.asciiLessThanIgnoreCase);
-
         std.debug.print("-----------------------------------------------------------------------\n", .{});
-        std.debug.print("loading {} api json files...\n", .{api_list.items.len});
+        std.debug.print("loading {} api json files...\n", .{api_list.len});
 
         var out_win32_dir = try out_dir.openDir("win32", .{});
         defer out_win32_dir.close();
 
-        for (api_list.items, 0..) |api_json_basename, api_index| {
+        for (api_list, 0..) |api_name, api_index| {
             const api_num = api_index + 1;
-            std.debug.print("{}/{}: loading '{s}'\n", .{ api_num, api_list.items.len, api_json_basename });
+            var basename_buf: [100]u8 = undefined;
+            const basename = std.fmt.bufPrint(&basename_buf, "{}.json", .{api_name}) catch @panic("basename_buf not big enough");
+            std.debug.print("{}/{}: loading '{s}'\n", .{ api_num, api_list.len, basename });
             //
             // TODO: would things run faster if I just memory mapped the file?
             //
-            var file = try api_dir.openFile(api_json_basename, .{});
+            var file = try api_dir.openFile(basename, .{});
             defer file.close();
-            try readAndGenerateApiFile(root_module, out_win32_dir, api_path, api_json_basename, file);
+            try readAndGenerateApiFile(root_module, out_win32_dir, api_path, basename, file);
         }
 
         if (global_missing_com_overloads.items.len > 0) {
@@ -446,7 +464,11 @@ const ComSuffixMap = std.AutoHashMap(u16, []const u8);
 const ComMethodMap = std.StringHashMap(ComSuffixMap);
 const ComTypeMap = std.StringHashMap(ComMethodMap);
 
-fn readComOverloads(api_map: *StringPool.HashMap(ComTypeMap), filename: []const u8) !void {
+fn readComOverloads(
+    api_name_set: StringPool.HashMapUnmanaged(void),
+    api_map: *StringPool.HashMap(ComTypeMap),
+    filename: []const u8,
+) !void {
     var file = try std.fs.cwd().openFile(filename, .{});
     defer file.close();
     const content = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
@@ -457,6 +479,7 @@ fn readComOverloads(api_map: *StringPool.HashMap(ComTypeMap), filename: []const 
         if (line.len == 0) continue;
         var field_it = std.mem.tokenize(u8, line, " ");
         const api = try global_symbol_pool.add(field_it.next() orelse continue);
+        if (api_name_set.get(api)) |_| {} else fatal("{s} line {}: unknown api '{}'", .{ filename, line_number, api });
         const com_type = field_it.next() orelse fatal("{s} line {}: missing type field", .{ filename, line_number });
         const method = field_it.next() orelse fatal("{s} line {}: missing method field", .{ filename, line_number });
         const method_index_str = field_it.next() orelse fatal("{s} line {}: missing method index field", .{ filename, line_number });

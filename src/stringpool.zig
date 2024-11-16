@@ -90,6 +90,13 @@ pub const ArrayHashContext = struct {
 pub fn HashMap(comptime V: type) type {
     return std.HashMap(Val, V, HashContext, std.hash_map.default_max_load_percentage);
 }
+pub fn HashMapUnmanaged(comptime V: type) type {
+    return std.HashMapUnmanaged(Val, V, HashContext, std.hash_map.default_max_load_percentage);
+}
+
+pub fn asciiLessThanIgnoreCase(_: void, lhs: Val, rhs: Val) bool {
+    return std.ascii.lessThanIgnoreCase(lhs.slice, rhs.slice);
+}
 
 test "stringpool" {
     var pool = StringPool.init(std.testing.allocator);
