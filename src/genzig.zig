@@ -1003,6 +1003,7 @@ const NestedContext = struct {
 // Need to know if it is an array specifically because array pointers cannot point to opaque types
 // with an unknown size.
 const DepthContext = enum { top_level, child, array };
+const ComOutPtrContext = enum { outer_pointer, inner_pointer };
 const TypeRefFormatter = struct {
     pub const Reason = enum { var_decl, direct_type_access };
     pub const Options = struct {
@@ -1017,8 +1018,7 @@ const TypeRefFormatter = struct {
         null_null_term: bool,
         // TODO: what to do with this?
         //ret_val: bool,
-        // TODO: don't know what to do with this yet
-        //com_out_ptr: bool,
+        com_out_ptr: ?ComOutPtrContext,
         // TODO: don't know what to do with this yet
         //do_not_release: bool,
         // TODO: don't know what to do with this yet
@@ -1036,6 +1036,7 @@ const TypeRefFormatter = struct {
             optional: bool = false,
             not_null_term: bool = false,
             null_null_term: bool = false,
+            com_out_ptr: ?ComOutPtrContext = null,
             optional_bytes_param_index: ?u16 = null,
             anon_types: ?*const AnonTypes = null,
             extra_mod: extra.TypeModifier = .{},
@@ -1048,6 +1049,7 @@ const TypeRefFormatter = struct {
                 .optional = opt.optional,
                 .not_null_term = opt.not_null_term,
                 .null_null_term = opt.null_null_term,
+                .com_out_ptr = opt.com_out_ptr,
                 .optional_bytes_param_index = opt.optional_bytes_param_index,
                 .anon_types = opt.anon_types,
                 .extra_mod = opt.extra_mod,
@@ -1072,7 +1074,7 @@ const TypeRefFormatter = struct {
                 .not_null_term = attrs.NotNullTerminated,
                 .null_null_term = attrs.NullNullTerminated,
                 //.ret_val = attrs.RetVal,
-                //.com_out_ptr = attrs.ComOutPtr,
+                .com_out_ptr = if (attrs.ComOutPtr) .outer_pointer else null,
                 //.do_not_release = attrs.DoNotRelease,
                 //.reserved = attrs.Reserved,
                 .optional_bytes_param_index = if (attrs.MemorySize) |m| m.BytesParamIndex else null,
@@ -1080,6 +1082,33 @@ const TypeRefFormatter = struct {
                 .anon_types = null,
                 .extra_mod = modifiers,
             };
+        }
+        pub fn getChildOptions(self: Options) Options {
+            var child_options = self;
+
+            if (self.com_out_ptr == .outer_pointer) {
+                child_options.optional = false;
+            }
+
+            child_options.com_out_ptr = if (self.com_out_ptr) |c| switch (c) {
+                .outer_pointer => .inner_pointer,
+                else => null,
+            } else null;
+
+            child_options.extra_mod.null_modifier = self.extra_mod.null_modifier >> 1;
+            return child_options;
+        }
+        pub fn allowOptionalPtr(
+            self: Options,
+        ) bool {
+            // optional doesn't seem to be reliable enough to depend on it for this
+            //if (!self.optional) return true;
+            if (1 == (self.extra_mod.null_modifier & 1)) return false;
+            if (self.com_out_ptr) |context| switch (context) {
+                .outer_pointer => if (!self.optional) return false,
+                .inner_pointer => return false,
+            };
+            return true;
         }
     };
 
@@ -1153,12 +1182,12 @@ fn generateTypeRefRec(
                 switch (type_kind_category) {
                     .default => {},
                     .ptr => {
-                        if (self.options.extra_mod.null_modifier & 1 == 0) {
+                        if (self.options.allowOptionalPtr()) {
                             try writer.write("?", .{ .start = .any, .nl = false });
                         }
                     },
                     .com => {
-                        if (self.options.extra_mod.null_modifier & 1 == 0) {
+                        if (self.options.allowOptionalPtr()) {
                             try writer.write("?", .{ .start = .any, .nl = false });
                         }
                         try writer.write("*", .{ .start = .any, .nl = false });
@@ -1204,17 +1233,16 @@ fn generateTypeRefRec(
             try writer.writef("{s}", .{name}, .{ .start = .any, .nl = false });
         },
         .PointerTo => |to| {
-            var child_options = self.options;
-            if (self.options.reason == .var_decl and self.options.extra_mod.null_modifier & 1 == 0) {
+            var child_options = self.options.getChildOptions();
+            if (self.options.reason == .var_decl and self.options.allowOptionalPtr()) {
                 try writer.write("?", .{ .start = .any, .nl = false });
             }
-            child_options.extra_mod.null_modifier = self.options.extra_mod.null_modifier >> 1;
             try writer.write("*", .{ .start = .any, .nl = false });
             if (self.options.extra_mod.union_pointer) {
                 try writer.write("align(1) ", .{ .start = .any, .nl = false });
             }
             if (self.options.is_const) {
-                child_options.is_const = false; // TODO: is this right?
+                child_options.is_const = false; // TODO: this doesn't seem right
                 try writer.write("const ", .{ .start = .any, .nl = false });
             }
             try generateTypeRefRec(sdk_file, writer, fmtTypeRef(to.Child.*, self.arches, child_options, self.nested_context), .child);
@@ -1229,9 +1257,7 @@ fn generateTypeRefRec(
             try generateTypeRefRec(sdk_file, writer, fmtTypeRef(array.Child.*, self.arches, self.options, self.nested_context), .child);
         },
         .LPArray => |array| {
-            var child_options = self.options;
             if (self.options.optional) {
-                child_options.optional = false;
                 try writer.write("?", .{ .start = .any, .nl = false });
             }
             if (array.NullNullTerm) {
@@ -1252,7 +1278,7 @@ fn generateTypeRefRec(
                 }
                 if (array.CountConst <= 0 and self.options.is_const)
                     try writer.write("const ", .{ .start = .any, .nl = false });
-                try generateTypeRefRec(sdk_file, writer, fmtTypeRef(array.Child.*, self.arches, child_options, self.nested_context), .array);
+                try generateTypeRefRec(sdk_file, writer, fmtTypeRef(array.Child.*, self.arches, self.options.getChildOptions(), self.nested_context), .array);
             }
         },
         .MissingClrType => |t| try writer.writef(

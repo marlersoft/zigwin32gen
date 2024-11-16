@@ -97,18 +97,21 @@ fn MainWindowCreateGraphicsResources(self: *MainWindow) HRESULT {
 
         const size = D2D_SIZE_U{ .width = @intCast(rc.right), .height = @intCast(rc.bottom) };
 
+        var target: *win32.ID2D1HwndRenderTarget = undefined;
         hr = self.pFactory.?.CreateHwndRenderTarget(
             &D2D1.RenderTargetProperties(),
             &D2D1.HwndRenderTargetProperties(self.base.m_hwnd.?, size),
-            &self.pRenderTarget,
+            &target,
         );
 
         if (SUCCEEDED(hr)) {
+            self.pRenderTarget = target;
             const color = D2D1.ColorF(.{ .r = 1, .g = 1, .b = 0 });
-            // TODO: how do I do this ptrCast better by using COM base type?
-            hr = self.pRenderTarget.?.ID2D1RenderTarget.CreateSolidColorBrush(&color, null, &self.pBrush);
+            var brush: *win32.ID2D1SolidColorBrush = undefined;
+            hr = self.pRenderTarget.?.ID2D1RenderTarget.CreateSolidColorBrush(&color, null, &brush);
 
             if (SUCCEEDED(hr)) {
+                self.pBrush = brush;
                 self.CalculateLayout();
             }
         }

@@ -11,11 +11,6 @@
 #     UnionPointer
 #     NotNull '=' [01]+
 #
-Graphics.Direct2D Function D2D1CreateFactory ppIFactory(NotNull=11)
-
-Graphics.Direct3D11 Function D3D11CreateDevice             ppDevice(NotNull=10) ppImmediateContext(NotNull=10)
-Graphics.Direct3D11 Function D3D11CreateDeviceAndSwapChain ppDevice(NotNull=10) ppImmediateContext(NotNull=10) ppSwapChain(NotNull=10)
-
 Networking.WinSock Function accept return(NotNull=1)
 Networking.WinSock Function shutdown return(NotNull=1)
 Networking.WinSock Function socket return(NotNull=1)
@@ -26,7 +21,7 @@ Storage.FileSystem Function CreateFileA return(NotNull=1)
 Storage.FileSystem Function CreateFileW return(NotNull=1)
 
 System.Com Function CoCreateInstance riid(NotNull=1)
-System.Com Function IUnknown.QueryInterface riid(NotNull=1) ppvObject(NotNull=1)
+System.Com Function IUnknown.QueryInterface riid(NotNull=1)
 
 System.Console Function GetStdHandle return(NotNull=1)
 
