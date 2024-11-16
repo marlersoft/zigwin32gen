@@ -33,7 +33,7 @@ var global_symbol_None: StringPool.Val = undefined;
 var global_pass1: pass1data.Root = undefined;
 var global_notnull: NotNullRoot = undefined;
 var global_union_pointers: UnionPointersRoot = undefined;
-var global_com_overloads: StringPool.HashMap(ComTypeMap) = undefined;
+var global_com_overloads: StringPool.HashMapUnmanaged(ComTypeMap) = .{};
 const MissingOverload = struct {
     api: StringPool.Val,
     com_type: []const u8,
@@ -183,7 +183,7 @@ const SdkFile = struct {
     union_pointer_funcs_applied: StringPool.HashMap(void),
     union_pointer_consts: StringPool.HashMap(void),
     union_pointer_consts_applied: StringPool.HashMap(void),
-    com_type_overloads: ?std.StringHashMap(ComMethodMap),
+    com_type_overloads: ?std.StringHashMapUnmanaged(ComMethodMap),
 
     pub fn getWin32DirImportPrefix(self: SdkFile) []const u8 {
         return import_prefix_table[self.depth];
@@ -314,7 +314,6 @@ pub fn main() !u8 {
     };
     // no need to free union_pointers_json_content
     global_union_pointers = readJson(UnionPointersRoot, union_pointers_filename, union_pointers_json_content);
-    global_com_overloads = StringPool.HashMap(ComTypeMap).init(allocator);
     // no need to free
     try readComOverloads(api_set, &global_com_overloads, com_overloads_filename);
 
@@ -460,13 +459,13 @@ fn readJson(comptime T: type, filename: []const u8, content: []const u8) T {
     };
 }
 
-const ComSuffixMap = std.AutoHashMap(u16, []const u8);
-const ComMethodMap = std.StringHashMap(ComSuffixMap);
-const ComTypeMap = std.StringHashMap(ComMethodMap);
+const ComSuffixMap = std.AutoHashMapUnmanaged(u16, []const u8);
+const ComMethodMap = std.StringHashMapUnmanaged(ComSuffixMap);
+const ComTypeMap = std.StringHashMapUnmanaged(ComMethodMap);
 
 fn readComOverloads(
     api_name_set: StringPool.HashMapUnmanaged(void),
-    api_map: *StringPool.HashMap(ComTypeMap),
+    api_map: *StringPool.HashMapUnmanaged(ComTypeMap),
     filename: []const u8,
 ) !void {
     var file = try std.fs.cwd().openFile(filename, .{});
@@ -493,22 +492,22 @@ fn readComOverloads(
             .{ filename, line_number, f },
         );
 
-        const api_entry = try api_map.getOrPut(api);
+        const api_entry = try api_map.getOrPut(allocator, api);
         if (!api_entry.found_existing) {
-            api_entry.value_ptr.* = ComTypeMap.init(allocator);
+            api_entry.value_ptr.* = .{};
         }
         const type_map = api_entry.value_ptr;
-        const type_entry = try type_map.getOrPut(com_type);
+        const type_entry = try type_map.getOrPut(allocator, com_type);
         if (!type_entry.found_existing) {
-            type_entry.value_ptr.* = ComMethodMap.init(allocator);
+            type_entry.value_ptr.* = .{};
         }
         const method_map = type_entry.value_ptr;
-        const method_entry = try method_map.getOrPut(method);
+        const method_entry = try method_map.getOrPut(allocator, method);
         if (!method_entry.found_existing) {
-            method_entry.value_ptr.* = ComSuffixMap.init(allocator);
+            method_entry.value_ptr.* = .{};
         }
         const suffix_map = method_entry.value_ptr;
-        const suffix_entry = try suffix_map.getOrPut(method_index);
+        const suffix_entry = try suffix_map.getOrPut(allocator, method_index);
         if (suffix_entry.found_existing) fatal(
             "api '{s}' type '{s}' method '{s}' has duplicate entries for index {}",
             .{ api, com_type, method, method_index },
