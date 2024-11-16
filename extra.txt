@@ -26,7 +26,7 @@ Storage.FileSystem Function CreateFileA return(NotNull=1)
 Storage.FileSystem Function CreateFileW return(NotNull=1)
 
 System.Com Function CoCreateInstance riid(NotNull=1)
-#System.Com ComMethod IUnknown QueryInterface riid=1 ppvObject=1
+System.Com Function IUnknown.QueryInterface riid(NotNull=1) ppvObject(NotNull=1)
 
 System.Console Function GetStdHandle return(NotNull=1)
 

@@ -2475,6 +2475,9 @@ fn generateComMethods(
     for (com_methods, 0..) |*method, method_index| {
         try writer.write("    pub fn ", .{ .nl = false });
 
+        const config_name = getComMethodConfigName(com_type_name, method);
+        const modifier_set = getFuncModifiers(sdk_file, config_name, method.Params);
+
         const suffix: []const u8 = blk: {
             const overload = maybe_overloads orelse break :blk "";
             const suffixes = overload.get(method.Name) orelse break :blk "";
@@ -2494,13 +2497,8 @@ fn generateComMethods(
             fmtComMethodId(method_name, sdk_file.method_conflict_map),
         }, .{ .start = .mid, .nl = false });
         try writer.writef("(self: *const {s}", .{com_type_name}, .{ .start = .mid, .nl = false });
-        for (method.Params) |*param| {
-            // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-            // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-            // TODO: set null_modifier properly
-            // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-            // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-            const modifiers = extra.TypeModifier{};
+        for (method.Params, 0..) |*param, param_index| {
+            const modifiers = modifier_set.params[param_index];
 
             const param_options = TypeRefFormatter.Options.fromParamAttrs(param.Attrs, .var_decl, modifiers);
             // NOTE: don't need to call addTypeRefs because it was already called in generateFunction above
@@ -2522,7 +2520,7 @@ fn generateComMethods(
         const return_type_formatter = fmtTypeRef(
             method.ReturnType,
             arches,
-            TypeRefFormatter.Options.fromParamAttrs(method.ReturnAttrs, .var_decl, .{}),
+            TypeRefFormatter.Options.fromParamAttrs(method.ReturnAttrs, .var_decl, modifier_set.ret),
             null,
         );
         try writer.write(") callconv(.Inline) ", .{ .start = .mid, .nl = false });
@@ -2663,6 +2661,14 @@ fn findParam(
     return null;
 }
 
+fn getComMethodConfigName(type_name: []const u8, method: *const metadata.ComMethod) StringPool.Val {
+    var name_buf: [200]u8 = undefined;
+    const name = std.fmt.bufPrint(&name_buf, "{s}.{s}", .{ type_name, method.Name }) catch @panic(
+        "name_buf not big enough",
+    );
+    return global_symbol_pool.add(name) catch |e| oom(e);
+}
+
 const Function = union(enum) {
     dll: metadata.Function,
     com: struct {
@@ -2681,11 +2687,11 @@ const Function = union(enum) {
 
     // The name of the function when it's referred to in our configuration
     // such as extra.txt
-    pub fn ConfigName(self: Function) []const u8 {
+    pub fn ConfigName(self: Function) StringPool.Val {
         return switch (self) {
-            .dll => |dll| dll.Name,
-            .com => |com| com.method.Name,
-            .ptr => |ptr| ptr.t.Name,
+            .dll => |dll| global_symbol_pool.add(dll.Name) catch |e| oom(e),
+            .com => |com| return getComMethodConfigName(com.type_name, com.method),
+            .ptr => |ptr| global_symbol_pool.add(ptr.t.Name) catch |e| oom(e),
         };
     }
 
@@ -2733,6 +2739,30 @@ const Function = union(enum) {
     }
 };
 
+fn getFuncModifiers(
+    sdk_file: *SdkFile,
+    config_name: StringPool.Val,
+    params: []const metadata.Param,
+) ParamModifierSet {
+    var set = ParamModifierSet{};
+    if (sdk_file.extra_funcs.get(config_name)) |extra_func| {
+        sdk_file.extra_funcs_applied.put(config_name, {}) catch |e| oom(e);
+        set.ret = extra_func.ret orelse .{};
+        var it = extra_func.params.iterator();
+        while (it.next()) |entry| {
+            const name = entry.key_ptr.*;
+            if (std.mem.eql(u8, name.slice, "Return")) @panic("todo");
+
+            const index = findParam(params, name.slice) orelse std.debug.panic(
+                "function '{s}' from extra.txt does not have a parameter named '{s}'",
+                .{ config_name, name },
+            );
+            set.params[index] = entry.value_ptr.*;
+        }
+    }
+    return set;
+}
+
 fn generateFunction(
     sdk_file: *SdkFile,
     writer: *CodeWriter,
@@ -2750,25 +2780,7 @@ fn generateFunction(
         .ptr => {},
     }
 
-    var modifier_set = ParamModifierSet{};
-    {
-        const config_name = global_symbol_pool.add(func.ConfigName()) catch |e| oom(e);
-        if (sdk_file.extra_funcs.get(config_name)) |extra_func| {
-            try sdk_file.extra_funcs_applied.put(config_name, {});
-            modifier_set.ret = extra_func.ret orelse .{};
-            var it = extra_func.params.iterator();
-            while (it.next()) |entry| {
-                const name = entry.key_ptr.*;
-                if (std.mem.eql(u8, name.slice, "Return")) @panic("todo");
-
-                const index = findParam(params, name.slice) orelse std.debug.panic(
-                    "function '{s}' from extra.txt does not have a parameter named '{s}'",
-                    .{ config_name, name },
-                );
-                modifier_set.params[index] = entry.value_ptr.*;
-            }
-        }
-    }
+    const modifier_set = getFuncModifiers(sdk_file, func.ConfigName(), params);
 
     if (arches.filter) |filter| switch (func) {
         .dll => try generateArchPrefix(writer, sdk_file.depth, filter, "pub "),
