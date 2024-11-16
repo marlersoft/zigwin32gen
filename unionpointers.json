@@ -27,7 +27,9 @@
       "CreateWindowExA": ["lpClassName"],
       "CreateWindowExW": ["lpClassName"],
       "LoadCursorW": ["lpCursorName"],
-      "LoadIconW": ["lpIconName"]
+      "LoadIconW": ["lpIconName"],
+      "LoadImageA": ["name"],
+      "LoadImageW": ["name"]
     },
     "Constants": [
       "IDC_ARROW",
