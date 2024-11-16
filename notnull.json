@@ -27,6 +27,12 @@
             "D2D1CreateFactory": [0, 0, 0, 0, 3]
         }
     }
+    ,"Graphics.Direct3D11": {
+        "Functions": {
+            "D3D11CreateDevice": [0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 2]
+            ,"D3D11CreateDeviceAndSwapChain": [0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 0, 2]
+        }
+    }
     ,"Networking.WinSock": {
         "Functions": {
             "socket": [1]
