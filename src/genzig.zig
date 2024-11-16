@@ -2,7 +2,7 @@ const builtin = @import("builtin");
 const std = @import("std");
 const ArrayList = std.ArrayList;
 const StringHashMap = std.StringHashMap;
-const StringPool = @import("stringpool.zig").StringPool;
+const StringPool = @import("StringPool.zig");
 
 const cameltosnake = @import("cameltosnake.zig");
 
@@ -33,9 +33,9 @@ var global_symbol_None: StringPool.Val = undefined;
 var global_pass1: pass1data.Root = undefined;
 var global_notnull: NotNullRoot = undefined;
 var global_union_pointers: UnionPointersRoot = undefined;
-var global_com_overloads: std.StringHashMap(ComTypeMap) = undefined;
+var global_com_overloads: StringPool.HashMap(ComTypeMap) = undefined;
 const MissingOverload = struct {
-    api: []const u8,
+    api: StringPool.Val,
     com_type: []const u8,
     method: []const u8,
     method_index: u16,
@@ -163,7 +163,7 @@ fn StringPoolArrayHashMap(comptime T: type) type {
 
 const SdkFile = struct {
     json_basename: []const u8,
-    json_name: []const u8,
+    json_name: StringPool.Val,
     zig_name: []const u8,
     depth: u2,
     const_exports: ArrayList(StringPool.Val),
@@ -196,23 +196,22 @@ const SdkFile = struct {
         self: *SdkFile,
         arches: metadata.Architectures,
         name: []const u8,
-        api: []const u8,
+        api: StringPool.Val,
         parents: []const []const u8,
     ) !void {
-        if (std.mem.eql(u8, self.json_name, api))
+        if (self.json_name.eql(api))
             return;
 
         const top_level_symbol = try global_symbol_pool.add(if (parents.len == 0) name else parents[0]);
-        const pool_api = try global_symbol_pool.add(api);
         if (self.top_level_api_imports.getPtr(top_level_symbol)) |import| {
             jsonEnforceMsg(
-                pool_api.eql(import.api),
+                api.eql(import.api),
                 "symbol conflict '{s}', api mismatch '{s}' and '{s}'",
-                .{ name, pool_api, import.api },
+                .{ name, api, import.api },
             );
             import.arches = import.arches.unionWith(arches);
         } else {
-            try self.top_level_api_imports.put(top_level_symbol, .{ .arches = arches, .api = pool_api });
+            try self.top_level_api_imports.put(top_level_symbol, .{ .arches = arches, .api = api });
         }
     }
 };
@@ -287,7 +286,7 @@ pub fn main() !u8 {
     };
     // no need to free union_pointers_json_content
     global_union_pointers = readJson(UnionPointersRoot, union_pointers_filename, union_pointers_json_content);
-    global_com_overloads = std.StringHashMap(ComTypeMap).init(allocator);
+    global_com_overloads = StringPool.HashMap(ComTypeMap).init(allocator);
     // no need to free
     try readComOverloads(&global_com_overloads, com_overloads_filename);
 
@@ -447,7 +446,7 @@ const ComSuffixMap = std.AutoHashMap(u16, []const u8);
 const ComMethodMap = std.StringHashMap(ComSuffixMap);
 const ComTypeMap = std.StringHashMap(ComMethodMap);
 
-fn readComOverloads(api_map: *std.StringHashMap(ComTypeMap), filename: []const u8) !void {
+fn readComOverloads(api_map: *StringPool.HashMap(ComTypeMap), filename: []const u8) !void {
     var file = try std.fs.cwd().openFile(filename, .{});
     defer file.close();
     const content = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
@@ -457,7 +456,7 @@ fn readComOverloads(api_map: *std.StringHashMap(ComTypeMap), filename: []const u
     while (lines.next()) |line| : (line_number += 1) {
         if (line.len == 0) continue;
         var field_it = std.mem.tokenize(u8, line, " ");
-        const api = field_it.next() orelse continue;
+        const api = try global_symbol_pool.add(field_it.next() orelse continue);
         const com_type = field_it.next() orelse fatal("{s} line {}: missing type field", .{ filename, line_number });
         const method = field_it.next() orelse fatal("{s} line {}: missing method field", .{ filename, line_number });
         const method_index_str = field_it.next() orelse fatal("{s} line {}: missing method index field", .{ filename, line_number });
@@ -676,8 +675,8 @@ fn readAndGenerateApiFile(
     global_times.parse_time_millis += std.time.milliTimestamp() - read_end_millis;
 
     const json_basename_copy = try allocator.dupe(u8, json_basename);
-    const json_name = json_basename_copy[0 .. json_basename_copy.len - ".json".len];
-    const zig_name = try cameltosnake.camelToSnakeAlloc(allocator, json_name);
+    const json_name = try global_symbol_pool.add(json_basename_copy[0 .. json_basename_copy.len - ".json".len]);
+    const zig_name = try cameltosnake.camelToSnakeAlloc(allocator, json_name.slice);
     errdefer allocator.free(zig_name);
 
     var module_dir = out_dir;
@@ -716,12 +715,12 @@ fn readAndGenerateApiFile(
     }
 
     var not_null_funcs: NotNullFunctionMap = notnull_empty_function_map;
-    if (global_notnull.get(json_name)) |api_obj| {
+    if (global_notnull.get(json_name.slice)) |api_obj| {
         not_null_funcs = api_obj.Functions;
     }
     var union_pointer_funcs = empty_strings_map;
     var union_pointer_consts = StringPool.HashMap(void).init(allocator);
-    if (global_union_pointers.get(json_name)) |api_obj| {
+    if (global_union_pointers.get(json_name.slice)) |api_obj| {
         union_pointer_funcs = api_obj.Functions;
         for (api_obj.Constants) |name| {
             try union_pointer_consts.put(try global_symbol_pool.add(name), {});
@@ -739,8 +738,8 @@ fn readAndGenerateApiFile(
         .type_exports = StringPoolArrayHashMap(void).init(allocator),
         .func_exports = StringPoolArrayHashMap(void).init(allocator),
         .tmp_func_ptr_workaround_list = ArrayList(StringPool.Val).init(allocator),
-        .method_conflict_map = getMethodConflictMap(json_name),
-        .param_conflict_map = getParamConflictMap(json_name),
+        .method_conflict_map = getMethodConflictMap(json_name.slice),
+        .param_conflict_map = getParamConflictMap(json_name.slice),
         .not_null_funcs = not_null_funcs,
         .not_null_funcs_applied = StringPool.HashMap(void).init(allocator),
         .union_pointer_funcs = union_pointer_funcs,
@@ -1019,7 +1018,8 @@ fn addTypeRefsNoFormatter(sdk_file: *SdkFile, arches: metadata.Architectures, ty
         },
         .ApiRef => |api_ref| {
             const name = getApiRefSubstitute(api_ref.Name, api_ref.Parents) orelse api_ref.Name;
-            try sdk_file.addApiImport(arches, name, api_ref.Api, api_ref.Parents);
+            const api = try global_symbol_pool.add(api_ref.Api);
+            try sdk_file.addApiImport(arches, name, api, api_ref.Parents);
         },
         .PointerTo => |to| try addTypeRefsNoFormatter(sdk_file, arches, to.Child.*),
         .Array => |a| try addTypeRefsNoFormatter(sdk_file, arches, a.Child.*),
@@ -1688,7 +1688,8 @@ fn generateTypeDefinition(
 
             if (typedef.AlsoUsableFor) |also_usable_for| {
                 if (also_usable_type_api_map.get(also_usable_for)) |api| {
-                    try sdk_file.addApiImport(t.Architectures, also_usable_for, api, &.{});
+                    const api_pool = try global_symbol_pool.add(api);
+                    try sdk_file.addApiImport(t.Architectures, also_usable_for, api_pool, &.{});
                     try writer.linef("//TODO: type '{s}' is \"AlsoUsableFor\" '{s}' which means this type is implicitly", .{ pool_name, also_usable_for });
                     try writer.linef("//      convertible to '{s}' but not the other way around.  I don't know how to do this", .{also_usable_for});
                     try writer.line("//      in Zig so for now I'm just defining it as an alias");
