@@ -33,12 +33,6 @@ pub fn build(b: *Build) !void {
     );
     addDefaultStepDeps(b, default_steps);
 
-    {
-        const release_step = b.step("release", "Generate the bindings and run tests for a release");
-        release_step.dependOn(test_step);
-        release_step.dependOn(b.getInstallStep());
-    }
-
     const pass1_step = b.step(
         "pass1",
         "Only perform pass1 of zig binding generation.\n" ++ desc_line_prefix ++
