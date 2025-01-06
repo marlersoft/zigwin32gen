@@ -25,6 +25,8 @@ System.Com Function IUnknown.QueryInterface riid(NotNull=1)
 
 System.Console Function GetStdHandle return(NotNull=1)
 
+System.Diagnostics.ToolHelp Function CreateToolhelp32Snapshot return(NotNull=1)
+
 System.LibraryLoader Function ENUMRESLANGPROCW         lpType(UnionPointer)
 System.LibraryLoader Function ENUMRESNAMEPROCW         lpType(UnionPointer)
 System.LibraryLoader Function EnumResourceLanguagesW   lpType(UnionPointer)
@@ -34,6 +36,12 @@ System.LibraryLoader Function EnumResourceNamesExW     lpType(UnionPointer)
 System.LibraryLoader Function FindResourceW            lpType(UnionPointer) lpName(UnionPointer)
 System.LibraryLoader Function FindResourceExW          lpType(UnionPointer) lpName(UnionPointer)
 System.LibraryLoader Function UpdateResourceW          lpType(UnionPointer) lpName(UnionPointer)
+
+System.Mailslots Function CreateMailslotA return(NotNull=1)
+System.Mailslots Function CreateMailslotW return(NotNull=1)
+
+System.Pipes Function CreateNamedPipeA return(NotNull=1)
+System.Pipes Function CreateNamedPipeW return(NotNull=1)
 
 UI.Controls Constant TD_WARNING_ICON(UnionPointer)
 UI.Controls Constant TD_ERROR_ICON(UnionPointer)
