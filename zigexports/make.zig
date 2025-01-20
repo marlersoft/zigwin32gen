@@ -32,8 +32,9 @@ pub fn main() !u8 {
         // zig.zig compiling enough so we can read it's public declarations
         try file.writeAll(
             \\pub const foundation = struct {
-            \\    pub const HRESULT = i32;
             \\    pub const BOOL = i32;
+            \\    pub const WIN32_ERROR = enum {};
+            \\    pub const HRESULT = i32;
             \\    pub const HWND = *opaque{};
             \\    pub const HANDLE = @import("std").os.windows.HANDLE;
             \\};
