@@ -1,5 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("std");
+const zigexports = @import("zigexports");
 const ArrayList = std.ArrayList;
 const StringHashMap = std.StringHashMap;
 const StringPool = @import("StringPool.zig");
@@ -476,7 +477,7 @@ fn gatherSdkFiles(sdk_files: *ArrayList(*SdkFile), module: *Module) anyerror!voi
 }
 
 const Export = struct {
-    kind: enum { constant, type, function },
+    kind: zigexports.Kind,
     file: union(enum) {
         sdk_file: *SdkFile,
         zig: void,
@@ -587,32 +588,14 @@ fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !vo
 }
 
 fn addZigExports(writer: std.io.AnyWriter, exports: *StringPool.HashMap(Export)) !void {
-    inline for (&.{
-        .{ .function, "L" },
-        .{ .function, "fmtError" },
-        .{ .type, "FormatError" },
-        .{ .function, "closeHandle" },
-        .{ .function, "loword" },
-        .{ .function, "hiword" },
-        .{ .constant, "has_window_longptr" },
-        .{ .function, "getWindowLongPtr" },
-        .{ .function, "setWindowLongPtr" },
-        .{ .function, "getWindowLongPtrA" },
-        .{ .function, "setWindowLongPtrA" },
-        .{ .function, "getWindowLongPtrW" },
-        .{ .function, "setWindowLongPtrW" },
-        .{ .function, "scaleDpi" },
-        .{ .function, "dpiFromHwnd" },
-        .{ .function, "invalidateHwnd" },
-    }) |sym| {
-        const kind = sym[0];
-        const name = try global_symbol_pool.add(sym[1]);
+    inline for (zigexports.declarations) |decl| {
+        const name = try global_symbol_pool.add(decl.name);
         const result = try exports.getOrPut(name);
         if (result.found_existing) std.debug.panic(
             "zig.zig {s} export '{}' conflicts with {s} from {s}",
-            .{ @tagName(kind), name, @tagName(result.value_ptr.kind), result.value_ptr.fileZigName() },
+            .{ @tagName(decl.kind), name, @tagName(result.value_ptr.kind), result.value_ptr.fileZigName() },
         );
-        result.value_ptr.* = .{ .kind = kind, .file = .zig };
+        result.value_ptr.* = .{ .kind = decl.kind, .file = .zig };
         try writer.print("pub const {s} = zig.{0s};\n", .{name});
     }
 }

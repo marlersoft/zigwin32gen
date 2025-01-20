@@ -67,6 +67,19 @@ pub fn build(b: *Build) !void {
         break :blk out_file;
     };
 
+    const zigexports = blk: {
+        const exe = b.addExecutable(.{
+            .name = "makezigexports",
+            .root_source_file = b.path("zigexports/make.zig"),
+            .target = b.host,
+        });
+        const run = b.addRunArtifact(exe);
+        const out_dir = run.addOutputDirectoryArg("zigexports");
+        run.addFileArg(.{ .cwd_relative = b.graph.zig_exe });
+        run.addFileArg(b.path("src/static/win32/zig.zig"));
+        break :blk out_dir.path(b, "zigexports.zig");
+    };
+
     const gen_out_dir = blk: {
         const exe = b.addExecutable(.{
             .name = "genzig",
@@ -74,6 +87,10 @@ pub fn build(b: *Build) !void {
             .optimize = optimize,
             .target = b.host,
         });
+        exe.root_module.addImport(
+            "zigexports",
+            b.createModule(.{ .root_source_file = zigexports }),
+        );
         const run = b.addRunArtifact(exe);
         patchstep.patch(&run.step, runStepMake);
         run.addFileArg(b.path("extra.txt"));
