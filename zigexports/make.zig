@@ -37,6 +37,8 @@ pub fn main() !u8 {
             \\    pub const HRESULT = i32;
             \\    pub const HWND = *opaque{};
             \\    pub const HANDLE = @import("std").os.windows.HANDLE;
+            \\    pub const LPARAM = isize;
+            \\    pub const POINT = struct{ };
             \\};
             \\pub const ui = struct {
             \\    pub const windows_and_messaging = struct {
