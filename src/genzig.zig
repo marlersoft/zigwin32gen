@@ -475,6 +475,24 @@ fn gatherSdkFiles(sdk_files: *ArrayList(*SdkFile), module: *Module) anyerror!voi
     }
 }
 
+const EverythingTarget = union(enum) {
+    sdk_file: *SdkFile,
+    zig: void,
+
+    pub fn asSdk(self: EverythingTarget) ?*SdkFile {
+        return switch (self) {
+            .sdk_file => |f| f,
+            .zig => null,
+        };
+    }
+    pub fn zigName(self: EverythingTarget) []const u8 {
+        return switch (self) {
+            .sdk_file => |f| f.zig_name,
+            .zig => "zig",
+        };
+    }
+};
+
 fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !void {
     var everything_file = try out_win32_dir.createFile("everything.zig", .{});
     defer everything_file.close();
@@ -486,22 +504,6 @@ fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !vo
         \\//! an application to access any and all symbols through a single import.
         \\
         \\pub const zig = @import("zig.zig");
-        \\pub const L = zig.L;
-        \\pub const fmtError = zig.fmtError;
-        \\pub const FormatError = zig.FormatError;
-        \\pub const closeHandle = zig.closeHandle;
-        \\pub const loword = zig.loword;
-        \\pub const hiword = zig.hiword;
-        \\pub const has_window_longptr = zig.has_window_longptr;
-        \\pub const getWindowLongPtr = zig.getWindowLongPtr;
-        \\pub const setWindowLongPtr = zig.setWindowLongPtr;
-        \\pub const getWindowLongPtrA = zig.getWindowLongPtrA;
-        \\pub const setWindowLongPtrA = zig.setWindowLongPtrA;
-        \\pub const getWindowLongPtrW = zig.getWindowLongPtrW;
-        \\pub const setWindowLongPtrW = zig.setWindowLongPtrW;
-        \\pub const scaleDpi = zig.scaleDpi;
-        \\pub const dpiFromHwnd = zig.dpiFromHwnd;
-        \\pub const invalidateHwnd = zig.invalidateHwnd;
         \\
     ));
 
@@ -515,8 +517,10 @@ fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !vo
     //       solution as well, if there are conflicts, we could just say the user has to import the specific module they want.
     // TODO: I think the right way to reslve conflicts in everything.zig is to have a priority order for the apis.
     //       If I just sort the API's in the right order, more common apis go first, then my current logic will work.
-    var shared_export_map = StringPool.HashMap(*SdkFile).init(allocator);
+    var shared_export_map = StringPool.HashMap(EverythingTarget).init(allocator);
     defer shared_export_map.deinit();
+
+    try addZigExports(writer.any(), &shared_export_map);
 
     // populate the shared_export_map, start with types first
     // because types can be referenced within the modules (unlike consts/functions)
@@ -528,7 +532,7 @@ fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !vo
                 //try shared_export_map.put(type_name, .{ .first_sdk_file_ptr = entry.first_sdk_file_ptr, .duplicates = entry.duplicates + 1 });
             } else {
                 //try shared_export_map.put(type_name, .{ .first_sdk_file_ptr = sdk_file, .duplicates = 0 });
-                try shared_export_map.put(type_name, sdk_file);
+                try shared_export_map.put(type_name, .{ .sdk_file = sdk_file });
             }
         }
     }
@@ -536,20 +540,20 @@ fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !vo
     for (sdk_files.items) |sdk_file| {
         try writer.print("// {s} exports {} constants:\n", .{ sdk_file.zig_name, sdk_file.const_exports.items.len });
         for (sdk_file.const_exports.items) |constant| {
-            if (shared_export_map.get(constant)) |other_sdk_file| {
-                try writer.print("// WARNING: redifinition of constant symbol '{s}' in module '{s}' (going with module '{s}')\n", .{ constant, sdk_file.zig_name, other_sdk_file.zig_name });
+            if (shared_export_map.get(constant)) |other_target| {
+                try writer.print("// WARNING: redifinition of constant symbol '{s}' in module '{s}' (going with module '{s}')\n", .{ constant, sdk_file.zig_name, other_target.zigName() });
             } else {
                 try writer.print("pub const {s} = @import(\"../win32.zig\").{s}.{0s};\n", .{ constant, sdk_file.zig_name });
-                try shared_export_map.put(constant, sdk_file);
+                try shared_export_map.put(constant, .{ .sdk_file = sdk_file });
             }
         }
         try writer.print("// {s} exports {} types:\n", .{ sdk_file.zig_name, sdk_file.type_exports.count() });
         var export_it = sdk_file.type_exports.iterator();
         while (export_it.next()) |kv| {
             const type_name = kv.key_ptr.*;
-            const first_type_sdk = shared_export_map.get(type_name) orelse unreachable;
-            if (first_type_sdk != sdk_file) {
-                try writer.print("// WARNING: redefinition of type symbol '{s}' from '{s}', going with '{s}'\n", .{ type_name, sdk_file.zig_name, first_type_sdk.zig_name });
+            const first_type_target = shared_export_map.get(type_name) orelse unreachable;
+            if (first_type_target.asSdk() != sdk_file) {
+                try writer.print("// WARNING: redefinition of type symbol '{s}' from '{s}', going with '{s}'\n", .{ type_name, sdk_file.zig_name, first_type_target.zigName() });
             } else {
                 try writer.print("pub const {s} = @import(\"../win32.zig\").{s}.{0s};\n", .{ type_name, sdk_file.zig_name });
             }
@@ -558,13 +562,37 @@ fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !vo
         var func_it = sdk_file.func_exports.iterator();
         while (func_it.next()) |kv| {
             const func = kv.key_ptr.*;
-            if (shared_export_map.get(func)) |other_sdk_file| {
-                try writer.print("// WARNING: redifinition of function '{s}' in module '{s}' (going with module '{s}')\n", .{ func, sdk_file.zig_name, other_sdk_file.zig_name });
+            if (shared_export_map.get(func)) |other_target| {
+                try writer.print("// WARNING: redifinition of function '{s}' in module '{s}' (going with module '{s}')\n", .{ func, sdk_file.zig_name, other_target.zigName() });
             } else {
                 try writer.print("pub const {s} = @import(\"../win32.zig\").{s}.{0s};\n", .{ func, sdk_file.zig_name });
-                try shared_export_map.put(func, sdk_file);
+                try shared_export_map.put(func, .{ .sdk_file = sdk_file });
             }
         }
+    }
+}
+
+fn addZigExports(writer: std.io.AnyWriter, shared_export_map: *StringPool.HashMap(EverythingTarget)) !void {
+    for (&[_][]const u8{
+        "L",
+        "fmtError",
+        "FormatError",
+        "closeHandle",
+        "loword",
+        "hiword",
+        "has_window_longptr",
+        "getWindowLongPtr",
+        "setWindowLongPtr",
+        "getWindowLongPtrA",
+        "setWindowLongPtrA",
+        "getWindowLongPtrW",
+        "setWindowLongPtrW",
+        "scaleDpi",
+        "dpiFromHwnd",
+        "invalidateHwnd",
+    }) |sym| {
+        try shared_export_map.put(global_symbol_pool.add(sym) catch |e| oom(e), .zig);
+        try writer.print("pub const {s} = zig.{0s};\n", .{sym});
     }
 }
 
