@@ -11,14 +11,7 @@ const win32 = struct {
 const L = win32.L;
 const HWND = win32.HWND;
 
-fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
-    if (std.fmt.allocPrintZ(std.heap.page_allocator, fmt, args)) |msg| {
-        _ = win32.MessageBoxA(null, msg, "Fatal Error", .{});
-    } else |e| switch (e) {
-        error.OutOfMemory => _ = win32.MessageBoxA(null, "Out of memory", "Fatal Error", .{}),
-    }
-    std.process.exit(1);
-}
+pub const panic = win32.messageBoxThenPanic(.{ .title = "Unionpointers Example Panic" });
 
 pub export fn wWinMain(
     hInstance: win32.HINSTANCE,
@@ -47,8 +40,10 @@ pub export fn wWinMain(
             null,
         )) |hwnd| {
             std.log.info("atom={} CreateWindow success", .{atom});
-            if (0 == win32.DestroyWindow(hwnd))
-                fatal("DestroyWindow failed, error={}", .{win32.GetLastError()});
+            if (0 == win32.DestroyWindow(hwnd)) win32.panicWin32(
+                "DestroyWindow",
+                win32.GetLastError(),
+            );
         } else {
             std.log.info("atom={} CreateWindow failed, error={} (this is fine)", .{ atom, win32.GetLastError() });
         }
@@ -70,8 +65,7 @@ pub export fn wWinMain(
             .lpszClassName = CLASS_NAME,
         };
         const atom = win32.RegisterClass(&wc);
-        if (0 == atom)
-            fatal("RegisterClass failed, error={}", .{win32.GetLastError()});
+        if (0 == atom) win32.panicWin32("RegisterClass", win32.GetLastError());
         const hwnd = win32.CreateWindowEx(
             .{},
             @ptrFromInt(atom),
@@ -85,9 +79,8 @@ pub export fn wWinMain(
             null, // Menu
             hInstance, // Instance handle
             null, // Additional application data
-        ) orelse fatal("CreateWindow failed, error={}", .{win32.GetLastError()});
-        if (0 == win32.DestroyWindow(hwnd))
-            fatal("DestroyWindow failed, error={}", .{win32.GetLastError()});
+        ) orelse win32.panicWin32("CreateWindow", win32.GetLastError());
+        if (0 == win32.DestroyWindow(hwnd)) win32.panicWin32("DestroyWindow", win32.GetLastError());
     }
 
     {

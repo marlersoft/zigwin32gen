@@ -38,6 +38,11 @@ pub fn main() !u8 {
             \\    pub const HWND = *opaque{};
             \\    pub const HANDLE = @import("std").os.windows.HANDLE;
             \\};
+            \\pub const ui = struct {
+            \\    pub const windows_and_messaging = struct {
+            \\        pub const MESSAGEBOX_STYLE = struct{ };
+            \\    };
+            \\};
             \\
         );
     }
