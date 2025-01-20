@@ -34,6 +34,7 @@ var global_symbol_None: StringPool.Val = undefined;
 var global_pass1: pass1data.Root = undefined;
 var global_extra: extra.Root = undefined;
 var global_com_overloads: StringPool.HashMapUnmanaged(ComTypeMap) = .{};
+var found_win32_error = false;
 const MissingOverload = struct {
     api: StringPool.Val,
     com_type: []const u8,
@@ -312,6 +313,7 @@ pub fn main() !u8 {
             defer file.close();
             try readAndGenerateApiFile(root_module, out_win32_dir, api_path, basename, file);
         }
+        std.debug.assert(found_win32_error);
 
         if (global_missing_com_overloads.items.len > 0) {
             std.log.err(
@@ -485,6 +487,8 @@ fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !vo
         \\
         \\pub const zig = @import("zig.zig");
         \\pub const L = zig.L;
+        \\pub const fmtError = zig.fmtError;
+        \\pub const FormatError = zig.FormatError;
         \\pub const closeHandle = zig.closeHandle;
         \\pub const loword = zig.loword;
         \\pub const hiword = zig.hiword;
@@ -2178,20 +2182,33 @@ fn generateEnum(
             try writer.line("        else => null,");
             try writer.line("    };");
             try writer.line("}");
-            try writer.linef("pub fn fmt(self: {s}) Fmt {{ return .{{ .value = self }}; }}", .{pool_name});
-            try writer.line("pub const Fmt = struct {");
-            try writer.linef("    value: {s},", .{pool_name});
-            try writer.line("    pub fn format(");
-            try writer.line("        self: Fmt,");
-            try writer.line("        comptime fmt_spec: []const u8,");
-            try writer.line("        options: @import(\"std\").fmt.FormatOptions,");
-            try writer.line("        writer: anytype,");
-            try writer.line("    ) !void {");
-            try writer.line("        _ = fmt_spec;");
-            try writer.line("        _ = options;");
-            try writer.line("        try writer.print(\"{s}({})\", .{self.value.tagName() orelse \"?\", @intFromEnum(self.value)});");
-            try writer.line("    }");
-            try writer.line("};");
+            const is_win32_error = std.mem.eql(u8, pool_name.slice, "WIN32_ERROR");
+            if (is_win32_error) {
+                std.debug.assert(!found_win32_error);
+                found_win32_error = true;
+                try writer.line("pub const Fmt = @import(\"zig.zig\").FormatError(300);");
+                try writer.line("// We use a special fmt implementation for the WIN32_ERROR enum that avoids");
+                try writer.line("// getting the tag name. This is because the enum has over 3,000 values which");
+                try writer.line("// results in needing over 100Kb to store them as strings.");
+                try writer.line("// Instead, we use FormatMessage to access a string for each error.");
+            }
+            const assign = if (is_win32_error) ".error_code = @intFromEnum(self)" else ".value = self";
+            try writer.linef("pub fn fmt(self: {s}) Fmt {{ return .{{ {s} }}; }}", .{ pool_name, assign });
+            if (!is_win32_error) {
+                try writer.line("pub const Fmt = struct {");
+                try writer.linef("    value: {s},", .{pool_name});
+                try writer.line("    pub fn format(");
+                try writer.line("        self: Fmt,");
+                try writer.line("        comptime fmt_spec: []const u8,");
+                try writer.line("        options: @import(\"std\").fmt.FormatOptions,");
+                try writer.line("        writer: anytype,");
+                try writer.line("    ) !void {");
+                try writer.line("        _ = fmt_spec;");
+                try writer.line("        _ = options;");
+                try writer.line("        try writer.print(\"{s}({})\", .{self.value.tagName() orelse \"?\", @intFromEnum(self.value)});");
+                try writer.line("    }");
+                try writer.line("};");
+            }
         }
     }
     if (type_enum.Flags) {
