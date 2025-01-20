@@ -475,18 +475,21 @@ fn gatherSdkFiles(sdk_files: *ArrayList(*SdkFile), module: *Module) anyerror!voi
     }
 }
 
-const EverythingTarget = union(enum) {
-    sdk_file: *SdkFile,
-    zig: void,
+const Export = struct {
+    kind: enum { constant, type, function },
+    file: union(enum) {
+        sdk_file: *SdkFile,
+        zig: void,
+    },
 
-    pub fn asSdk(self: EverythingTarget) ?*SdkFile {
-        return switch (self) {
+    pub fn fileAsSdk(self: Export) ?*SdkFile {
+        return switch (self.file) {
             .sdk_file => |f| f,
             .zig => null,
         };
     }
-    pub fn zigName(self: EverythingTarget) []const u8 {
-        return switch (self) {
+    pub fn fileZigName(self: Export) []const u8 {
+        return switch (self.file) {
             .sdk_file => |f| f.zig_name,
             .zig => "zig",
         };
@@ -517,43 +520,51 @@ fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !vo
     //       solution as well, if there are conflicts, we could just say the user has to import the specific module they want.
     // TODO: I think the right way to reslve conflicts in everything.zig is to have a priority order for the apis.
     //       If I just sort the API's in the right order, more common apis go first, then my current logic will work.
-    var shared_export_map = StringPool.HashMap(EverythingTarget).init(allocator);
-    defer shared_export_map.deinit();
+    var exports = StringPool.HashMap(Export).init(allocator);
+    defer exports.deinit();
 
-    try addZigExports(writer.any(), &shared_export_map);
-
-    // populate the shared_export_map, start with types first
-    // because types can be referenced within the modules (unlike consts/functions)
+    // populate the exports with type names first
+    // because types can be referenced within other files (unlike consts/functions)
     for (sdk_files.items) |sdk_file| {
         var type_export_it = sdk_file.type_exports.iterator();
         while (type_export_it.next()) |kv| {
             const type_name = kv.key_ptr.*;
-            if (shared_export_map.get(type_name)) |_| {
-                //try shared_export_map.put(type_name, .{ .first_sdk_file_ptr = entry.first_sdk_file_ptr, .duplicates = entry.duplicates + 1 });
-            } else {
-                //try shared_export_map.put(type_name, .{ .first_sdk_file_ptr = sdk_file, .duplicates = 0 });
-                try shared_export_map.put(type_name, .{ .sdk_file = sdk_file });
+            const result = try exports.getOrPut(type_name);
+            if (!result.found_existing) {
+                result.value_ptr.* = .{ .kind = .type, .file = .{ .sdk_file = sdk_file } };
             }
         }
     }
 
+    try addZigExports(writer.any(), &exports);
+
     for (sdk_files.items) |sdk_file| {
         try writer.print("// {s} exports {} constants:\n", .{ sdk_file.zig_name, sdk_file.const_exports.items.len });
         for (sdk_file.const_exports.items) |constant| {
-            if (shared_export_map.get(constant)) |other_target| {
-                try writer.print("// WARNING: redifinition of constant symbol '{s}' in module '{s}' (going with module '{s}')\n", .{ constant, sdk_file.zig_name, other_target.zigName() });
+            const result = try exports.getOrPut(constant);
+            if (result.found_existing) {
+                const existing = result.value_ptr;
+                try writer.print(
+                    "// omitting constant '{s}.{s}' in favor of {s} '{s}.{1s}'\n",
+                    .{ sdk_file.zig_name, constant, @tagName(existing.kind), existing.fileZigName() },
+                );
             } else {
+                result.value_ptr.* = .{ .kind = .constant, .file = .{ .sdk_file = sdk_file } };
                 try writer.print("pub const {s} = @import(\"../win32.zig\").{s}.{0s};\n", .{ constant, sdk_file.zig_name });
-                try shared_export_map.put(constant, .{ .sdk_file = sdk_file });
             }
         }
         try writer.print("// {s} exports {} types:\n", .{ sdk_file.zig_name, sdk_file.type_exports.count() });
         var export_it = sdk_file.type_exports.iterator();
         while (export_it.next()) |kv| {
             const type_name = kv.key_ptr.*;
-            const first_type_target = shared_export_map.get(type_name) orelse unreachable;
-            if (first_type_target.asSdk() != sdk_file) {
-                try writer.print("// WARNING: redefinition of type symbol '{s}' from '{s}', going with '{s}'\n", .{ type_name, sdk_file.zig_name, first_type_target.zigName() });
+            // guaranteed to exist since we added all the types above
+            const existing = exports.get(type_name) orelse unreachable;
+            std.debug.assert(existing.kind == .type);
+            if (existing.fileAsSdk() != sdk_file) {
+                try writer.print(
+                    "// omitting type '{s}.{s}' in favor of {s} '{s}.{1s}'\n",
+                    .{ sdk_file.zig_name, type_name, @tagName(existing.kind), existing.fileZigName() },
+                );
             } else {
                 try writer.print("pub const {s} = @import(\"../win32.zig\").{s}.{0s};\n", .{ type_name, sdk_file.zig_name });
             }
@@ -562,37 +573,47 @@ fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !vo
         var func_it = sdk_file.func_exports.iterator();
         while (func_it.next()) |kv| {
             const func = kv.key_ptr.*;
-            if (shared_export_map.get(func)) |other_target| {
-                try writer.print("// WARNING: redifinition of function '{s}' in module '{s}' (going with module '{s}')\n", .{ func, sdk_file.zig_name, other_target.zigName() });
+            if (exports.get(func)) |existing| {
+                try writer.print(
+                    "// omitting function '{s}.{s}' in favor of {s} '{s}.{1s}'\n",
+                    .{ sdk_file.zig_name, func, @tagName(existing.kind), existing.fileZigName() },
+                );
             } else {
                 try writer.print("pub const {s} = @import(\"../win32.zig\").{s}.{0s};\n", .{ func, sdk_file.zig_name });
-                try shared_export_map.put(func, .{ .sdk_file = sdk_file });
+                try exports.put(func, .{ .kind = .function, .file = .{ .sdk_file = sdk_file } });
             }
         }
     }
 }
 
-fn addZigExports(writer: std.io.AnyWriter, shared_export_map: *StringPool.HashMap(EverythingTarget)) !void {
-    for (&[_][]const u8{
-        "L",
-        "fmtError",
-        "FormatError",
-        "closeHandle",
-        "loword",
-        "hiword",
-        "has_window_longptr",
-        "getWindowLongPtr",
-        "setWindowLongPtr",
-        "getWindowLongPtrA",
-        "setWindowLongPtrA",
-        "getWindowLongPtrW",
-        "setWindowLongPtrW",
-        "scaleDpi",
-        "dpiFromHwnd",
-        "invalidateHwnd",
+fn addZigExports(writer: std.io.AnyWriter, exports: *StringPool.HashMap(Export)) !void {
+    inline for (&.{
+        .{ .function, "L" },
+        .{ .function, "fmtError" },
+        .{ .type, "FormatError" },
+        .{ .function, "closeHandle" },
+        .{ .function, "loword" },
+        .{ .function, "hiword" },
+        .{ .constant, "has_window_longptr" },
+        .{ .function, "getWindowLongPtr" },
+        .{ .function, "setWindowLongPtr" },
+        .{ .function, "getWindowLongPtrA" },
+        .{ .function, "setWindowLongPtrA" },
+        .{ .function, "getWindowLongPtrW" },
+        .{ .function, "setWindowLongPtrW" },
+        .{ .function, "scaleDpi" },
+        .{ .function, "dpiFromHwnd" },
+        .{ .function, "invalidateHwnd" },
     }) |sym| {
-        try shared_export_map.put(global_symbol_pool.add(sym) catch |e| oom(e), .zig);
-        try writer.print("pub const {s} = zig.{0s};\n", .{sym});
+        const kind = sym[0];
+        const name = try global_symbol_pool.add(sym[1]);
+        const result = try exports.getOrPut(name);
+        if (result.found_existing) std.debug.panic(
+            "zig.zig {s} export '{}' conflicts with {s} from {s}",
+            .{ @tagName(kind), name, @tagName(result.value_ptr.kind), result.value_ptr.fileZigName() },
+        );
+        result.value_ptr.* = .{ .kind = kind, .file = .zig };
+        try writer.print("pub const {s} = zig.{0s};\n", .{name});
     }
 }
 
