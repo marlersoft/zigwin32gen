@@ -2186,29 +2186,25 @@ fn generateEnum(
             if (is_win32_error) {
                 std.debug.assert(!found_win32_error);
                 found_win32_error = true;
-                try writer.line("pub const Fmt = @import(\"zig.zig\").FormatError(300);");
-                try writer.line("// We use a special fmt implementation for the WIN32_ERROR enum that avoids");
+                try writer.line("// We use a special format implementation for the WIN32_ERROR enum that avoids");
                 try writer.line("// getting the tag name. This is because the enum has over 3,000 values which");
                 try writer.line("// results in needing over 100Kb to store them as strings.");
                 try writer.line("// Instead, we use FormatMessage to access a string for each error.");
             }
-            const assign = if (is_win32_error) ".error_code = @intFromEnum(self)" else ".value = self";
-            try writer.linef("pub fn fmt(self: {s}) Fmt {{ return .{{ {s} }}; }}", .{ pool_name, assign });
-            if (!is_win32_error) {
-                try writer.line("pub const Fmt = struct {");
-                try writer.linef("    value: {s},", .{pool_name});
-                try writer.line("    pub fn format(");
-                try writer.line("        self: Fmt,");
-                try writer.line("        comptime fmt_spec: []const u8,");
-                try writer.line("        options: @import(\"std\").fmt.FormatOptions,");
-                try writer.line("        writer: anytype,");
-                try writer.line("    ) !void {");
-                try writer.line("        _ = fmt_spec;");
-                try writer.line("        _ = options;");
-                try writer.line("        try writer.print(\"{s}({})\", .{self.value.tagName() orelse \"?\", @intFromEnum(self.value)});");
-                try writer.line("    }");
-                try writer.line("};");
+            try writer.line("pub fn format(");
+            try writer.linef("    self: {s},", .{pool_name});
+            try writer.line("    comptime fmt: []const u8,");
+            try writer.line("    options: @import(\"std\").fmt.FormatOptions,");
+            try writer.line("    writer: anytype,");
+            try writer.line(") !void {");
+            if (is_win32_error) {
+                try writer.line("    try @import(\"zig.zig\").fmtError(@intFromEnum(self)).format(fmt, options, writer);");
+            } else {
+                try writer.line("    _ = fmt;");
+                try writer.line("    _ = options;");
+                try writer.line("    try writer.print(\"{s}({})\", .{self.value.tagName() orelse \"?\", @intFromEnum(self.value)});");
             }
+            try writer.line("}");
         }
     }
     if (type_enum.Flags) {
