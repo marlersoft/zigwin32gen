@@ -108,6 +108,9 @@ fn WindowProc(
         },
         win32.WM_DPICHANGED => win32.invalidateHwnd(hwnd),
         win32.WM_PAINT => {
+            // just testing the api, this lparam actually isn't used in WM_PAINT
+            _ = win32.pointFromLparam(lParam);
+
             var ps: win32.PAINTSTRUCT = undefined;
             const hdc = win32.BeginPaint(hwnd, &ps);
             _ = win32.FillRect(hdc, &ps.rcPaint, @ptrFromInt(@intFromEnum(win32.COLOR_WINDOW) + 1));
