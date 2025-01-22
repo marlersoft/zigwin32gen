@@ -69,6 +69,14 @@ pub export fn wWinMain(
     ) orelse std.debug.panic("CreateWindow failed, error={}", .{win32.GetLastError()});
 
     const dpi = win32.dpiFromHwnd(hwnd);
+
+    // just test the api works
+    _ = win32.scaleFromDpi(f32, dpi);
+    _ = win32.scaleFromDpi(f64, dpi);
+    _ = win32.scaleFromDpi(f128, dpi);
+    _ = win32.scaleDpi(i32, 100, dpi);
+    _ = win32.scaleDpi(f32, 100, dpi);
+
     if (0 == win32.SetWindowPos(
         hwnd,
         null,
