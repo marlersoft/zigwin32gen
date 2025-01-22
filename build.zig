@@ -69,15 +69,16 @@ pub fn build(b: *Build) !void {
 
     const zigexports = blk: {
         const exe = b.addExecutable(.{
-            .name = "makezigexports",
-            .root_source_file = b.path("zigexports/make.zig"),
+            .name = "genzigexports",
+            .root_source_file = b.path("src/genzigexports.zig"),
             .target = b.host,
         });
+        exe.root_module.addImport("win32_stub", b.createModule(.{
+            .root_source_file = b.path("src/static/win32.zig"),
+        }));
+
         const run = b.addRunArtifact(exe);
-        const out_dir = run.addOutputDirectoryArg("zigexports");
-        run.addFileArg(.{ .cwd_relative = b.graph.zig_exe });
-        run.addFileArg(b.path("src/static/win32.zig"));
-        break :blk out_dir.path(b, "zigexports.zig");
+        break :blk run.addOutputFileArg("zigexports.zig");
     };
 
     const gen_out_dir = blk: {
