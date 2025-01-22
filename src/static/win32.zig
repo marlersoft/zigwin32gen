@@ -11,6 +11,16 @@ pub const foundation = struct {
     pub const HANDLE = @import("std").os.windows.HANDLE;
     pub const LPARAM = isize;
     pub const POINT = struct {};
+    pub const SIZE = struct {};
+    pub const RECT = struct {};
+};
+pub const graphics = struct {
+    pub const gdi = struct {
+        pub const HDC = *opaque {};
+        pub const HGDIOBJ = *opaque {};
+        pub const HBRUSH = HGDIOBJ;
+        pub const PAINTSTRUCT = struct {};
+    };
 };
 pub const ui = struct {
     pub const windows_and_messaging = struct {

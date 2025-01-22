@@ -116,14 +116,40 @@ fn WindowProc(
         },
         win32.WM_DPICHANGED => win32.invalidateHwnd(hwnd),
         win32.WM_PAINT => {
-            // just testing the api, this lparam actually isn't used in WM_PAINT
+            // some of these methods aren't really doing anything, just
+            // testing various apis.
             _ = win32.pointFromLparam(lParam);
 
-            var ps: win32.PAINTSTRUCT = undefined;
-            const hdc = win32.BeginPaint(hwnd, &ps);
-            _ = win32.FillRect(hdc, &ps.rcPaint, @ptrFromInt(@intFromEnum(win32.COLOR_WINDOW) + 1));
-            const msg = win32.L("A window for testing things.");
-            _ = win32.TextOutW(hdc, 20, 20, msg.ptr, msg.len);
+            const client_size = win32.getClientSize(hwnd);
+            _ = client_size;
+
+            const hdc, const ps = win32.beginPaint(hwnd);
+            defer win32.endPaint(hwnd, &ps);
+
+            {
+                const tmp_hdc = win32.CreateCompatibleDC(hdc);
+                win32.deleteDc(tmp_hdc);
+            }
+
+            {
+                const brush = win32.createSolidBrush(0xff00ffff);
+                defer win32.deleteObject(brush);
+                win32.fillRect(hdc, ps.rcPaint, brush);
+            }
+
+            var y: i32 = 10;
+
+            {
+                const msg = win32.L("A window for testing things.");
+                win32.textOutW(hdc, 20, y, msg);
+                y += win32.getTextExtentW(hdc, msg).cy;
+            }
+            {
+                const msg = "Testing TextOutA";
+                win32.textOutA(hdc, 20, y, msg);
+                y += win32.getTextExtentA(hdc, msg).cy;
+            }
+
             {
                 var buf: [100]u8 = undefined;
                 const text = std.fmt.bufPrint(
@@ -131,9 +157,9 @@ fn WindowProc(
                     "dpi is {}",
                     .{win32.dpiFromHwnd(hwnd)},
                 ) catch unreachable;
-                // TODO: the text.ptr argument doesn't require null termination, fix the binding
-                _ = win32.TextOutA(hdc, 20, 50, @ptrCast(text.ptr), @intCast(text.len));
+                win32.textOutA(hdc, 20, y, text);
             }
+
             _ = win32.EndPaint(hwnd, &ps);
             return 0;
         },
