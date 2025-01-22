@@ -76,7 +76,7 @@ pub fn build(b: *Build) !void {
         const run = b.addRunArtifact(exe);
         const out_dir = run.addOutputDirectoryArg("zigexports");
         run.addFileArg(.{ .cwd_relative = b.graph.zig_exe });
-        run.addFileArg(b.path("src/static/win32/zig.zig"));
+        run.addFileArg(b.path("src/static/win32.zig"));
         break :blk out_dir.path(b, "zigexports.zig");
     };
 

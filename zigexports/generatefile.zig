@@ -1,5 +1,6 @@
 const std = @import("std");
-const zig = @import("win32/zig.zig");
+const win32_stub = @import("win32_stub");
+const zig = win32_stub.zig;
 
 // make win32/zig.zig happy
 pub const UNICODE = true;

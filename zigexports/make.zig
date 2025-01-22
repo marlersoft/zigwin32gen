@@ -14,44 +14,10 @@ pub fn main() !u8 {
     }
     const out_path = cmd_args[0];
     const zig_exe = cmd_args[1];
-    const zig_file = cmd_args[2];
+    const win32_stub_path = cmd_args[2];
 
     try std.fs.cwd().deleteTree(out_path);
     try std.fs.cwd().makeDir(out_path);
-
-    const win32_dir_path = try std.fs.path.join(arena, &.{ out_path, "win32" });
-    defer arena.free(win32_dir_path);
-    try std.fs.cwd().makeDir(win32_dir_path);
-
-    {
-        const win32_src_path = try std.fs.path.join(arena, &.{ out_path, "win32.zig" });
-        defer arena.free(win32_src_path);
-        const file = try std.fs.cwd().createFile(win32_src_path, .{});
-        defer file.close();
-        // these types don't need to be correct, they're just placeholders to get our
-        // zig.zig compiling enough so we can read it's public declarations
-        try file.writeAll(
-            \\pub const foundation = struct {
-            \\    pub const BOOL = i32;
-            \\    pub const WIN32_ERROR = enum {};
-            \\    pub const HRESULT = i32;
-            \\    pub const HWND = *opaque{};
-            \\    pub const HANDLE = @import("std").os.windows.HANDLE;
-            \\    pub const LPARAM = isize;
-            \\    pub const POINT = struct{ };
-            \\};
-            \\pub const ui = struct {
-            \\    pub const windows_and_messaging = struct {
-            \\        pub const MESSAGEBOX_STYLE = struct{ };
-            \\    };
-            \\};
-            \\
-        );
-    }
-
-    const zig_file_out = try std.fs.path.join(arena, &.{ win32_dir_path, "zig.zig" });
-    defer arena.free(zig_file_out);
-    try std.fs.cwd().copyFile(zig_file, std.fs.cwd(), zig_file_out, .{});
 
     const root_file_path = try std.fs.path.join(arena, &.{ out_path, "root.zig" });
     // no need to free
@@ -62,19 +28,24 @@ pub fn main() !u8 {
         try file.writer().writeAll(@embedFile("generatefile.zig"));
     }
 
-    const result = try std.process.Child.run(.{
-        .argv = &.{ zig_exe, "run", root_file_path },
-        .allocator = arena,
-    });
-    {
-        const stdout_fixed1 = try std.mem.replaceOwned(u8, arena, result.stderr, zig_file_out, zig_file);
-        defer arena.free(stdout_fixed1);
-        const stdout_fixed2 = try std.mem.replaceOwned(u8, arena, result.stderr, root_file_path, "generatezigexports.zig");
-        defer arena.free(stdout_fixed2);
-        std.log.info("zig_file_out '{s}'", .{zig_file_out});
-        std.log.info("root_file_path '{s}'", .{root_file_path});
-        try std.io.getStdErr().writer().writeAll(stdout_fixed2);
-    }
+    const result = blk: {
+        const root_mod_arg = try std.fmt.allocPrint(arena, "-Mroot={s}", .{root_file_path});
+        defer arena.free(root_mod_arg);
+        const win32_zig_mod_arg = try std.fmt.allocPrint(arena, "-Mwin32_stub={s}", .{win32_stub_path});
+        defer arena.free(win32_zig_mod_arg);
+        break :blk try std.process.Child.run(.{
+            .argv = &.{
+                zig_exe,
+                "run",
+                "--dep",
+                "win32_stub",
+                root_mod_arg,
+                win32_zig_mod_arg,
+            },
+            .allocator = arena,
+        });
+    };
+    try std.io.getStdErr().writer().writeAll(result.stderr);
     try std.io.getStdOut().writer().writeAll(result.stdout);
     switch (result.term) {
         .Exited => |code| if (code != 0) {
