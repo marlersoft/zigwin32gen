@@ -60,7 +60,7 @@ pub fn main() !u8 {
             var file = try std.fs.cwd().openFile(releases_file_path, .{ .mode = .read_write });
             defer file.close();
             try file.seekFromEnd(0);
-            try file.writer().print("{s} {s}\n", .{ &release.gen_commit, &release.result_commit });
+            try file.writer().print("pass {s} {s}\n", .{ &release.gen_commit, &release.result_commit });
         }
     }
 
@@ -280,9 +280,23 @@ fn generateOneCommit(
     try common.run(allocator, "git status", &.{ "git", "-C", zigwin32_repo, "add", "." });
 
     {
-        const gen_repo_commit_msg = try gitLog(gen_repo, gen_commit);
-        defer allocator.free(gen_repo_commit_msg);
-        try common.run(allocator, "git status", &.{ "git", "-C", zigwin32_repo, "commit", "-m", gen_repo_commit_msg });
+        const body = try gitLog(gen_repo, gen_commit, "--pretty=%B");
+        defer allocator.free(body);
+        const author = try gitLog(gen_repo, gen_commit, "--pretty=%an <%ae>");
+        defer allocator.free(author);
+        const date = try gitLog(gen_repo, gen_commit, "--pretty=%aD");
+        try common.run(allocator, "git status", &.{
+            "git",
+            "-C",
+            zigwin32_repo,
+            "commit",
+            "-m",
+            body,
+            "--author",
+            author,
+            "--date",
+            date,
+        });
     }
 
     // verify we are now in a clean state
@@ -396,14 +410,14 @@ fn gitRevListCount(repo: []const u8, a: [40]u8, b: [40]u8) !u32 {
     );
 }
 
-fn gitLog(repo: []const u8, commit: [40]u8) ![]const u8 {
+fn gitLog(repo: []const u8, commit: [40]u8, format: []const u8) ![]const u8 {
     const argv = [_][]const u8{
         "git",
         "-C",
         repo,
         "log",
         "-1",
-        "--pretty=%B",
+        format,
         &commit,
     };
     std.log.info("{}", .{common.fmtArgv(&argv)});
@@ -419,6 +433,10 @@ fn gitLog(repo: []const u8, commit: [40]u8) ![]const u8 {
     return result.stdout;
 }
 
+const GenStatus = enum {
+    pass,
+    fail,
+};
 const Release = struct {
     number: u32,
     gen_commit: [40]u8,
@@ -427,13 +445,23 @@ const Release = struct {
 const ParseResult = union(enum) {
     err: []const u8,
     ok: struct {
+        status: GenStatus,
         gen_commit: [40]u8,
         result_commit: [40]u8,
     },
 };
 fn parseLine(line: []const u8) ParseResult {
     var field_it = std.mem.splitScalar(u8, line, ' ');
-    const gen_commit = field_it.first();
+    const status_str = field_it.first();
+    const status: GenStatus = blk: {
+        if (std.mem.eql(u8, status_str, "pass")) break :blk .pass;
+        if (std.mem.eql(u8, status_str, "fail")) break :blk .fail;
+        return .{ .err = std.fmt.allocPrint(allocator, "line does not being with 'pass' or 'fail', got '{s}'", .{status_str}) catch |e| oom(e) };
+    };
+
+    const gen_commit = field_it.next() orelse return .{
+        .err = std.fmt.allocPrint(allocator, "missing ' ' to separate status/commit fields", .{}) catch |e| oom(e),
+    };
     if (gen_commit.len != 40) return .{
         .err = std.fmt.allocPrint(allocator, "invalid gen commit: '{s}'", .{gen_commit}) catch |e| oom(e),
     };
@@ -448,6 +476,7 @@ fn parseLine(line: []const u8) ParseResult {
     };
     return .{
         .ok = .{
+            .status = status,
             .gen_commit = gen_commit[0..40].*,
             .result_commit = result_commit[0..40].*,
         },
