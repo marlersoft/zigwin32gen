@@ -2,6 +2,8 @@ const std = @import("std");
 const common = @import("common.zig");
 const fatal = common.fatal;
 
+const zigwin32_repo_url = "https://github.com/marlersoft/zigwin32";
+
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const allocator = arena.allocator();
 
@@ -37,14 +39,62 @@ pub fn main() !u8 {
     };
     std.log.info("main: {s}", .{&main_sha});
 
-    try common.run(allocator, "git ", &.{ "git", "checkout", "HEAD", "--", releases_file_path });
-
-    // check if this commit has already been released
-    if (try isReleased(releases_file_path, main_sha)) {
-        std.log.info("commit {s}: already released", .{main_sha});
-        return 0;
+    if (false) {
+        try common.run(allocator, "git ", &.{ "git", "checkout", "HEAD", "--", releases_file_path });
     }
 
+    var count: u32 = 0;
+    while (true) : (count += 1) {
+        std.log.info("--------------------------------------------------", .{});
+        const release = (try generateOneCommit(
+            gen_repo,
+            releases_file_path,
+            zigwin32_repo,
+            do_clean,
+            main_sha,
+            count,
+        )) orelse {
+            break;
+        };
+        {
+            var file = try std.fs.cwd().openFile(releases_file_path, .{ .mode = .read_write });
+            defer file.close();
+            try file.seekFromEnd(0);
+            try file.writer().print("{s} {s}\n", .{ &release.gen_commit, &release.result_commit });
+        }
+    }
+
+    std.log.info("--------------------------------------------------", .{});
+    std.log.info("generated {} release entries", .{count});
+    std.log.info("--------------------------------------------------", .{});
+    const latest_release = try readLatestRelease(releases_file_path);
+    std.log.warn(
+        "TODO: check if there are any changes to commit (i.e. git status releases.txt and check commit for zigwin32 repo)",
+        .{},
+    );
+    std.log.info(
+        ("push the release with these commands:\n" ++
+            "git -C {s} push {s} {s}:main\n" ++
+            "git add .\n" ++
+            "git commit -m \"new release\"\n" ++
+            "git push origin HEAD:release\n"),
+        .{
+            zigwin32_repo,
+            zigwin32_repo_url,
+            latest_release.result_commit,
+        },
+    );
+    return 0;
+}
+
+fn generateOneCommit(
+    gen_repo: []const u8,
+    releases_file_path: []const u8,
+    zigwin32_repo: []const u8,
+    do_clean: bool,
+    main_sha: [40]u8,
+    commit_count: u32,
+) !?struct { gen_commit: [40]u8, result_commit: [40]u8 } {
     const revlist_full = blk: {
         const argv = [_][]const u8{
             "git",
@@ -88,48 +138,31 @@ pub fn main() !u8 {
         }
     }
 
-    const releases_text = try readReleases(releases_file_path);
-    defer allocator.free(releases_text);
-    const latest_release: Release = blk: {
-        var line_no: u32 = 1;
-        var lines_it = std.mem.splitScalar(
-            u8,
-            std.mem.trimRight(u8, releases_text, "\n"),
-            '\n',
-        );
-        var latest: ?Release = null;
-        while (lines_it.next()) |line| : (line_no += 1) {
-            const result = switch (parseLine(line)) {
-                .err => |msg| fatal(
-                    "{s}: line {}: {s}",
-                    .{ releases_file_path, line_no, msg },
-                ),
-                .ok => |ok| ok,
-            };
-            latest = .{
-                .number = line_no,
-                .gen_commit = result.gen_commit,
-                .result_commit = result.result_commit,
-            };
-        }
-        break :blk latest orelse fatal("{s}: has no releases", .{releases_file_path});
-    };
+    const latest_release = try readLatestRelease(releases_file_path);
     std.log.info("latest release: {s}", .{latest_release.gen_commit});
+    if (std.mem.eql(u8, &latest_release.gen_commit, &main_sha))
+        return null;
 
-    // make sure the latest release is an ancestor of ours
-    const ahead = blk: {
-        var ahead: u32 = 1;
+    const gen_commit, const gen_commit_depth = blk: {
+        var previous: [40]u8 = main_sha;
+        var count: u32 = 1;
         var it = std.mem.splitAny(u8, revlist, "\r\n");
-        while (it.next()) |rev| : (ahead += 1) {
-            if (std.mem.eql(u8, &latest_release.gen_commit, rev))
-                break :blk ahead;
+        while (it.next()) |rev| : (count += 1) {
+            std.debug.assert(rev.len == 40);
+            if (std.mem.eql(u8, &latest_release.gen_commit, rev)) {
+                break :blk .{ previous, count };
+            }
+            previous = rev[0..40].*;
         }
         fatal(
             "latest release commit {s} is not a parent of main commit {s}",
             .{ latest_release.gen_commit, &main_sha },
         );
     };
-    std.log.info("main is {} commit(s) ahead of latest release", .{ahead});
+    std.log.info("--------------------------------------------------", .{});
+    std.log.info("generating commit {} ({} after this): {s}", .{ commit_count + 1, gen_commit_depth - 1, gen_commit });
+    std.log.info("--------------------------------------------------", .{});
+    // TODO: maybe print the git log to stdout for convenience in the log
 
     if (do_clean) {
         try common.run(allocator, "git clean", &.{
@@ -138,7 +171,7 @@ pub fn main() !u8 {
     }
     try common.run(allocator, "git reset", &.{ "git", "-C", gen_repo, "reset", "--hard" });
     try common.run(allocator, "git checkout", &.{
-        "git", "-C", gen_repo, "checkout", &main_sha,
+        "git", "-C", gen_repo, "checkout", &gen_commit,
     });
     if (do_clean) {
         try common.run(allocator, "git clean", &.{
@@ -170,7 +203,7 @@ pub fn main() !u8 {
             zigwin32_repo,
             "cat-file",
             "-t",
-            latest_release.result_commit,
+            &latest_release.result_commit,
         };
         std.log.info("{}", .{common.fmtArgv(&argv)});
         const result = try std.process.Child.run(.{
@@ -191,9 +224,8 @@ pub fn main() !u8 {
         break :blk true;
     };
 
-    const zigwin32_repo_url = "https://github.com/marlersoft/zigwin32";
     if (have_commit) {
-        std.log.info("skipping git fetch in zigwin32 repo, we already have the release commit", .{});
+        std.log.info("skipping git fetch in zigwin32 repo, we already have this commit", .{});
     } else {
         try common.run(allocator, "git fetch", &.{
             "git",
@@ -201,7 +233,7 @@ pub fn main() !u8 {
             zigwin32_repo,
             "fetch",
             zigwin32_repo_url,
-            latest_release.result_commit,
+            &latest_release.result_commit,
         });
     }
 
@@ -210,7 +242,7 @@ pub fn main() !u8 {
     });
     try common.run(allocator, "git reset", &.{ "git", "-C", zigwin32_repo, "reset", "--hard" });
     try common.run(allocator, "git checkout", &.{
-        "git", "-C", zigwin32_repo, "checkout", latest_release.result_commit,
+        "git", "-C", zigwin32_repo, "checkout", &latest_release.result_commit,
     });
     try common.run(allocator, "git clean", &.{
         "git", "-C", zigwin32_repo, "clean", "-xffd",
@@ -240,7 +272,7 @@ pub fn main() !u8 {
         const trimmed = std.mem.trimRight(u8, status, "\r\n");
         if (trimmed.len == 0) {
             std.log.info("this commit has no changes to release", .{});
-            std.process.exit(0);
+            return .{ .gen_commit = gen_commit, .result_commit = latest_release.result_commit[0..40].* };
         }
     }
 
@@ -248,18 +280,9 @@ pub fn main() !u8 {
     try common.run(allocator, "git status", &.{ "git", "-C", zigwin32_repo, "add", "." });
 
     {
-        const commit_count = try gitRevListCount(gen_repo, latest_release.gen_commit, main_sha);
-        std.debug.assert(commit_count >= 1);
-        const gen_repo_commit_msg = try gitLogGenRepo(gen_repo, latest_release.gen_commit, main_sha);
+        const gen_repo_commit_msg = try gitLog(gen_repo, gen_commit);
         defer allocator.free(gen_repo_commit_msg);
-        const plural_suffix: []const u8 = if (commit_count == 1) "" else "s";
-        const full_commit_msg = try std.fmt.allocPrint(
-            allocator,
-            "release {} commit{s} from zigwin32gen commit {s}\n\n{s}\n",
-            .{ commit_count, plural_suffix, &main_sha, gen_repo_commit_msg },
-        );
-        defer allocator.free(full_commit_msg);
-        try common.run(allocator, "git status", &.{ "git", "-C", zigwin32_repo, "commit", "-m", full_commit_msg });
+        try common.run(allocator, "git status", &.{ "git", "-C", zigwin32_repo, "commit", "-m", gen_repo_commit_msg });
     }
 
     // verify we are now in a clean state
@@ -300,27 +323,39 @@ pub fn main() !u8 {
         "git rev-parse printed invalid sha '{s}'",
         .{new_result_commit},
     );
+    return .{ .gen_commit = gen_commit, .result_commit = new_result_commit[0..40].* };
+}
 
-    {
-        var file = try std.fs.cwd().openFile(releases_file_path, .{ .mode = .read_write });
+fn readLatestRelease(file_path: []const u8) !Release {
+    const releases_text = blk: {
+        const file = try std.fs.cwd().openFile(file_path, .{});
         defer file.close();
-        try file.seekFromEnd(0);
-        try file.writer().print("{s} {s}\n", .{ &main_sha, new_result_commit });
-    }
+        break :blk try file.reader().readAllAlloc(allocator, std.math.maxInt(usize));
+    };
+    defer allocator.free(releases_text);
 
-    std.log.info(
-        ("push the release with these commands:\n" ++
-            "git -C {s} push {s} {s}:main\n" ++
-            "git add .\n" ++
-            "git commit -m \"new release\"\n" ++
-            "git push origin HEAD:release\n"),
-        .{
-            zigwin32_repo,
-            zigwin32_repo_url,
-            new_result_commit,
-        },
+    var line_no: u32 = 1;
+    var lines_it = std.mem.splitScalar(
+        u8,
+        std.mem.trimRight(u8, releases_text, "\n"),
+        '\n',
     );
-    return 0;
+    var latest: ?Release = null;
+    while (lines_it.next()) |line| : (line_no += 1) {
+        const result = switch (parseLine(line)) {
+            .err => |msg| fatal(
+                "{s}: line {}: {s}",
+                .{ file_path, line_no, msg },
+            ),
+            .ok => |ok| ok,
+        };
+        latest = .{
+            .number = line_no,
+            .gen_commit = result.gen_commit,
+            .result_commit = result.result_commit,
+        };
+    }
+    return latest orelse fatal("{s}: has no releases", .{file_path});
 }
 
 fn shaDotDotSha(a: [40]u8, b: [40]u8) [82]u8 {
@@ -361,19 +396,15 @@ fn gitRevListCount(repo: []const u8, a: [40]u8, b: [40]u8) !u32 {
     );
 }
 
-fn gitLogGenRepo(
-    gen_repo: []const u8,
-    release_sha: [40]u8,
-    main_sha: [40]u8,
-) ![]const u8 {
-    const shas_arg = shaDotDotSha(release_sha, main_sha);
+fn gitLog(repo: []const u8, commit: [40]u8) ![]const u8 {
     const argv = [_][]const u8{
         "git",
         "-C",
-        gen_repo,
+        repo,
         "log",
-        "--format=commit %H%n%B",
-        &shas_arg,
+        "-1",
+        "--pretty=%B",
+        &commit,
     };
     std.log.info("{}", .{common.fmtArgv(&argv)});
     const result = try std.process.Child.run(.{
@@ -388,43 +419,16 @@ fn gitLogGenRepo(
     return result.stdout;
 }
 
-fn isReleased(releases_file_path: []const u8, sha: [40]u8) !bool {
-    const releases_text = try readReleases(releases_file_path);
-    defer allocator.free(releases_text);
-    const releases_text_trimmed = std.mem.trimRight(u8, releases_text, "\n");
-
-    var line_no: u32 = 1;
-    var lines_it = std.mem.splitScalar(u8, releases_text_trimmed, '\n');
-    while (lines_it.next()) |line| : (line_no += 1) {
-        const release = switch (parseLine(line)) {
-            .err => |msg| fatal(
-                "{s}: line {}: {s}",
-                .{ releases_file_path, line_no, msg },
-            ),
-            .ok => |release| release,
-        };
-        if (std.mem.eql(u8, &release.gen_commit, &sha))
-            return true;
-    }
-    return false;
-}
-
-fn readReleases(file_path: []const u8) ![]u8 {
-    var file = try std.fs.cwd().openFile(file_path, .{});
-    defer file.close();
-    return try file.reader().readAllAlloc(allocator, std.math.maxInt(usize));
-}
-
 const Release = struct {
     number: u32,
     gen_commit: [40]u8,
-    result_commit: []const u8,
+    result_commit: [40]u8,
 };
 const ParseResult = union(enum) {
     err: []const u8,
     ok: struct {
         gen_commit: [40]u8,
-        result_commit: []const u8,
+        result_commit: [40]u8,
     },
 };
 fn parseLine(line: []const u8) ParseResult {
@@ -445,7 +449,7 @@ fn parseLine(line: []const u8) ParseResult {
     return .{
         .ok = .{
             .gen_commit = gen_commit[0..40].*,
-            .result_commit = result_commit,
+            .result_commit = result_commit[0..40].*,
         },
     };
 }
