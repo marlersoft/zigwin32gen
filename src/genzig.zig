@@ -504,7 +504,7 @@ fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !vo
     defer buffered_writer.flush() catch @panic("flush failed");
     const writer = buffered_writer.writer();
     try writer.writeAll(&comptime removeCr(autogen_header ++
-        \\//! MOD1 This module contains aliases to ALL symbols inside the Win32 SDK.  It allows
+        \\//! MOD2 This module contains aliases to ALL symbols inside the Win32 SDK.  It allows
         \\//! an application to access any and all symbols through a single import.
         \\
         \\pub const zig = @import("zig.zig");
