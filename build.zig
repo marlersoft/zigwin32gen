@@ -4,6 +4,7 @@ const Build = std.Build;
 const Step = std.Build.Step;
 const CrossTarget = std.zig.CrossTarget;
 const patchstep = @import("patchstep.zig");
+const buildcommon = @import("buildcommon.zig");
 
 comptime {
     const required_zig = "0.13.0";
@@ -45,7 +46,6 @@ pub fn build(b: *Build) !void {
             "(generates pass1.json in .zig-cache)",
     );
     const gen_step = b.step("gen", "Generate the bindings (in .zig-cache)");
-    const examples_step = b.step("examples", "Build/run examples. Use -j1 to run one at a time");
     const optimize = b.standardOptimizeOption(.{});
 
     const win32json_dep = b.dependency("win32json", .{});
@@ -149,23 +149,8 @@ pub fn build(b: *Build) !void {
     const win32 = b.createModule(.{
         .root_source_file = gen_out_dir.path(b, "win32.zig"),
     });
-    const arches: []const ?[]const u8 = &[_]?[]const u8{
-        null,
-        "x86",
-        "x86_64",
-        "aarch64",
-    };
 
-    try addExample(b, arches, optimize, win32, "helloworld", .Console, examples_step);
-    try addExample(b, arches, optimize, win32, "wasapi", .Console, examples_step);
-    try addExample(b, arches, optimize, win32, "net", .Console, examples_step);
-    try addExample(b, arches, optimize, win32, "tests", .Console, examples_step);
-
-    try addExample(b, arches, optimize, win32, "helloworld-window", .Windows, examples_step);
-    try addExample(b, arches, optimize, win32, "d2dcircle", .Windows, examples_step);
-    try addExample(b, arches, optimize, win32, "opendialog", .Windows, examples_step);
-    try addExample(b, arches, optimize, win32, "unionpointers", .Windows, examples_step);
-    try addExample(b, arches, optimize, win32, "testwindow", .Windows, examples_step);
+    buildcommon.addExamples(b, optimize, win32);
 
     {
         const exe = b.addExecutable(.{
@@ -234,55 +219,6 @@ fn runStepMake(
         error.UnexpectedExitCode => std.process.exit(0xff),
         else => |e| return e,
     };
-}
-
-fn concat(b: *Build, slices: []const []const u8) []u8 {
-    return std.mem.concat(b.allocator, u8, slices) catch unreachable;
-}
-
-fn addExample(
-    b: *Build,
-    arches: []const ?[]const u8,
-    optimize: std.builtin.Mode,
-    win32: *std.Build.Module,
-    root: []const u8,
-    subsystem: std.Target.SubSystem,
-    examples_step: *Step,
-) !void {
-    const basename = concat(b, &.{ root, ".zig" });
-    for (arches) |cross_arch_opt| {
-        const name = if (cross_arch_opt) |arch| concat(b, &.{ root, "-", arch }) else root;
-
-        const arch_os_abi = if (cross_arch_opt) |arch| concat(b, &.{ arch, "-windows" }) else "native";
-        const target_query = std.Target.Query.parse(.{ .arch_os_abi = arch_os_abi }) catch unreachable;
-        const target = b.resolveTargetQuery(target_query);
-        const exe = b.addExecutable(.{
-            .name = name,
-            .root_source_file = b.path(b.pathJoin(&.{ "examples", basename })),
-            .target = target,
-            .optimize = optimize,
-            .single_threaded = true,
-            .win32_manifest = if (subsystem == .Windows) b.path("examples/win32.manifest") else null,
-        });
-        exe.subsystem = subsystem;
-        exe.root_module.addImport("win32", win32);
-        examples_step.dependOn(&exe.step);
-        exe.pie = true;
-
-        const desc_suffix: []const u8 = if (cross_arch_opt) |_| "" else " for the native target";
-        const build_desc = b.fmt("Build {s}{s}", .{ name, desc_suffix });
-        b.step(concat(b, &.{ name, "-build" }), build_desc).dependOn(&exe.step);
-
-        const run_cmd = b.addRunArtifact(exe);
-        const run_desc = b.fmt("Run {s}{s}", .{ name, desc_suffix });
-        b.step(name, run_desc).dependOn(&run_cmd.step);
-
-        if (builtin.os.tag == .windows) {
-            if (cross_arch_opt == null) {
-                examples_step.dependOn(&run_cmd.step);
-            }
-        }
-    }
 }
 
 fn addDefaultStepDeps(b: *std.Build, default_steps: []const u8) void {

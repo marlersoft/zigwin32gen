@@ -5,23 +5,7 @@ const win32 = @import("win32").everything;
 const L = win32.L;
 const HWND = win32.HWND;
 
-threadlocal var thread_is_panicing = false;
-pub fn panic(
-    msg: []const u8,
-    error_return_trace: ?*std.builtin.StackTrace,
-    ret_addr: ?usize,
-) noreturn {
-    if (!thread_is_panicing) {
-        thread_is_panicing = true;
-        const msg_z: [:0]const u8 = if (std.fmt.allocPrintZ(
-            std.heap.page_allocator,
-            "{s}",
-            .{msg},
-        )) |msg_z| msg_z else |_| "failed allocate error message";
-        _ = win32.MessageBoxA(null, msg_z, "Ddui Example: Panic", .{ .ICONASTERISK = 1 });
-    }
-    std.builtin.default_panic(msg, error_return_trace, ret_addr);
-}
+pub const panic = win32.messageBoxThenPanic(.{ .title = "Zigwin32 TestWindow Panic" });
 
 pub export fn wWinMain(
     hInstance: win32.HINSTANCE,
