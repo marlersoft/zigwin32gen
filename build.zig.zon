@@ -1,6 +1,7 @@
 .{
-    .name = "zigwin32gen",
+    .name = .zigwin32gen,
     .version = "0.0.0",
-    .minimum_zig_version = "0.13.0",
+    .fingerprint = 0xab047bbd1208bfd9,
+    .minimum_zig_version = "0.14.0",
     .paths = .{"."},
 }
