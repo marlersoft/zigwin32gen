@@ -55,7 +55,7 @@ pub fn build(b: *Build) !void {
             .name = "pass1",
             .root_source_file = b.path("src/pass1.zig"),
             .optimize = optimize,
-            .target = b.host,
+            .target = b.graph.host,
         });
 
         const run = b.addRunArtifact(pass1_exe);
@@ -71,7 +71,7 @@ pub fn build(b: *Build) !void {
         const exe = b.addExecutable(.{
             .name = "genzigexports",
             .root_source_file = b.path("src/genzigexports.zig"),
-            .target = b.host,
+            .target = b.graph.host,
         });
         exe.root_module.addImport("win32_stub", b.createModule(.{
             .root_source_file = b.path("src/static/win32.zig"),
@@ -86,7 +86,7 @@ pub fn build(b: *Build) !void {
             .name = "genzig",
             .root_source_file = b.path("src/genzig.zig"),
             .optimize = optimize,
-            .target = b.host,
+            .target = b.graph.host,
         });
         exe.root_module.addImport(
             "zigexports",
@@ -118,7 +118,7 @@ pub fn build(b: *Build) !void {
         const diff_exe = b.addExecutable(.{
             .name = "diff",
             .root_source_file = b.path("src/diff.zig"),
-            .target = b.host,
+            .target = b.graph.host,
             .optimize = .Debug,
         });
         const diff = b.addRunArtifact(diff_exe);
@@ -139,7 +139,7 @@ pub fn build(b: *Build) !void {
     {
         const unittest = b.addTest(.{
             .root_source_file = gen_out_dir.path(b, "win32.zig"),
-            .target = b.host,
+            .target = b.graph.host,
             .optimize = optimize,
         });
         unittest.pie = true;
@@ -156,7 +156,7 @@ pub fn build(b: *Build) !void {
         const exe = b.addExecutable(.{
             .name = "comoverload",
             .root_source_file = b.path("test/comoverload.zig"),
-            .target = b.host,
+            .target = b.graph.host,
         });
         exe.root_module.addImport("win32", win32);
         const run = b.addRunArtifact(exe);
@@ -222,7 +222,7 @@ fn runStepMake(
 }
 
 fn addDefaultStepDeps(b: *std.Build, default_steps: []const u8) void {
-    var it = std.mem.tokenize(u8, default_steps, " ");
+    var it = std.mem.tokenizeScalar(u8, default_steps, ' ');
     while (it.next()) |step_name| {
         const step = b.top_level_steps.get(step_name) orelse std.debug.panic(
             "step '{s}' not added yet",
