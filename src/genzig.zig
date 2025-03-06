@@ -2192,16 +2192,21 @@ fn generateEnum(
         try writer.line("    _");
     } else if (!type_enum.Flags) {
         for (values) |val| {
-            if (val.conflict_index) |conflict_index| {
-                try writer.linef("    // {p} = {}, this enum value conflicts with {p}", .{ std.zig.fmtId(val.short_name), fmtJson(val.value), std.zig.fmtId(values[conflict_index].short_name) });
-            } else {
+            if (val.conflict_index == null) {
                 try writer.linef("    {p} = {},", .{ std.zig.fmtId(val.short_name), fmtJson(val.value) });
+            }
+        }
+        if (non_exhaustive_enums.get(pool_name.slice)) |_| {
+            try writer.linef("_,", .{});
+        }
+        for (values) |val| {
+            if (val.conflict_index) |conflict_index| {
+                try writer.linef("    pub const {p} = .{p};", .{ std.zig.fmtId(val.short_name), std.zig.fmtId(values[conflict_index].short_name) });
             }
         }
         if (non_exhaustive_enums.get(pool_name.slice)) |_| {
             writer.depth += 1;
             defer writer.depth -= 1;
-            try writer.linef("_,", .{});
             try writer.linef("pub fn tagName(self: {s}) ?[:0]const u8 {{", .{pool_name});
             try writer.line("    return switch (self) {");
             for (values) |val| {
