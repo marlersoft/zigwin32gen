@@ -1,5 +1,5 @@
 /// This file is just a stub so that we can reflect on win32/zig.zig in order to
-/// get it's list of exports before generating everything.zig.  The definitions don't
+/// get its list of exports before generating everything.zig.  The definitions don't
 /// need to be correct, they just need to exist and "make sense" enough to
 /// get win32/zig.zig to compile.
 pub const zig = @import("win32/zig.zig");
@@ -24,6 +24,8 @@ pub const graphics = struct {
 };
 pub const ui = struct {
     pub const windows_and_messaging = struct {
-        pub const MESSAGEBOX_STYLE = struct {};
+        pub const MESSAGEBOX_STYLE = struct {
+            ICONASTERISK: u1 = 0,
+        };
     };
 };

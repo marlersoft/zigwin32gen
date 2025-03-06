@@ -45,7 +45,7 @@ pub fn read(
     while (line_it.next()) |line| {
         lineno += 1;
 
-        var field_it = std.mem.tokenize(u8, line, " ");
+        var field_it = std.mem.tokenizeScalar(u8, line, ' ');
         const first_field = field_it.next() orelse continue;
         if (first_field.len == 0 or first_field[0] == '#') continue;
         const api_name = string_pool.add(first_field) catch |e| oom(e);

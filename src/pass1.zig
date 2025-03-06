@@ -7,7 +7,7 @@ const fatal = common.fatal;
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const allocator = arena.allocator();
 
-const BufferedWriter = std.io.BufferedWriter(std.mem.page_size, std.fs.File.Writer);
+const BufferedWriter = std.io.BufferedWriter(4096, std.fs.File.Writer);
 const OutWriter = BufferedWriter.Writer;
 
 pub fn main() !u8 {

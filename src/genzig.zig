@@ -20,7 +20,7 @@ const jsonEnforce = common.jsonEnforce;
 const jsonEnforceMsg = common.jsonEnforceMsg;
 const fmtJson = common.fmtJson;
 
-const BufferedWriter = std.io.BufferedWriter(std.mem.page_size, std.fs.File.Writer);
+const BufferedWriter = std.io.BufferedWriter(4096, std.fs.File.Writer);
 
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const allocator = arena.allocator();
@@ -424,7 +424,7 @@ fn readComOverloads(
     var line_number: u32 = 1;
     while (lines.next()) |line| : (line_number += 1) {
         if (line.len == 0) continue;
-        var field_it = std.mem.tokenize(u8, line, " ");
+        var field_it = std.mem.tokenizeScalar(u8, line, ' ');
         const api = try global_symbol_pool.add(field_it.next() orelse continue);
         if (api_name_set.get(api)) |_| {} else fatal("{s} line {}: unknown api '{}'", .{ filename, line_number, api });
         const com_type = field_it.next() orelse fatal("{s} line {}: missing type field", .{ filename, line_number });
@@ -689,7 +689,7 @@ fn readAndGenerateApiFile(
     var depth: u2 = 0;
 
     {
-        var it = std.mem.tokenize(u8, zig_name, ".");
+        var it = std.mem.tokenizeScalar(u8, zig_name, '.');
         while (it.next()) |name_part| {
             if (module != root_module) {
                 depth += 1;
