@@ -3,7 +3,6 @@ const std = @import("std");
 const Build = std.Build;
 const Step = std.Build.Step;
 const CrossTarget = std.zig.CrossTarget;
-const patchstep = @import("patchstep.zig");
 const buildcommon = @import("buildcommon.zig");
 
 comptime {
@@ -15,8 +14,6 @@ comptime {
 }
 
 pub fn build(b: *Build) !void {
-    patchstep.init(b.allocator);
-
     const default_steps = "install diff test";
     b.default_step = b.step(
         "default",
@@ -59,7 +56,6 @@ pub fn build(b: *Build) !void {
         });
 
         const run = b.addRunArtifact(pass1_exe);
-        patchstep.patch(&run.step, runStepMake);
         run.addDirectoryArg(win32json_dep.path(""));
         const out_file = run.addOutputFileArg("pass1.json");
 
@@ -93,7 +89,6 @@ pub fn build(b: *Build) !void {
             b.createModule(.{ .root_source_file = zigexports }),
         );
         const run = b.addRunArtifact(exe);
-        patchstep.patch(&run.step, runStepMake);
         run.addFileArg(b.path("extra.txt"));
         run.addDirectoryArg(win32json_dep.path(""));
         run.addFileArg(pass1_out_file);
@@ -208,18 +203,6 @@ const PrintLazyPath = struct {
         );
     }
 };
-
-fn runStepMake(
-    step: *Step,
-    prog_node: std.Progress.Node,
-    original_make_fn: patchstep.MakeFn,
-) anyerror!void {
-    original_make_fn(step, prog_node) catch |err| switch (err) {
-        // just exit if subprocess failed with error exit code
-        error.UnexpectedExitCode => std.process.exit(0xff),
-        else => |e| return e,
-    };
-}
 
 fn addDefaultStepDeps(b: *std.Build, default_steps: []const u8) void {
     var it = std.mem.tokenizeScalar(u8, default_steps, ' ');
