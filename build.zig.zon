@@ -1,6 +1,7 @@
 .{
     .name = "zigwin32gen",
     .version = "0.0.0",
+    .minimum_zig_version = "0.13.0",
     .dependencies = .{
         .win32json = .{
             .url = "git+https://github.com/marlersoft/win32json#d1f6a1fba4a7714f65b9c8a2696e7530561366ef",
