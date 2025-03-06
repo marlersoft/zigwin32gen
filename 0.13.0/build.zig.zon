@@ -1,0 +1,14 @@
+.{
+    .name = "zigwin32",
+    .version = "0.0.0",
+    .minimum_zig_version = "0.13.0",
+    .dependencies = .{
+        .win32 = .{
+            .path = "../zig-out",
+        },
+        .examples = .{
+            .path = "../examples",
+        },
+    },
+    .paths = .{"."},
+}

@@ -161,7 +161,7 @@ fn parseModifier(filename: []const u8, lineno: u32, line: []const u8, start: usi
                     break;
                 next_index += 1;
                 flag_count += 1;
-                if (flag_count > @typeInfo(NullModifier).Int.bits) parseError(filename, lineno, "NullModifier type doesn't have enough bits", .{});
+                if (flag_count > @typeInfo(NullModifier).int.bits) parseError(filename, lineno, "NullModifier type doesn't have enough bits", .{});
                 flags = flags << 1;
                 if (on) flags |= 1;
             }

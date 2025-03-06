@@ -32,9 +32,9 @@ fn generate(writer: std.io.AnyWriter) !void {
     inline for (comptime std.meta.declarations(zig)) |decl| {
         const field_type_info = @typeInfo(@TypeOf(@field(zig, decl.name)));
         const kind = switch (comptime field_type_info) {
-            .Bool, .Int, .Enum => "constant",
-            .Fn => "function",
-            .Type => "type",
+            .bool, .int, .@"enum" => "constant",
+            .@"fn" => "function",
+            .type => "type",
             else => @compileError(
                 "zig.zig decl '" ++ decl.name ++ "' has unsupported type info: " ++ @tagName(field_type_info),
             ),

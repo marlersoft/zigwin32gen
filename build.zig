@@ -3,10 +3,10 @@ const std = @import("std");
 const Build = std.Build;
 const Step = std.Build.Step;
 const CrossTarget = std.zig.CrossTarget;
-const buildcommon = @import("buildcommon.zig");
+const buildcommon = @import("0.13.0/common.zig");
 
 comptime {
-    const required_zig = "0.13.0";
+    const required_zig = "0.14.0";
     const v = std.SemanticVersion.parse(required_zig) catch unreachable;
     if (builtin.zig_version.order(v) != .eq) @compileError(
         "zig version " ++ required_zig ++ " is required to ensure zigwin32 output is always the same",
@@ -145,7 +145,7 @@ pub fn build(b: *Build) !void {
         .root_source_file = gen_out_dir.path(b, "win32.zig"),
     });
 
-    buildcommon.addExamples(b, optimize, win32);
+    buildcommon.addExamples(b, optimize, win32, b.path("examples"));
 
     {
         const exe = b.addExecutable(.{
@@ -194,8 +194,8 @@ const PrintLazyPath = struct {
         lazy_path.addStepDependencies(&print.step);
         return print;
     }
-    fn make(step: *Step, prog_node: std.Progress.Node) !void {
-        _ = prog_node;
+    fn make(step: *Step, opt: std.Build.Step.MakeOptions) !void {
+        _ = opt;
         const print: *PrintLazyPath = @fieldParentPtr("step", step);
         try std.io.getStdOut().writer().print(
             "{s}\n",

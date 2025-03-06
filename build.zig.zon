@@ -1,11 +1,12 @@
 .{
-    .name = "zigwin32gen",
+    .name = .zigwin32gen,
     .version = "0.0.0",
-    .minimum_zig_version = "0.13.0",
+    .fingerprint = 0xab047bbd59488dae,
+    .minimum_zig_version = "0.14.0",
     .dependencies = .{
         .win32json = .{
             .url = "git+https://github.com/marlersoft/win32json#d1f6a1fba4a7714f65b9c8a2696e7530561366ef",
-            .hash = "1220e00d666481e37a1bf40121516df600f7e8ee58a99bfa8adcd27f18487d9d46c8",
+            .hash = "N-V-__8AALasBATgDWZkgeN6G_QBIVFt9gD36O5YqZv6itzS",
         },
     },
     .paths = .{"build.zig.zon"},

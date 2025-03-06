@@ -1534,7 +1534,7 @@ const CodeWriter = struct {
             }
             self.midline = true;
         }
-        if (@typeInfo(@TypeOf(args)).Struct.fields.len == 0) {
+        if (@typeInfo(@TypeOf(args)).@"struct".fields.len == 0) {
             try self.writer.writeAll(fmt ++ (if (opt.nl) "\n" else ""));
         } else {
             try self.writer.print(fmt ++ (if (opt.nl) "\n" else ""), args);

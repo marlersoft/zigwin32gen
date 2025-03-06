@@ -369,7 +369,7 @@ pub const Architectures = struct {
         _ = allocator;
         _ = options;
         if (.array_begin != try source.next()) return error.UnexpectedToken;
-        const filter_struct_info = @typeInfo(Filter).Struct;
+        const filter_struct_info = @typeInfo(Filter).@"struct";
         var result: Architectures = .{};
         while (true) {
             switch (try source.next()) {
@@ -482,54 +482,53 @@ const type_ref_kinds = std.StaticStringMap(TypeRefKind).initComptime(.{
     .{ "LPArray", .LPArray },
     .{ "MissingClrType", .MissingClrType },
 });
+
+const Native = struct {
+    Name: TypeRefNative,
+};
+const ApiRef = struct {
+    Name: []const u8,
+    TargetKind: TargetKind,
+    Api: []const u8,
+    Parents: []const []const u8,
+};
+const PointerTo = struct {
+    Child: *const TypeRef,
+};
+const PointerToAttrs = struct {
+    pub fn jsonParse(
+        allocator: std.mem.Allocator,
+        source: anytype,
+        options: std.json.ParseOptions,
+    ) std.json.ParseError(@TypeOf(source.*))!PointerToAttrs {
+        return parseAttrsArray(PointerToAttrs, allocator, source, options);
+    }
+};
+const Array = struct {
+    Shape: ?ArrayShape,
+    Child: *const TypeRef,
+};
+const ArrayShape = struct {
+    Size: u32,
+};
+const LPArray = struct {
+    NullNullTerm: bool,
+    CountConst: i32,
+    CountParamIndex: i32,
+    Child: *const TypeRef,
+};
+const MissingClrType = struct {
+    Name: []const u8,
+    Namespace: []const u8,
+};
+
 pub const TypeRef = union(TypeRefKind) {
-    Native: TypeRef.Native,
+    Native: Native,
     ApiRef: ApiRef,
     PointerTo: PointerTo,
     Array: Array,
     LPArray: LPArray,
     MissingClrType: MissingClrType,
-    pub const Native = struct {
-        Name: TypeRefNative,
-    };
-    pub const ApiRef = struct {
-        Name: []const u8,
-        TargetKind: TargetKind,
-        Api: []const u8,
-        Parents: []const []const u8,
-    };
-    pub const PointerTo = struct {
-        Child: *const TypeRef,
-    };
-    pub const PointerToAttrs = struct {
-        pub fn jsonParse(
-            allocator: std.mem.Allocator,
-            source: anytype,
-            options: std.json.ParseOptions,
-        ) std.json.ParseError(@TypeOf(source.*))!PointerToAttrs {
-            return parseAttrsArray(PointerToAttrs, allocator, source, options);
-        }
-    };
-
-    pub const Array = struct {
-        Shape: ?ArrayShape,
-        Child: *const TypeRef,
-    };
-    pub const ArrayShape = struct {
-        Size: u32,
-    };
-
-    pub const LPArray = struct {
-        NullNullTerm: bool,
-        CountConst: i32,
-        CountParamIndex: i32,
-        Child: *const TypeRef,
-    };
-
-    pub const MissingClrType = struct {
-        Name: []const u8,
-        Namespace: []const u8,
-    };
 
     pub fn jsonParse(
         allocator: std.mem.Allocator,
@@ -539,7 +538,7 @@ pub const TypeRef = union(TypeRefKind) {
         if (.object_begin != try source.next()) return error.UnexpectedToken;
         switch (try jsonParseUnionKind(TypeRefKind, "TypeRef", source, type_ref_kinds)) {
             .Native => return .{
-                .Native = try parseUnionObject(TypeRef.Native, allocator, source, options),
+                .Native = try parseUnionObject(Native, allocator, source, options),
             },
             .ApiRef => return .{
                 .ApiRef = try parseUnionObject(ApiRef, allocator, source, options),
@@ -567,7 +566,7 @@ fn parseAttrsArray(
     options: std.json.ParseOptions,
 ) std.json.ParseError(@TypeOf(source.*))!Attrs {
     const structInfo = switch (@typeInfo(Attrs)) {
-        .Struct => |i| i,
+        .@"struct" => |i| i,
         else => @compileError("Unable to parse attribute array into non-struct type '" ++ @typeName(Attrs) ++ "'"),
     };
 
@@ -676,7 +675,7 @@ pub fn parseUnionObject(
     options: std.json.ParseOptions,
 ) !T {
     const structInfo = switch (@typeInfo(T)) {
-        .Struct => |i| i,
+        .@"struct" => |i| i,
         else => @compileError("Unable to parse into non-struct type '" ++ @typeName(T) ++ "'"),
     };
 
