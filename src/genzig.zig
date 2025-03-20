@@ -2944,28 +2944,18 @@ fn generateParams(
 }
 
 fn generateUnicodeAliases(sdk_file: *SdkFile, writer: *CodeWriter, unicode_aliases: []const []const u8) !void {
-    try writer.line("const thismodule = @This();");
-    try writer.linef("pub usingnamespace switch (@import(\"{s}zig.zig\").unicode_mode) {{", .{sdk_file.getWin32DirImportPrefix()});
-    try writer.line("    .ansi => struct {");
     for (unicode_aliases) |alias| {
-        try writer.linef("        pub const {s} = thismodule.{0s}A;", .{alias});
+        try writer.linef(
+            "pub const {s} = switch (@import(\"{s}zig.zig\").unicode_mode) {{",
+            .{ alias, sdk_file.getWin32DirImportPrefix() },
+        );
+        try writer.linef("    .ansi => @This().{s}A,", .{alias});
+        try writer.linef("    .wide => @This().{s}W,", .{alias});
+        try writer.line("    .unspecified => if (@import(\"builtin\").is_test) void else @compileError(");
+        try writer.linef("        \"'{0s}' requires that UNICODE be set to true or false in the root module\",", .{alias});
+        try writer.line("    ),");
+        try writer.line("};");
     }
-    try writer.line("    },");
-    try writer.line("    .wide => struct {");
-    for (unicode_aliases) |alias| {
-        try writer.linef("        pub const {s} = thismodule.{0s}W;", .{alias});
-    }
-    try writer.line("    },");
-    try writer.line("    .unspecified => if (@import(\"builtin\").is_test) struct {");
-    for (unicode_aliases) |alias| {
-        try writer.linef("        pub const {s} = *opaque{{}};", .{alias});
-    }
-    try writer.line("    } else struct {");
-    for (unicode_aliases) |alias| {
-        try writer.linef("        pub const {s} = @compileError(\"'{0s}' requires that UNICODE be set to true or false in the root module\");", .{alias});
-    }
-    try writer.line("    },");
-    try writer.line("};");
 }
 
 pub fn formatArchesCase(filter: metadata.Architectures.Filter, buf: []u8) !usize {
