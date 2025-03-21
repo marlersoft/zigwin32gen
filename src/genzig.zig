@@ -827,8 +827,72 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, api: metadata.Api) !voi
     try writer.line("//--------------------------------------------------------------------------------");
     try writer.linef("// Section: Functions ({})", .{api.Functions.len});
     try writer.line("//--------------------------------------------------------------------------------");
+
+    const FuncNodeIndex = enum(usize) { _ };
+    const ArchFunction = struct {
+        root_node_index: FuncNodeIndex,
+        generated: bool = false,
+    };
+    const FuncNode = struct {
+        func: *const metadata.Function,
+        next: ?FuncNodeIndex = null,
+    };
+    var arch_func_nodes: std.ArrayListUnmanaged(FuncNode) = .{};
+    var arch_func_map: StringPool.HashMapUnmanaged(ArchFunction) = .{};
+    for (api.Functions) |*function| {
+        if (function.Architectures.filter != null) {
+            const name_pool = try global_symbol_pool.add(function.Name);
+            const entry = arch_func_map.getOrPut(allocator, name_pool) catch |e| oom(e);
+            const new_func_node_index: FuncNodeIndex = @enumFromInt(arch_func_nodes.items.len);
+            arch_func_nodes.append(allocator, .{
+                .func = function,
+                .next = if (entry.found_existing) entry.value_ptr.root_node_index else null,
+            }) catch |e| oom(e);
+            entry.value_ptr.* = .{
+                .root_node_index = new_func_node_index,
+            };
+        }
+    }
+
     for (api.Functions) |function| {
-        try generateFunction(sdk_file, writer, .{ .dll = function });
+        if (function.Architectures.filter == null) {
+            try generateFunction(sdk_file, writer, .{ .dll = function });
+        } else {
+            const name_pool = try global_symbol_pool.add(function.Name);
+            const entry = arch_func_map.getEntry(name_pool) orelse unreachable;
+            if (entry.value_ptr.generated)
+                continue;
+
+            try writer.linef("pub const {s} = switch (@import(\"{s}zig.zig\").arch) {{", .{ name_pool, import_prefix_table[sdk_file.depth] });
+
+            var arches_handled: metadata.Architectures = .{ .filter = .{} };
+
+            var node_index = entry.value_ptr.root_node_index;
+            while (true) {
+                const node = arch_func_nodes.items[@intFromEnum(node_index)];
+
+                arches_handled = arches_handled.unionWith(node.func.Architectures);
+                var buf: [40]u8 = undefined;
+                const case_prefix = buf[0..try formatArchesCase(node.func.Architectures.filter.?, &buf)];
+                try writer.linef("{s}(struct {{", .{case_prefix});
+                try writer.line("");
+                try generateFunction(sdk_file, writer, .{ .dll = node.func.* });
+                try writer.line("");
+                try writer.linef("}}).{},", .{name_pool});
+
+                node_index = node.next orelse break;
+            }
+            if (arches_handled.filter != null) {
+                try writer.linef(
+                    "    else => |a| if (@import(\"builtin\").is_test) void else @compileError(\"function '{}' is not supported on architecture \" ++ @tagName(a)),",
+                    .{name_pool},
+                );
+            }
+
+            try writer.line("};");
+
+            entry.value_ptr.generated = true;
+        }
         try writer.line("");
     }
     std.debug.assert(api.Functions.len >= sdk_file.func_exports.count());
@@ -2702,24 +2766,6 @@ const ConflictSuffix = struct {
     }
 };
 
-fn generateArchPrefix(
-    writer: *CodeWriter,
-    module_depth: u2,
-    arches_filter: metadata.Architectures.Filter,
-    prefix: []const u8,
-) !void {
-    try writer.linef("{s}usingnamespace switch (@import(\"{s}zig.zig\").arch) {{", .{ prefix, import_prefix_table[module_depth] });
-
-    var buf: [40]u8 = undefined;
-    const case_prefix = buf[0..try formatArchesCase(arches_filter, &buf)];
-    try writer.linef("{s}struct {{", .{case_prefix});
-    try writer.line("");
-}
-fn generateArchSuffix(writer: *CodeWriter) void {
-    writer.line("") catch @panic("here");
-    writer.line("}, else => struct { } };") catch @panic("here");
-}
-
 const ParamModifierSet = struct {
     const max_params = 30;
     ret: extra.TypeModifier = .{},
@@ -2857,17 +2903,6 @@ fn generateFunction(
     }
 
     const modifier_set = getFuncModifiers(sdk_file, func.ConfigName(), params);
-
-    if (arches.filter) |filter| switch (func) {
-        .dll => try generateArchPrefix(writer, sdk_file.depth, filter, "pub "),
-        .com => @panic("COM methods can be architecture specific?"),
-        .ptr => {}, // arch prefix will have already been generated
-    };
-    defer if (arches.filter) |_| switch (func) {
-        .dll => generateArchSuffix(writer),
-        .com => @panic("COM methods can be architecture specific?"),
-        .ptr => {}, // arch suffix will have already been generated
-    };
 
     if (attrs.SpecialName) {
         try writer.line("// TODO: this function has a \"SpecialName\", should Zig do anything with this?");
