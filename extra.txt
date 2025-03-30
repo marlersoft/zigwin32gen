@@ -92,6 +92,8 @@ UI.WindowsAndMessaging Constant RT_MESSAGETABLE(UnionPointer)
 
 UI.WindowsAndMessaging Function CreateWindowExA lpClassName(UnionPointer)
 UI.WindowsAndMessaging Function CreateWindowExW lpClassName(UnionPointer)
+UI.WindowsAndMessaging Function UnregisterClassA lpClassName(UnionPointer)
+UI.WindowsAndMessaging Function UnregisterClassW lpClassName(UnionPointer)
 UI.WindowsAndMessaging Function LoadCursorW lpCursorName(UnionPointer)
 UI.WindowsAndMessaging Function LoadIconW lpIconName(UnionPointer)
 UI.WindowsAndMessaging Function LoadImageA name(UnionPointer)
