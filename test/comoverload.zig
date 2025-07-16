@@ -26,7 +26,7 @@ pub fn main() void {
     const element = &element_instance;
     var value_buf: [10:0]u16 = undefined;
     std.debug.assert(0 == element.GetAttributeValueString(
-        win32.foundation.L("Hello"),
+        win32.zig.L("Hello"),
         .SVG,
         &value_buf,
         value_buf.len,
