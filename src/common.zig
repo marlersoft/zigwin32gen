@@ -85,10 +85,22 @@ const JsonFormatter = struct {
             // (potential fix: https://github.com/ziglang/zig/pull/16707)
             .integer => |i| try writer.printInt(i, 10, .lower, .{}),
             .number_string => |s| try writer.writeAll(s),
+            else => {
+                // Adapting the new writer API to the old one: https://github.com/ziglang/zig/issues/24468
+                const Adapter = struct {
+                    fn writeFn(context: *std.io.Writer, bytes: []const u8) std.io.Writer.Error!usize {
+                        return try context.write(bytes);
+                    }
+                };
 
-            // TODO: Compile error until https://github.com/ziglang/zig/issues/24468 is resolved
-            //else => try std.json.stringify(self.value, .{}, writer),
-            else => try writer.writeAll("TODO"),
+                const adapter: std.io.GenericWriter(
+                    *std.io.Writer,
+                    std.io.Writer.Error,
+                    Adapter.writeFn,
+                ) = .{ .context = writer };
+
+                try std.json.stringify(self.value, .{}, adapter);
+            },
         }
     }
 };
