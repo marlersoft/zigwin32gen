@@ -18,7 +18,7 @@ pub export fn wWinMain(
     _: ?win32.HINSTANCE,
     pCmdLine: [*:0]u16,
     nCmdShow: u32,
-) callconv(std.os.windows.WINAPI) c_int {
+) callconv(.winapi) c_int {
     _ = pCmdLine;
     _ = nCmdShow;
 
@@ -100,7 +100,7 @@ fn WindowProc(
     uMsg: u32,
     wParam: win32.WPARAM,
     lParam: win32.LPARAM,
-) callconv(std.os.windows.WINAPI) win32.LRESULT {
+) callconv(.winapi) win32.LRESULT {
     switch (uMsg) {
         win32.WM_DESTROY => {
             win32.PostQuitMessage(0);

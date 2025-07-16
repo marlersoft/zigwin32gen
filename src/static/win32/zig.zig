@@ -238,12 +238,7 @@ pub fn messageBoxThenPanic(
             ) noreturn {
                 if (!thread_is_panicing) {
                     thread_is_panicing = true;
-                    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-                    const msg_z: [:0]const u8 = if (std.fmt.allocPrintZ(
-                        arena.allocator(),
-                        "{s}",
-                        .{msg},
-                    )) |msg_z| msg_z else |_| "failed allocate error message";
+                    const msg_z = std.heap.page_allocator.dupeZ(u8, msg) catch "failed to allocate error message";
                     _ = win32.MessageBoxA(null, msg_z, opt.title, opt.style);
                 }
                 std.builtin.default_panic(msg, error_return_trace, ret_addr);
@@ -258,12 +253,7 @@ pub fn messageBoxThenPanic(
         ) noreturn {
             if (!thread_is_panicing) {
                 thread_is_panicing = true;
-                var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-                const msg_z: [:0]const u8 = if (std.fmt.allocPrintZ(
-                    arena.allocator(),
-                    "{s}",
-                    .{msg},
-                )) |msg_z| msg_z else |_| "failed allocate error message";
+                const msg_z = std.heap.page_allocator.dupeZ(u8, msg) catch "failed to allocate error message";
                 _ = win32.MessageBoxA(null, msg_z, opt.title, opt.style);
             }
             std.debug.defaultPanic(msg, ret_addr);
