@@ -2681,7 +2681,7 @@ fn generateComMethods(
             TypeRefFormatter.Options.fromParamAttrs(method.ReturnAttrs, .var_decl, modifier_set.ret),
             null,
         );
-        try writer.write(") callconv(.Inline) ", .{ .start = .mid, .nl = false });
+        try writer.write(") callconv(.@\"inline\") ", .{ .start = .mid, .nl = false });
         try generateTypeRef(sdk_file, writer, return_type_formatter);
         try writer.write(" {", .{ .start = .mid });
         try writer.write("        return ", .{ .nl = false });

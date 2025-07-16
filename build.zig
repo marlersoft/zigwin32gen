@@ -5,14 +5,6 @@ const Step = std.Build.Step;
 const CrossTarget = std.zig.CrossTarget;
 const buildcommon = @import("0.14.1/common.zig");
 
-comptime {
-    const required_zig = "0.14.1";
-    const v = std.SemanticVersion.parse(required_zig) catch unreachable;
-    if (builtin.zig_version.order(v) == .lt) @compileError(
-        "zig version of at least " ++ required_zig ++ " is required to ensure zigwin32 output is always the same",
-    );
-}
-
 pub fn build(b: *Build) !void {
     const default_steps = "install diff test";
     b.default_step = b.step(
