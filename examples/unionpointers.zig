@@ -45,7 +45,7 @@ pub export fn wWinMain(
                 win32.GetLastError(),
             );
         } else {
-            std.log.info("atom={} CreateWindow failed, error={} (this is fine)", .{ atom, win32.GetLastError() });
+            std.log.info("atom={} CreateWindow failed, error={f} (this is fine)", .{ atom, win32.GetLastError() });
         }
     }
 

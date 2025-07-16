@@ -2318,7 +2318,6 @@ fn generateEnum(
             try writer.line("    writer: *@import(\"std\").io.Writer,");
             try writer.line(") @import(\"std\").io.Writer.Error!void {");
             if (is_win32_error) {
-                // TODO: What calls this with the `s` format string vs `` (need to call formatWithCode)?
                 try writer.line("    try @import(\"zig.zig\").fmtError(@intFromEnum(self)).format(writer);");
             } else {
                 try writer.line("    try writer.print(\"{s}({})\", .{self.value.tagName() orelse \"?\", @intFromEnum(self.value)});");

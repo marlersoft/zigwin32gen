@@ -172,23 +172,22 @@ pub const TRUE: win32.BOOL = 1;
 /// of 300 bytes. If the message exceeds 300 bytes (Messages can be arbitrarily
 /// long) then "..." is appended to the message.  The message may contain newlines
 /// and carriage returns but any trailing ones are trimmed.
-///
-/// Provide the 's' fmt specifier to omit the error code.
 pub fn fmtError(error_code: u32) FormatError(300) {
     return .{ .error_code = error_code };
 }
+
+/// The same as `fmtError` but only prints the message string.
+pub fn fmtErrorMessage(error_code: u32) FormatError(300) {
+    return .{ .error_code = error_code, .only_message = true };
+}
+
 pub fn FormatError(comptime max_len: usize) type {
     return struct {
         error_code: u32,
-
-        // TODO: Need to call this via std.fmt.alt(FormatError, .formatWithCode) where needed
-        pub fn formatWithCode(self: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
-            try writer.print("{} (", .{self.error_code});
-            try self.format(writer);
-            try writer.writeAll(")");
-        }
+        only_message: bool = false,
 
         pub fn format(self: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
+            if (!self.only_message) try writer.print("{} (", .{self.error_code});
             var buf: [max_len]u8 = undefined;
             const len = win32.FormatMessageA(
                 .{ .FROM_SYSTEM = 1, .IGNORE_INSERTS = 1 },
@@ -207,6 +206,7 @@ pub fn FormatError(comptime max_len: usize) type {
             if (len + 1 >= buf.len) {
                 try writer.writeAll("...");
             }
+            if (!self.only_message) try writer.writeAll(")");
         }
     };
 }
@@ -264,7 +264,7 @@ pub fn messageBoxThenPanic(
 /// Calls std.debug.panic with a message that indicates what failed and the
 /// associated win32 error code.
 pub fn panicWin32(what: []const u8, err: win32.WIN32_ERROR) noreturn {
-    std.debug.panic("{s} failed, error={}", .{ what, err });
+    std.debug.panic("{s} failed, error={f}", .{ what, fmtError(@intFromEnum(err)) });
 }
 
 /// Calls std.debug.panic with a message that indicates what failed and the

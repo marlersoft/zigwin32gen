@@ -34,7 +34,7 @@ pub export fn wWinMain(
     };
 
     if (0 == win32.RegisterClassW(&wc))
-        std.debug.panic("RegisterClass failed, error={}", .{win32.GetLastError()});
+        std.debug.panic("RegisterClass failed, error={f}", .{win32.GetLastError()});
 
     const hwnd = win32.CreateWindowExW(
         .{},
@@ -49,7 +49,7 @@ pub export fn wWinMain(
         null, // menu
         hInstance,
         null, // Additional application data
-    ) orelse std.debug.panic("CreateWindow failed, error={}", .{win32.GetLastError()});
+    ) orelse std.debug.panic("CreateWindow failed, error={f}", .{win32.GetLastError()});
 
     const dpi = win32.dpiFromHwnd(hwnd);
 
@@ -68,7 +68,7 @@ pub export fn wWinMain(
         win32.scaleDpi(i32, 600, dpi),
         win32.scaleDpi(i32, 400, dpi),
         .{ .NOMOVE = 1 },
-    )) std.debug.panic("SetWindowPos failed, error={}", .{win32.GetLastError()});
+    )) std.debug.panic("SetWindowPos failed, error={f}", .{win32.GetLastError()});
 
     _ = win32.ShowWindow(hwnd, .{ .SHOWNORMAL = 1 });
 

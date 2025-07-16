@@ -45,7 +45,7 @@ pub export fn wWinMain(
     };
 
     if (0 == win32.RegisterClass(&wc))
-        fatal("RegisterClass failed, error={}", .{win32.GetLastError()});
+        fatal("RegisterClass failed, error={f}", .{win32.GetLastError()});
 
     const hwnd = win32.CreateWindowEx(.{}, CLASS_NAME, L("Hello Windows"), win32.WS_OVERLAPPEDWINDOW, win32.CW_USEDEFAULT, win32.CW_USEDEFAULT, // Position
         400, 200, // Size
@@ -53,7 +53,7 @@ pub export fn wWinMain(
         null, // Menu
         hInstance, // Instance handle
         null // Additional application data
-    ) orelse fatal("CreateWindow failed, error={}", .{win32.GetLastError()});
+    ) orelse fatal("CreateWindow failed, error={f}", .{win32.GetLastError()});
 
     _ = win32.ShowWindow(hwnd, .{ .SHOWNORMAL = 1 });
 
