@@ -4,7 +4,7 @@ const win32 = @import("win32").everything;
 const L = win32.L;
 const HWND = win32.HWND;
 
-pub const panic = win32.messageBoxThenPanic(.{ .title = "Zigwin32 TestWindow Panic" });
+pub const panic = win32.messageBoxThenPanic(.{ .title = "Zigwin32 TestWindow Panic 22", .trace = true });
 
 pub export fn wWinMain(
     hInstance: win32.HINSTANCE,

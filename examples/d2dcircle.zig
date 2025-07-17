@@ -1,31 +1,25 @@
 //! This example is ported from : https://github.com/microsoft/Windows-classic-samples/blob/master/Samples/Win7Samples/begin/LearnWin32/Direct2DCircle/cpp/main.cpp
 pub const UNICODE = true;
 
-const win32 = struct {
-    usingnamespace @import("win32").zig;
-    usingnamespace @import("win32").foundation;
-    usingnamespace @import("win32").system.system_services;
-    usingnamespace @import("win32").ui.windows_and_messaging;
-    usingnamespace @import("win32").graphics.gdi;
-    usingnamespace @import("win32").graphics.direct2d;
-    usingnamespace @import("win32").graphics.direct2d.common;
-    usingnamespace @import("win32").graphics.direct3d9;
-    usingnamespace @import("win32").graphics.dxgi.common;
-    usingnamespace @import("win32").system.com;
-};
-const L = win32.L;
-const FAILED = win32.FAILED;
-const SUCCEEDED = win32.SUCCEEDED;
-const HRESULT = win32.HRESULT;
-const HINSTANCE = win32.HINSTANCE;
-const HWND = win32.HWND;
-const MSG = win32.MSG;
-const WPARAM = win32.WPARAM;
-const LPARAM = win32.LPARAM;
-const LRESULT = win32.LRESULT;
-const RECT = win32.RECT;
-const D2D_SIZE_U = win32.D2D_SIZE_U;
-const D2D_SIZE_F = win32.D2D_SIZE_F;
+const win32 = @import("win32");
+const mnr = win32.ui.menus_and_resources;
+const wm = win32.ui.windows_and_messaging;
+const direct2d = win32.graphics.direct2d;
+const gdi = win32.graphics.gdi;
+
+const L = win32.zig.L;
+const FAILED = win32.zig.FAILED;
+const SUCCEEDED = win32.zig.SUCCEEDED;
+const HRESULT = win32.foundation.HRESULT;
+const HINSTANCE = win32.foundation.HINSTANCE;
+const HWND = win32.foundation.HWND;
+const MSG = win32.ui.windows_and_messaging.MSG;
+const WPARAM = win32.foundation.WPARAM;
+const LPARAM = win32.foundation.LPARAM;
+const LRESULT = win32.foundation.LRESULT;
+const RECT = win32.foundation.RECT;
+const D2D_SIZE_U = direct2d.common.D2D_SIZE_U;
+const D2D_SIZE_F = direct2d.common.D2D_SIZE_F;
 const SafeReslease = win32.SafeRelease;
 
 const basewin = @import("basewin.zig");
@@ -40,10 +34,10 @@ fn SafeRelease(ppT: anytype) void {
 
 const MainWindow = struct {
     base: BaseWindow(@This()) = .{},
-    pFactory: ?*win32.ID2D1Factory = null,
-    pRenderTarget: ?*win32.ID2D1HwndRenderTarget = null,
-    pBrush: ?*win32.ID2D1SolidColorBrush = null,
-    ellipse: win32.D2D1_ELLIPSE = undefined,
+    pFactory: ?*direct2d.ID2D1Factory = null,
+    pRenderTarget: ?*direct2d.ID2D1HwndRenderTarget = null,
+    pBrush: ?*direct2d.ID2D1SolidColorBrush = null,
+    ellipse: direct2d.D2D1_ELLIPSE = undefined,
 
     pub inline fn CalculateLayout(self: *MainWindow) void {
         MainWindowCalculateLayout(self);
@@ -89,14 +83,14 @@ fn MainWindowCalculateLayout(self: *MainWindow) void {
 }
 
 fn MainWindowCreateGraphicsResources(self: *MainWindow) HRESULT {
-    var hr = win32.S_OK;
+    var hr = win32.foundation.S_OK;
     if (self.pRenderTarget == null) {
         var rc: RECT = undefined;
-        _ = win32.GetClientRect(self.base.m_hwnd.?, &rc);
+        _ = wm.GetClientRect(self.base.m_hwnd.?, &rc);
 
         const size = D2D_SIZE_U{ .width = @intCast(rc.right), .height = @intCast(rc.bottom) };
 
-        var target: *win32.ID2D1HwndRenderTarget = undefined;
+        var target: *direct2d.ID2D1HwndRenderTarget = undefined;
         hr = self.pFactory.?.CreateHwndRenderTarget(
             &D2D1.RenderTargetProperties(),
             &D2D1.HwndRenderTargetProperties(self.base.m_hwnd.?, size),
@@ -106,7 +100,7 @@ fn MainWindowCreateGraphicsResources(self: *MainWindow) HRESULT {
         if (SUCCEEDED(hr)) {
             self.pRenderTarget = target;
             const color = D2D1.ColorF(.{ .r = 1, .g = 1, .b = 0 });
-            var brush: *win32.ID2D1SolidColorBrush = undefined;
+            var brush: *direct2d.ID2D1SolidColorBrush = undefined;
             hr = self.pRenderTarget.?.ID2D1RenderTarget.CreateSolidColorBrush(&color, null, &brush);
 
             if (SUCCEEDED(hr)) {
@@ -126,8 +120,8 @@ fn MainWindowDiscardGraphicsResources(self: *MainWindow) void {
 fn MainWindowOnPaint(self: *MainWindow) void {
     var hr = self.CreateGraphicsResources();
     if (SUCCEEDED(hr)) {
-        var ps: win32.PAINTSTRUCT = undefined;
-        _ = win32.BeginPaint(self.base.m_hwnd.?, &ps);
+        var ps: gdi.PAINTSTRUCT = undefined;
+        _ = gdi.BeginPaint(self.base.m_hwnd.?, &ps);
 
         self.pRenderTarget.?.ID2D1RenderTarget.BeginDraw();
 
@@ -137,23 +131,23 @@ fn MainWindowOnPaint(self: *MainWindow) void {
         self.pRenderTarget.?.ID2D1RenderTarget.FillEllipse(&self.ellipse, &self.pBrush.?.ID2D1Brush);
 
         hr = self.pRenderTarget.?.ID2D1RenderTarget.EndDraw(null, null);
-        if (FAILED(hr) or hr == win32.D2DERR_RECREATE_TARGET) {
+        if (FAILED(hr) or hr == win32.foundation.D2DERR_RECREATE_TARGET) {
             self.DiscardGraphicsResources();
         }
-        _ = win32.EndPaint(self.base.m_hwnd.?, &ps);
+        _ = gdi.EndPaint(self.base.m_hwnd.?, &ps);
     }
 }
 
 fn MainWindowResize(self: *MainWindow) void {
     if (self.pRenderTarget) |renderTarget| {
         var rc: RECT = undefined;
-        _ = win32.GetClientRect(self.base.m_hwnd.?, &rc);
+        _ = wm.GetClientRect(self.base.m_hwnd.?, &rc);
 
         const size = D2D_SIZE_U{ .width = @intCast(rc.right), .height = @intCast(rc.bottom) };
 
         _ = renderTarget.Resize(&size);
         self.CalculateLayout();
-        _ = win32.InvalidateRect(self.base.m_hwnd.?, null, win32.FALSE);
+        _ = gdi.InvalidateRect(self.base.m_hwnd.?, null, win32.zig.FALSE);
     }
 }
 
@@ -163,18 +157,22 @@ pub export fn wWinMain(_: HINSTANCE, __: ?HINSTANCE, ___: [*:0]u16, nCmdShow: u3
 
     var win = MainWindow{};
 
-    if (win32.TRUE != win.base.Create(L("Circle"), win32.WS_OVERLAPPEDWINDOW, .{})) {
+    if (win32.zig.TRUE != win.base.Create(
+        L("Circle"),
+        wm.WS_OVERLAPPEDWINDOW,
+        .{},
+    )) {
         return 0;
     }
 
-    _ = win32.ShowWindow(win.base.Window(), @bitCast(nCmdShow));
+    _ = wm.ShowWindow(win.base.Window(), @bitCast(nCmdShow));
 
     // Run the message loop.
 
     var msg: MSG = undefined;
-    while (0 != win32.GetMessage(&msg, null, 0, 0)) {
-        _ = win32.TranslateMessage(&msg);
-        _ = win32.DispatchMessage(&msg);
+    while (0 != wm.GetMessage(&msg, null, 0, 0)) {
+        _ = wm.TranslateMessage(&msg);
+        _ = wm.DispatchMessage(&msg);
     }
 
     return 0;
@@ -182,12 +180,12 @@ pub export fn wWinMain(_: HINSTANCE, __: ?HINSTANCE, ___: [*:0]u16, nCmdShow: u3
 
 fn MainWindowHandleMessage(self: *MainWindow, uMsg: u32, wParam: WPARAM, lParam: LPARAM) LRESULT {
     switch (uMsg) {
-        win32.WM_CREATE => {
+        wm.WM_CREATE => {
             // TODO: Should I need to case &self.pFactory to **anyopaque? Maybe
             //       D2D2CreateFactory probably doesn't have the correct type yet?
-            if (FAILED(win32.D2D1CreateFactory(
-                win32.D2D1_FACTORY_TYPE_SINGLE_THREADED,
-                win32.IID_ID2D1Factory,
+            if (FAILED(direct2d.D2D1CreateFactory(
+                direct2d.D2D1_FACTORY_TYPE_SINGLE_THREADED,
+                direct2d.IID_ID2D1Factory,
                 null,
                 @ptrCast(&self.pFactory),
             ))) {
@@ -195,24 +193,24 @@ fn MainWindowHandleMessage(self: *MainWindow, uMsg: u32, wParam: WPARAM, lParam:
             }
             return 0;
         },
-        win32.WM_DESTROY => {
+        wm.WM_DESTROY => {
             self.DiscardGraphicsResources();
             SafeRelease(&self.pFactory);
-            win32.PostQuitMessage(0);
+            wm.PostQuitMessage(0);
             return 0;
         },
-        win32.WM_PAINT => {
+        wm.WM_PAINT => {
             self.OnPaint();
             return 0;
         },
         // Other messages not shown...
-        win32.WM_SIZE => {
+        wm.WM_SIZE => {
             self.Resize();
             return 0;
         },
         else => {},
     }
-    return win32.DefWindowProc(self.base.m_hwnd.?, uMsg, wParam, lParam);
+    return wm.DefWindowProc(self.base.m_hwnd.?, uMsg, wParam, lParam);
 }
 
 // TODO: tthis D2D1 namespace is referenced in the C++ example but it doesn't exist in win32metadata
@@ -221,12 +219,12 @@ const D2D1 = struct {
     pub const SkyBlue = 0x87CEEB;
 
     // TODO: this is missing
-    pub fn ColorF(o: struct { r: f32, g: f32, b: f32, a: f32 = 1 }) win32.D2D_COLOR_F {
+    pub fn ColorF(o: struct { r: f32, g: f32, b: f32, a: f32 = 1 }) direct2d.common.D2D_COLOR_F {
         return .{ .r = o.r, .g = o.g, .b = o.b, .a = o.a };
     }
 
     // TODO: this is missing
-    pub fn ColorFU32(o: struct { rgb: u32, a: f32 = 1 }) win32.D2D_COLOR_F {
+    pub fn ColorFU32(o: struct { rgb: u32, a: f32 = 1 }) direct2d.common.D2D_COLOR_F {
         return .{
             .r = @as(f32, @floatFromInt((o.rgb >> 16) & 0xff)) / 255,
             .g = @as(f32, @floatFromInt((o.rgb >> 8) & 0xff)) / 255,
@@ -235,11 +233,15 @@ const D2D1 = struct {
         };
     }
 
-    pub fn Point2F(x: f32, y: f32) win32.D2D_POINT_2F {
+    pub fn Point2F(x: f32, y: f32) direct2d.common.D2D_POINT_2F {
         return .{ .x = x, .y = y };
     }
 
-    pub fn Ellipse(center: win32.D2D_POINT_2F, radiusX: f32, radiusY: f32) win32.D2D1_ELLIPSE {
+    pub fn Ellipse(
+        center: direct2d.common.D2D_POINT_2F,
+        radiusX: f32,
+        radiusY: f32,
+    ) direct2d.D2D1_ELLIPSE {
         return .{
             .point = center,
             .radiusX = radiusX,
@@ -248,31 +250,31 @@ const D2D1 = struct {
     }
 
     // TODO: this is missing
-    pub fn RenderTargetProperties() win32.D2D1_RENDER_TARGET_PROPERTIES {
+    pub fn RenderTargetProperties() direct2d.D2D1_RENDER_TARGET_PROPERTIES {
         return .{
-            .type = win32.D2D1_RENDER_TARGET_TYPE_DEFAULT,
+            .type = direct2d.D2D1_RENDER_TARGET_TYPE_DEFAULT,
             .pixelFormat = PixelFormat(),
             .dpiX = 0,
             .dpiY = 0,
-            .usage = win32.D2D1_RENDER_TARGET_USAGE_NONE,
-            .minLevel = win32.D2D1_FEATURE_LEVEL_DEFAULT,
+            .usage = direct2d.D2D1_RENDER_TARGET_USAGE_NONE,
+            .minLevel = direct2d.D2D1_FEATURE_LEVEL_DEFAULT,
         };
     }
 
     // TODO: this is missing
-    pub fn PixelFormat() win32.D2D1_PIXEL_FORMAT {
+    pub fn PixelFormat() direct2d.common.D2D1_PIXEL_FORMAT {
         return .{
-            .format = win32.DXGI_FORMAT_UNKNOWN,
-            .alphaMode = win32.D2D1_ALPHA_MODE_UNKNOWN,
+            .format = win32.graphics.dxgi.common.DXGI_FORMAT_UNKNOWN,
+            .alphaMode = direct2d.common.D2D1_ALPHA_MODE_UNKNOWN,
         };
     }
 
     // TODO: this is missing
-    pub fn HwndRenderTargetProperties(hwnd: HWND, size: D2D_SIZE_U) win32.D2D1_HWND_RENDER_TARGET_PROPERTIES {
+    pub fn HwndRenderTargetProperties(hwnd: HWND, size: D2D_SIZE_U) direct2d.D2D1_HWND_RENDER_TARGET_PROPERTIES {
         return .{
             .hwnd = hwnd,
             .pixelSize = size,
-            .presentOptions = win32.D2D1_PRESENT_OPTIONS_NONE,
+            .presentOptions = direct2d.D2D1_PRESENT_OPTIONS_NONE,
         };
     }
 };

@@ -1,21 +1,17 @@
 const std = @import("std");
 
-pub const UNICODE = true;
-const win32 = struct {
-    usingnamespace @import("win32").zig;
-    usingnamespace @import("win32").foundation;
-    usingnamespace @import("win32").system.system_services;
-    usingnamespace @import("win32").ui.windows_and_messaging;
-    usingnamespace @import("win32").graphics.gdi;
-};
-const L = win32.L;
-const HWND = win32.HWND;
+const win32 = @import("win32");
+const wm = win32.ui.windows_and_messaging;
 
-pub const panic = win32.messageBoxThenPanic(.{ .title = "Unionpointers Example Panic" });
+const L = win32.zig.L;
+const GetLastError = win32.foundation.GetLastError;
+
+pub const UNICODE = true;
+pub const panic = win32.zig.messageBoxThenPanic(.{ .title = "Unionpointers Example Panic", .trace = true });
 
 pub export fn wWinMain(
-    hInstance: win32.HINSTANCE,
-    _: ?win32.HINSTANCE,
+    hInstance: win32.foundation.HINSTANCE,
+    _: ?win32.foundation.HINSTANCE,
     pCmdLine: [*:0]u16,
     nCmdShow: u32,
 ) callconv(.winapi) c_int {
@@ -25,7 +21,7 @@ pub export fn wWinMain(
     for (0..20) |atom| {
         // we don't care if this works, we're just verifying @ptrFromInt(atom)
         // doesn't trigger a runtime panic
-        if (win32.CreateWindowEx(
+        if (wm.CreateWindowEx(
             .{},
             @ptrFromInt(atom),
             L("Test Window"),
@@ -40,18 +36,18 @@ pub export fn wWinMain(
             null,
         )) |hwnd| {
             std.log.info("atom={} CreateWindow success", .{atom});
-            if (0 == win32.DestroyWindow(hwnd)) win32.panicWin32(
+            if (0 == wm.DestroyWindow(hwnd)) win32.zig.panicWin32(
                 "DestroyWindow",
-                win32.GetLastError(),
+                GetLastError(),
             );
         } else {
-            std.log.info("atom={} CreateWindow failed, error={f} (this is fine)", .{ atom, win32.GetLastError() });
+            std.log.info("atom={} CreateWindow failed, error={f} (this is fine)", .{ atom, GetLastError() });
         }
     }
 
     {
         const CLASS_NAME = L("Sample Window Class");
-        const wc = win32.WNDCLASS{
+        const wc: wm.WNDCLASS = .{
             .style = .{},
             .lpfnWndProc = WindowProc,
             .cbClsExtra = 0,
@@ -64,9 +60,10 @@ pub export fn wWinMain(
             .lpszMenuName = L("Some Menu Name"),
             .lpszClassName = CLASS_NAME,
         };
-        const atom = win32.RegisterClass(&wc);
-        if (0 == atom) win32.panicWin32("RegisterClass", win32.GetLastError());
-        const hwnd = win32.CreateWindowEx(
+
+        const atom = wm.RegisterClass(&wc);
+        if (0 == atom) win32.zig.panicWin32("RegisterClass", GetLastError());
+        const hwnd = wm.CreateWindowEx(
             .{},
             @ptrFromInt(atom),
             L("Test Window"),
@@ -79,16 +76,16 @@ pub export fn wWinMain(
             null, // Menu
             hInstance, // Instance handle
             null, // Additional application data
-        ) orelse win32.panicWin32("CreateWindow", win32.GetLastError());
-        if (0 == win32.DestroyWindow(hwnd)) win32.panicWin32("DestroyWindow", win32.GetLastError());
+        ) orelse win32.zig.panicWin32("CreateWindow", GetLastError());
+        if (0 == wm.DestroyWindow(hwnd)) win32.zig.panicWin32("DestroyWindow", GetLastError());
     }
 
     {
         // Well this sucks...ptr and const cast?
-        const old_cursor = win32.SetCursor(@constCast(@ptrCast(win32.IDC_ARROW)));
-        defer _ = win32.SetCursor(old_cursor);
-        _ = win32.SetCursor(@constCast(@ptrCast(win32.IDC_IBEAM)));
-        _ = win32.SetCursor(@constCast(@ptrCast(win32.IDC_WAIT)));
+        const old_cursor = wm.SetCursor(@constCast(@ptrCast(wm.IDC_ARROW)));
+        defer _ = wm.SetCursor(old_cursor);
+        _ = wm.SetCursor(@constCast(@ptrCast(wm.IDC_IBEAM)));
+        _ = wm.SetCursor(@constCast(@ptrCast(wm.IDC_WAIT)));
     }
 
     std.log.info("success!", .{});
@@ -96,17 +93,17 @@ pub export fn wWinMain(
 }
 
 fn WindowProc(
-    hwnd: HWND,
+    hwnd: win32.foundation.HWND,
     uMsg: u32,
-    wParam: win32.WPARAM,
-    lParam: win32.LPARAM,
-) callconv(.winapi) win32.LRESULT {
+    wParam: win32.foundation.WPARAM,
+    lParam: win32.foundation.LPARAM,
+) callconv(.winapi) win32.foundation.LRESULT {
     switch (uMsg) {
-        win32.WM_DESTROY => {
-            win32.PostQuitMessage(0);
+        wm.WM_DESTROY => {
+            wm.PostQuitMessage(0);
             return 0;
         },
         else => {},
     }
-    return win32.DefWindowProc(hwnd, uMsg, wParam, lParam);
+    return wm.DefWindowProc(hwnd, uMsg, wParam, lParam);
 }

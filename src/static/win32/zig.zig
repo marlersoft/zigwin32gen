@@ -213,11 +213,6 @@ pub fn FormatError(comptime max_len: usize) type {
 
 threadlocal var thread_is_panicing = false;
 
-pub const PanicType = switch (builtin.zig_version.order(zig_version_0_13)) {
-    .lt, .eq => fn ([]const u8, ?*std.builtin.StackTrace, ?usize) noreturn,
-    .gt => type,
-};
-
 /// Returns a panic handler that can be set in your root module that will show the panic
 /// message to the user in a message box, then call the default builtin panic handler.
 /// It also handles re-entrancy by skipping the message box if the current thread
@@ -226,26 +221,9 @@ pub fn messageBoxThenPanic(
     opt: struct {
         title: [:0]const u8,
         style: win32.MESSAGEBOX_STYLE = .{ .ICONASTERISK = 1 },
-        // TODO: add option/logic to include the stacktrace in the messagebox
+        trace: bool = false,
     },
-) PanicType {
-    switch (comptime builtin.zig_version.order(zig_version_0_13)) {
-        .lt, .eq => return struct {
-            pub fn panic(
-                msg: []const u8,
-                error_return_trace: ?*std.builtin.StackTrace,
-                ret_addr: ?usize,
-            ) noreturn {
-                if (!thread_is_panicing) {
-                    thread_is_panicing = true;
-                    const msg_z = std.heap.page_allocator.dupeZ(u8, msg) catch "failed to allocate error message";
-                    _ = win32.MessageBoxA(null, msg_z, opt.title, opt.style);
-                }
-                std.builtin.default_panic(msg, error_return_trace, ret_addr);
-            }
-        }.panic,
-        .gt => {},
-    }
+) type {
     return std.debug.FullPanic(struct {
         pub fn panic(
             msg: []const u8,
@@ -253,9 +231,22 @@ pub fn messageBoxThenPanic(
         ) noreturn {
             if (!thread_is_panicing) {
                 thread_is_panicing = true;
-                const msg_z = std.heap.page_allocator.dupeZ(u8, msg) catch "failed to allocate error message";
-                _ = win32.MessageBoxA(null, msg_z, opt.title, opt.style);
+
+                var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
+                var buffer = std.io.Writer.Allocating.init(arena.allocator());
+                const msg_z = blk: {
+                    buffer.writer.writeAll(msg) catch break :blk null;
+                    if (opt.trace) {
+                        buffer.writer.writeAll("\r\n\r\nTrace:\r\n\r\n") catch break :blk null;
+                        std.debug.dumpCurrentStackTraceToWriter(ret_addr, &buffer.writer) catch break :blk null;
+                    }
+
+                    break :blk buffer.toOwnedSliceSentinel(0) catch null;
+                };
+
+                _ = win32.MessageBoxA(null, msg_z orelse "failed to format error message", opt.title, opt.style);
             }
+
             std.debug.defaultPanic(msg, ret_addr);
         }
     }.panic);
@@ -292,40 +283,22 @@ pub fn pointFromLparam(lparam: win32.LPARAM) win32.POINT {
 }
 
 pub fn loword(value: anytype) u16 {
-    switch (comptime builtin.zig_version.order(zig_version_0_13)) {
-        .gt => switch (@typeInfo(@TypeOf(value))) {
-            .int => |int| switch (int.signedness) {
-                .signed => return loword(@as(@Type(.{ .int = .{ .signedness = .unsigned, .bits = int.bits } }), @bitCast(value))),
-                .unsigned => return if (int.bits <= 16) value else @intCast(0xffff & value),
-            },
-            else => {},
+    switch (@typeInfo(@TypeOf(value))) {
+        .int => |int| switch (int.signedness) {
+            .signed => return loword(@as(@Type(.{ .int = .{ .signedness = .unsigned, .bits = int.bits } }), @bitCast(value))),
+            .unsigned => return if (int.bits <= 16) value else @intCast(0xffff & value),
         },
-        .lt, .eq => switch (@typeInfo(@TypeOf(value))) {
-            .Int => |int| switch (int.signedness) {
-                .signed => return loword(@as(@Type(.{ .Int = .{ .signedness = .unsigned, .bits = int.bits } }), @bitCast(value))),
-                .unsigned => return if (int.bits <= 16) value else @intCast(0xffff & value),
-            },
-            else => {},
-        },
+        else => {},
     }
     @compileError("unsupported type " ++ @typeName(@TypeOf(value)));
 }
 pub fn hiword(value: anytype) u16 {
-    switch (comptime builtin.zig_version.order(zig_version_0_13)) {
-        .gt => switch (@typeInfo(@TypeOf(value))) {
-            .int => |int| switch (int.signedness) {
-                .signed => return hiword(@as(@Type(.{ .int = .{ .signedness = .unsigned, .bits = int.bits } }), @bitCast(value))),
-                .unsigned => return @intCast(0xffff & (value >> 16)),
-            },
-            else => {},
+    switch (@typeInfo(@TypeOf(value))) {
+        .int => |int| switch (int.signedness) {
+            .signed => return hiword(@as(@Type(.{ .int = .{ .signedness = .unsigned, .bits = int.bits } }), @bitCast(value))),
+            .unsigned => return @intCast(0xffff & (value >> 16)),
         },
-        .lt, .eq => switch (@typeInfo(@TypeOf(value))) {
-            .Int => |int| switch (int.signedness) {
-                .signed => return hiword(@as(@Type(.{ .Int = .{ .signedness = .unsigned, .bits = int.bits } }), @bitCast(value))),
-                .unsigned => return @intCast(0xffff & (value >> 16)),
-            },
-            else => {},
-        },
+        else => {},
     }
     @compileError("unsupported type " ++ @typeName(@TypeOf(value)));
 }
