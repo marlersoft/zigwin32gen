@@ -3,7 +3,7 @@ const std = @import("std");
 const Build = std.Build;
 const Step = std.Build.Step;
 const CrossTarget = std.zig.CrossTarget;
-const buildcommon = @import("0.14.1/common.zig");
+const buildcommon = @import("0.15.0/common.zig");
 
 pub fn build(b: *Build) !void {
     const default_steps = "install diff test";
