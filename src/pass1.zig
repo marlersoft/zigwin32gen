@@ -7,9 +7,6 @@ const fatal = common.fatal;
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const allocator = arena.allocator();
 
-const BufferedWriter = std.io.BufferedWriter(4096, std.fs.File.Writer);
-const OutWriter = BufferedWriter.Writer;
-
 pub fn main() !u8 {
     const all_args = try std.process.argsAlloc(allocator);
     // don't care about freeing args
@@ -40,31 +37,31 @@ pub fn main() !u8 {
 
     const out_file = try std.fs.cwd().createFile(out_filename, .{});
     defer out_file.close();
-    var buffered_writer = BufferedWriter{
-        .unbuffered_writer = out_file.writer(),
-    };
-    const out = buffered_writer.writer();
 
-    try out.writeAll("{\n");
+    var buf: [4096]u8 = undefined;
+    var out_file_writer = out_file.writer(&buf);
+    var w = &out_file_writer.interface;
+
+    try w.writeAll("{\n");
     var json_obj_prefix: []const u8 = "";
 
     for (api_list.items) |api_json_basename| {
         const name = api_json_basename[0 .. api_json_basename.len - 5];
-        try out.print("    {s}\"{s}\": {{\n", .{ json_obj_prefix, name });
+        try w.print("    {s}\"{s}\": {{\n", .{ json_obj_prefix, name });
         var file = try api_dir.openFile(api_json_basename, .{});
         defer file.close();
-        try pass1OnFile(out, api_path, api_json_basename, file);
-        try out.writeAll("    }\n");
+        try pass1OnFile(w, api_path, api_json_basename, file);
+        try w.writeAll("    }\n");
         json_obj_prefix = ",";
     }
 
-    try out.writeAll("}\n");
-    try buffered_writer.flush();
+    try w.writeAll("}\n");
+    try w.flush();
     std.log.info("wrote {s}", .{out_filename});
     return 0;
 }
 
-fn pass1OnFile(out: OutWriter, api_dir: []const u8, filename: []const u8, file: std.fs.File) !void {
+fn pass1OnFile(w: *std.io.Writer, api_dir: []const u8, filename: []const u8, file: std.fs.File) !void {
     var json_arena_instance = std.heap.ArenaAllocator.init(allocator);
     defer json_arena_instance.deinit();
     const json_arena = json_arena_instance.allocator();
@@ -78,32 +75,31 @@ fn pass1OnFile(out: OutWriter, api_dir: []const u8, filename: []const u8, file: 
     const parse_time = std.time.milliTimestamp() - parse_start;
     std.log.info("{} ms: parse time for '{s}'", .{ parse_time, filename });
 
-    try pass1OnJson(out, api);
+    try pass1OnJson(w, api);
 }
 
-fn writeType(out: OutWriter, json_obj_prefix: []const u8, name: []const u8, kind: []const u8) !void {
-    try out.print("        {s}\"{s}\": {{\"Kind\":\"{s}\"}}\n", .{ json_obj_prefix, name, kind });
+fn writeType(w: *std.io.Writer, json_obj_prefix: []const u8, name: []const u8, kind: []const u8) !void {
+    try w.print("        {s}\"{s}\": {{\"Kind\":\"{s}\"}}\n", .{ json_obj_prefix, name, kind });
 }
 
-fn pass1OnJson(out: OutWriter, api: metadata.Api) !void {
+fn pass1OnJson(w: *std.io.Writer, api: metadata.Api) !void {
     var json_obj_prefix: []const u8 = "";
-
     for (api.Types) |t| {
         switch (t.Kind) {
-            .NativeTypedef => |n| try generateNativeTypedef(out, json_obj_prefix, t, n),
-            .Enum => try writeType(out, json_obj_prefix, t.Name, "Enum"),
-            .Struct => try writeType(out, json_obj_prefix, t.Name, "Struct"),
-            .Union => try writeType(out, json_obj_prefix, t.Name, "Union"),
+            .NativeTypedef => |n| try generateNativeTypedef(w, json_obj_prefix, t, n),
+            .Enum => try writeType(w, json_obj_prefix, t.Name, "Enum"),
+            .Struct => try writeType(w, json_obj_prefix, t.Name, "Struct"),
+            .Union => try writeType(w, json_obj_prefix, t.Name, "Union"),
             .ComClassID => continue,
-            .Com => |com| try writeComType(out, json_obj_prefix, t, com),
-            .FunctionPointer => try writeType(out, json_obj_prefix, t.Name, "FunctionPointer"),
+            .Com => |com| try writeComType(w, json_obj_prefix, t, com),
+            .FunctionPointer => try writeType(w, json_obj_prefix, t.Name, "FunctionPointer"),
         }
         json_obj_prefix = ",";
     }
 }
 
 fn generateNativeTypedef(
-    out: OutWriter,
+    w: *std.io.Writer,
     json_obj_prefix: []const u8,
     t: metadata.Type,
     native_typedef: metadata.NativeTypedef,
@@ -116,7 +112,7 @@ fn generateNativeTypedef(
         break :blk .other;
     };
     if (special == .pstr or special == .pwstr) {
-        try writeType(out, json_obj_prefix, t.Name, "Pointer");
+        try writeType(w, json_obj_prefix, t.Name, "Pointer");
         return;
     }
 
@@ -140,20 +136,20 @@ fn generateNativeTypedef(
     // NOTE: for now, I'm just hardcoding a few types to redirect to the ones defined in 'std'
     //       this allows apps to use values of these types interchangeably with bindings in std
     if (@import("handletypes.zig").std_handle_types.get(t.Name)) |_| {
-        try writeType(out, json_obj_prefix, t.Name, "Pointer");
+        try writeType(w, json_obj_prefix, t.Name, "Pointer");
         return;
     }
     // workaround https://github.com/microsoft/win32metadata/issues/395
     if (@import("handletypes.zig").handle_types.get(t.Name)) |_| {
-        try writeType(out, json_obj_prefix, t.Name, "Pointer");
+        try writeType(w, json_obj_prefix, t.Name, "Pointer");
         return;
     }
 
     switch (native_typedef.Def) {
-        .Native => |native| if (isIntegral(native.Name)) {
-            try writeType(out, json_obj_prefix, t.Name, "Integral");
+        .native => |native| if (isIntegral(native.Name)) {
+            try writeType(w, json_obj_prefix, t.Name, "Integral");
         } else std.debug.panic("unhandled Native kind in NativeTypedef '{s}'", .{@tagName(native.Name)}),
-        .PointerTo => try writeType(out, json_obj_prefix, t.Name, "Pointer"),
+        .pointer_to => try writeType(w, json_obj_prefix, t.Name, "Pointer"),
         else => |kind| std.debug.panic("unhandled NativeTypedef kind '{s}'", .{@tagName(kind)}),
     }
 }
@@ -181,7 +177,7 @@ fn isIntegral(native: metadata.TypeRefNative) bool {
 }
 
 fn writeComType(
-    out: OutWriter,
+    w: *std.io.Writer,
     json_obj_prefix: []const u8,
     t: metadata.Type,
     com: metadata.Com,
@@ -195,8 +191,8 @@ fn writeComType(
         break :blk null;
     };
 
-    try out.print(
-        "        {s}\"{s}\": {{\"Kind\":\"Com\",\"Interface\":{?}}}\n",
+    try w.print(
+        "        {s}\"{s}\": {{\"Kind\":\"Com\",\"Interface\":{?f}}}\n",
         .{ json_obj_prefix, t.Name, iface },
     );
 }

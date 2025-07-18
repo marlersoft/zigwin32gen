@@ -4,13 +4,7 @@ Generates Zig bindings for Win32 using https://github.com/marlersoft/win32json. 
 
 ## How to generate the Windows Zig bindings
 
-Download zig, currently tested on version: 0.12.0-dev.2701+d18f52197
-
-First, clone the zigwin32 repo from the root of this repository to provide a location for the generated files:
-
-```
-git clone https://github.com/marlersoft/zigwin32
-```
+Download zig, currently tested on version: 0.15.0-dev.1144+32c9e5df8
 
 Then run the following command to generate the latest bindings:
 
@@ -18,9 +12,7 @@ Then run the following command to generate the latest bindings:
 zig build
 ```
 
-On the first run, running this command will provide an error message saying that the `win32json` dependency is missing, and will provide you with a git command to clone it and checkout the expected version.
-
-Once the build task completes, you can view your generated code in the `zigwin32` subrepository that you cloned earlier.
+This will clone the https://github.com/marlersoft/zigwin32 repo into the `diffrepo` subdirectory and place the generated bindings there.
 
 ## win32json vs C/C++ Win32 SDK
 

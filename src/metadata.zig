@@ -467,20 +467,20 @@ const TargetKind = enum {
 };
 
 const TypeRefKind = enum {
-    Native,
-    ApiRef,
-    PointerTo,
-    Array,
-    LPArray,
-    MissingClrType,
+    native,
+    api_ref,
+    pointer_to,
+    array,
+    lp_array,
+    missing_clr_type,
 };
 const type_ref_kinds = std.StaticStringMap(TypeRefKind).initComptime(.{
-    .{ "Native", .Native },
-    .{ "ApiRef", .ApiRef },
-    .{ "PointerTo", .PointerTo },
-    .{ "Array", .Array },
-    .{ "LPArray", .LPArray },
-    .{ "MissingClrType", .MissingClrType },
+    .{ "Native", .native },
+    .{ "ApiRef", .api_ref },
+    .{ "PointerTo", .pointer_to },
+    .{ "Array", .array },
+    .{ "LPArray", .lp_array },
+    .{ "MissingClrType", .missing_clr_type },
 });
 
 const Native = struct {
@@ -523,12 +523,12 @@ const MissingClrType = struct {
 };
 
 pub const TypeRef = union(TypeRefKind) {
-    Native: Native,
-    ApiRef: ApiRef,
-    PointerTo: PointerTo,
-    Array: Array,
-    LPArray: LPArray,
-    MissingClrType: MissingClrType,
+    native: Native,
+    api_ref: ApiRef,
+    pointer_to: PointerTo,
+    array: Array,
+    lp_array: LPArray,
+    missing_clr_type: MissingClrType,
 
     pub fn jsonParse(
         allocator: std.mem.Allocator,
@@ -537,23 +537,23 @@ pub const TypeRef = union(TypeRefKind) {
     ) std.json.ParseError(@TypeOf(source.*))!TypeRef {
         if (.object_begin != try source.next()) return error.UnexpectedToken;
         switch (try jsonParseUnionKind(TypeRefKind, "TypeRef", source, type_ref_kinds)) {
-            .Native => return .{
-                .Native = try parseUnionObject(Native, allocator, source, options),
+            .native => return .{
+                .native = try parseUnionObject(Native, allocator, source, options),
             },
-            .ApiRef => return .{
-                .ApiRef = try parseUnionObject(ApiRef, allocator, source, options),
+            .api_ref => return .{
+                .api_ref = try parseUnionObject(ApiRef, allocator, source, options),
             },
-            .PointerTo => return .{
-                .PointerTo = try parseUnionObject(PointerTo, allocator, source, options),
+            .pointer_to => return .{
+                .pointer_to = try parseUnionObject(PointerTo, allocator, source, options),
             },
-            .Array => return .{
-                .Array = try parseUnionObject(Array, allocator, source, options),
+            .array => return .{
+                .array = try parseUnionObject(Array, allocator, source, options),
             },
-            .LPArray => return .{
-                .LPArray = try parseUnionObject(LPArray, allocator, source, options),
+            .lp_array => return .{
+                .lp_array = try parseUnionObject(LPArray, allocator, source, options),
             },
-            .MissingClrType => return .{
-                .MissingClrType = try parseUnionObject(MissingClrType, allocator, source, options),
+            .missing_clr_type => return .{
+                .missing_clr_type = try parseUnionObject(MissingClrType, allocator, source, options),
             },
         }
     }

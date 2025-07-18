@@ -172,28 +172,22 @@ pub const TRUE: win32.BOOL = 1;
 /// of 300 bytes. If the message exceeds 300 bytes (Messages can be arbitrarily
 /// long) then "..." is appended to the message.  The message may contain newlines
 /// and carriage returns but any trailing ones are trimmed.
-///
-/// Provide the 's' fmt specifier to omit the error code.
 pub fn fmtError(error_code: u32) FormatError(300) {
     return .{ .error_code = error_code };
 }
+
+/// The same as `fmtError` but only prints the message string.
+pub fn fmtErrorMessage(error_code: u32) FormatError(300) {
+    return .{ .error_code = error_code, .only_message = true };
+}
+
 pub fn FormatError(comptime max_len: usize) type {
     return struct {
         error_code: u32,
-        pub fn format(
-            self: @This(),
-            comptime fmt: []const u8,
-            options: std.fmt.FormatOptions,
-            writer: anytype,
-        ) @TypeOf(writer).Error!void {
-            _ = options;
+        only_message: bool = false,
 
-            const with_code = comptime blk: {
-                if (std.mem.eql(u8, fmt, "")) break :blk true;
-                if (std.mem.eql(u8, fmt, "s")) break :blk false;
-                @compileError("expected '{}' or '{s}' but got '{" ++ fmt ++ "}'");
-            };
-            if (with_code) try writer.print("{} (", .{self.error_code});
+        pub fn format(self: @This(), writer: *std.io.Writer) std.io.Writer.Error!void {
+            if (!self.only_message) try writer.print("{} (", .{self.error_code});
             var buf: [max_len]u8 = undefined;
             const len = win32.FormatMessageA(
                 .{ .FROM_SYSTEM = 1, .IGNORE_INSERTS = 1 },
@@ -212,17 +206,12 @@ pub fn FormatError(comptime max_len: usize) type {
             if (len + 1 >= buf.len) {
                 try writer.writeAll("...");
             }
-            if (with_code) try writer.writeAll(")");
+            if (!self.only_message) try writer.writeAll(")");
         }
     };
 }
 
 threadlocal var thread_is_panicing = false;
-
-pub const PanicType = switch (builtin.zig_version.order(zig_version_0_13)) {
-    .lt, .eq => fn ([]const u8, ?*std.builtin.StackTrace, ?usize) noreturn,
-    .gt => type,
-};
 
 /// Returns a panic handler that can be set in your root module that will show the panic
 /// message to the user in a message box, then call the default builtin panic handler.
@@ -232,31 +221,9 @@ pub fn messageBoxThenPanic(
     opt: struct {
         title: [:0]const u8,
         style: win32.MESSAGEBOX_STYLE = .{ .ICONASTERISK = 1 },
-        // TODO: add option/logic to include the stacktrace in the messagebox
+        trace: bool = false,
     },
-) PanicType {
-    switch (comptime builtin.zig_version.order(zig_version_0_13)) {
-        .lt, .eq => return struct {
-            pub fn panic(
-                msg: []const u8,
-                error_return_trace: ?*std.builtin.StackTrace,
-                ret_addr: ?usize,
-            ) noreturn {
-                if (!thread_is_panicing) {
-                    thread_is_panicing = true;
-                    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-                    const msg_z: [:0]const u8 = if (std.fmt.allocPrintZ(
-                        arena.allocator(),
-                        "{s}",
-                        .{msg},
-                    )) |msg_z| msg_z else |_| "failed allocate error message";
-                    _ = win32.MessageBoxA(null, msg_z, opt.title, opt.style);
-                }
-                std.builtin.default_panic(msg, error_return_trace, ret_addr);
-            }
-        }.panic,
-        .gt => {},
-    }
+) type {
     return std.debug.FullPanic(struct {
         pub fn panic(
             msg: []const u8,
@@ -264,14 +231,22 @@ pub fn messageBoxThenPanic(
         ) noreturn {
             if (!thread_is_panicing) {
                 thread_is_panicing = true;
-                var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-                const msg_z: [:0]const u8 = if (std.fmt.allocPrintZ(
-                    arena.allocator(),
-                    "{s}",
-                    .{msg},
-                )) |msg_z| msg_z else |_| "failed allocate error message";
-                _ = win32.MessageBoxA(null, msg_z, opt.title, opt.style);
+
+                var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
+                var buffer = std.io.Writer.Allocating.init(arena.allocator());
+                const msg_z = blk: {
+                    buffer.writer.writeAll(msg) catch break :blk null;
+                    if (opt.trace) {
+                        buffer.writer.writeAll("\r\n\r\nTrace:\r\n\r\n") catch break :blk null;
+                        std.debug.dumpCurrentStackTraceToWriter(ret_addr, &buffer.writer) catch break :blk null;
+                    }
+
+                    break :blk buffer.toOwnedSliceSentinel(0) catch null;
+                };
+
+                _ = win32.MessageBoxA(null, msg_z orelse "failed to format error message", opt.title, opt.style);
             }
+
             std.debug.defaultPanic(msg, ret_addr);
         }
     }.panic);
@@ -280,7 +255,7 @@ pub fn messageBoxThenPanic(
 /// Calls std.debug.panic with a message that indicates what failed and the
 /// associated win32 error code.
 pub fn panicWin32(what: []const u8, err: win32.WIN32_ERROR) noreturn {
-    std.debug.panic("{s} failed, error={}", .{ what, err });
+    std.debug.panic("{s} failed, error={f}", .{ what, fmtError(@intFromEnum(err)) });
 }
 
 /// Calls std.debug.panic with a message that indicates what failed and the
@@ -308,40 +283,22 @@ pub fn pointFromLparam(lparam: win32.LPARAM) win32.POINT {
 }
 
 pub fn loword(value: anytype) u16 {
-    switch (comptime builtin.zig_version.order(zig_version_0_13)) {
-        .gt => switch (@typeInfo(@TypeOf(value))) {
-            .int => |int| switch (int.signedness) {
-                .signed => return loword(@as(@Type(.{ .int = .{ .signedness = .unsigned, .bits = int.bits } }), @bitCast(value))),
-                .unsigned => return if (int.bits <= 16) value else @intCast(0xffff & value),
-            },
-            else => {},
+    switch (@typeInfo(@TypeOf(value))) {
+        .int => |int| switch (int.signedness) {
+            .signed => return loword(@as(@Type(.{ .int = .{ .signedness = .unsigned, .bits = int.bits } }), @bitCast(value))),
+            .unsigned => return if (int.bits <= 16) value else @intCast(0xffff & value),
         },
-        .lt, .eq => switch (@typeInfo(@TypeOf(value))) {
-            .Int => |int| switch (int.signedness) {
-                .signed => return loword(@as(@Type(.{ .Int = .{ .signedness = .unsigned, .bits = int.bits } }), @bitCast(value))),
-                .unsigned => return if (int.bits <= 16) value else @intCast(0xffff & value),
-            },
-            else => {},
-        },
+        else => {},
     }
     @compileError("unsupported type " ++ @typeName(@TypeOf(value)));
 }
 pub fn hiword(value: anytype) u16 {
-    switch (comptime builtin.zig_version.order(zig_version_0_13)) {
-        .gt => switch (@typeInfo(@TypeOf(value))) {
-            .int => |int| switch (int.signedness) {
-                .signed => return hiword(@as(@Type(.{ .int = .{ .signedness = .unsigned, .bits = int.bits } }), @bitCast(value))),
-                .unsigned => return @intCast(0xffff & (value >> 16)),
-            },
-            else => {},
+    switch (@typeInfo(@TypeOf(value))) {
+        .int => |int| switch (int.signedness) {
+            .signed => return hiword(@as(@Type(.{ .int = .{ .signedness = .unsigned, .bits = int.bits } }), @bitCast(value))),
+            .unsigned => return @intCast(0xffff & (value >> 16)),
         },
-        .lt, .eq => switch (@typeInfo(@TypeOf(value))) {
-            .Int => |int| switch (int.signedness) {
-                .signed => return hiword(@as(@Type(.{ .Int = .{ .signedness = .unsigned, .bits = int.bits } }), @bitCast(value))),
-                .unsigned => return @intCast(0xffff & (value >> 16)),
-            },
-            else => {},
-        },
+        else => {},
     }
     @compileError("unsupported type " ++ @typeName(@TypeOf(value)));
 }
@@ -476,19 +433,19 @@ fn typedConst2_0_13(comptime ReturnType: type, comptime SwitchType: type, compti
     const value_type_error = @as([]const u8, "typedConst cannot convert " ++ @typeName(@TypeOf(value)) ++ " to " ++ @typeName(ReturnType));
 
     switch (@typeInfo(SwitchType)) {
-        .Int => |target_type_info| {
+        .int => |target_type_info| {
             if (value >= std.math.maxInt(SwitchType)) {
                 if (target_type_info.signedness == .signed) {
-                    const UnsignedT = @Type(std.builtin.Type{ .Int = .{ .signedness = .unsigned, .bits = target_type_info.bits } });
+                    const UnsignedT = @Type(std.builtin.Type{ .int = .{ .signedness = .unsigned, .bits = target_type_info.bits } });
                     return @as(SwitchType, @bitCast(@as(UnsignedT, value)));
                 }
             }
             return value;
         },
-        .Pointer => |target_type_info| switch (target_type_info.size) {
+        .pointer => |target_type_info| switch (target_type_info.size) {
             .One, .Many, .C => {
                 switch (@typeInfo(@TypeOf(value))) {
-                    .ComptimeInt, .Int => {
+                    .comptime_int, .int => {
                         const usize_value = if (value >= 0) value else @as(usize, @bitCast(@as(isize, value)));
                         return @as(ReturnType, @ptrFromInt(usize_value));
                     },
@@ -497,12 +454,12 @@ fn typedConst2_0_13(comptime ReturnType: type, comptime SwitchType: type, compti
             },
             else => target_type_error,
         },
-        .Optional => |target_type_info| switch (@typeInfo(target_type_info.child)) {
-            .Pointer => return typedConst2_0_13(ReturnType, target_type_info.child, value),
+        .optional => |target_type_info| switch (@typeInfo(target_type_info.child)) {
+            .pointer => return typedConst2_0_13(ReturnType, target_type_info.child, value),
             else => target_type_error,
         },
-        .Enum => |_| switch (@typeInfo(@TypeOf(value))) {
-            .Int => return @as(ReturnType, @enumFromInt(value)),
+        .@"enum" => |_| switch (@typeInfo(@TypeOf(value))) {
+            .int => return @as(ReturnType, @enumFromInt(value)),
             else => target_type_error,
         },
         else => @compileError(target_type_error),
