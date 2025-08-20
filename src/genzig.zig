@@ -1799,7 +1799,7 @@ fn generateTypeDefinition(
             if (funcPtrHasDependencyLoop(pool_name.slice)) {
                 try writer.line("// TODO: this function pointer causes dependency loop problems, so it's stubbed out");
                 try writer.linef(
-                    "{s}*const fn() callconv(@import(\"std\").os.windows.WINAPI) void{s}",
+                    "{s}*const fn() callconv(.winapi) void{s}",
                     .{ def_prefix, def_suffix },
                 );
                 return;
@@ -2941,7 +2941,7 @@ fn generateFunction(
 
     try generateParams(sdk_file, writer, arches, modifier_set, params);
 
-    try writer.writef(") callconv(@import(\"std\").os.windows.WINAPI) ", .{}, .{ .nl = false });
+    try writer.writef(") callconv(.winapi) ", .{}, .{ .nl = false });
     if (attrs.DoesNotReturn) {
         try writer.write("noreturn", .{ .start = .mid, .nl = false });
     } else {
