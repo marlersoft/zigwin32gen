@@ -2,16 +2,7 @@ const std = @import("std");
 
 const log = std.log.info;
 
-const win32 = struct {
-    usingnamespace @import("win32").foundation;
-    usingnamespace @import("win32").media.audio;
-    usingnamespace @import("win32").media.audio.direct_music;
-    usingnamespace @import("win32").storage.structured_storage;
-    usingnamespace @import("win32").system.com;
-    usingnamespace @import("win32").system.com.structured_storage;
-    usingnamespace @import("win32").ui.shell.properties_system;
-    usingnamespace @import("win32").zig;
-};
+const win32 = @import("win32").everything;
 
 pub fn getDefaultDevice() !void {
     var enumerator: *win32.IMMDeviceEnumerator = undefined;

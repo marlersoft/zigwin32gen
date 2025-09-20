@@ -1,5 +1,4 @@
 const std = @import("std");
-const WINAPI = std.os.windows.WINAPI;
 
 const win32 = @import("win32").everything;
 const L = win32.L;
@@ -12,7 +11,7 @@ pub export fn wWinMain(
     _: ?win32.HINSTANCE,
     pCmdLine: [*:0]u16,
     nCmdShow: u32,
-) callconv(WINAPI) c_int {
+) callconv(.winapi) c_int {
     _ = pCmdLine;
     _ = nCmdShow;
 
@@ -35,7 +34,7 @@ pub export fn wWinMain(
     };
 
     if (0 == win32.RegisterClassW(&wc))
-        std.debug.panic("RegisterClass failed, error={}", .{win32.GetLastError()});
+        win32.panicWin32("RegisterClass", win32.GetLastError());
 
     const hwnd = win32.CreateWindowExW(
         .{},
@@ -50,7 +49,7 @@ pub export fn wWinMain(
         null, // menu
         hInstance,
         null, // Additional application data
-    ) orelse std.debug.panic("CreateWindow failed, error={}", .{win32.GetLastError()});
+    ) orelse win32.panicWin32("CreateWindow", win32.GetLastError());
 
     const dpi = win32.dpiFromHwnd(hwnd);
 
@@ -69,7 +68,7 @@ pub export fn wWinMain(
         win32.scaleDpi(i32, 600, dpi),
         win32.scaleDpi(i32, 400, dpi),
         .{ .NOMOVE = 1 },
-    )) std.debug.panic("SetWindowPos failed, error={}", .{win32.GetLastError()});
+    )) win32.panicWin32("SetWindowPos", win32.GetLastError());
 
     _ = win32.ShowWindow(hwnd, .{ .SHOWNORMAL = 1 });
 
@@ -86,7 +85,7 @@ fn WindowProc(
     uMsg: u32,
     wParam: win32.WPARAM,
     lParam: win32.LPARAM,
-) callconv(WINAPI) win32.LRESULT {
+) callconv(.winapi) win32.LRESULT {
     switch (uMsg) {
         win32.WM_CREATE => {
             if (win32.has_window_longptr) {

@@ -1,6 +1,6 @@
 const win32 = @import("win32").everything;
 
-pub export fn WinMainCRTStartup() callconv(@import("std").os.windows.WINAPI) noreturn {
+pub export fn WinMainCRTStartup() callconv(.winapi) noreturn {
     const hStdOut = win32.GetStdHandle(win32.STD_OUTPUT_HANDLE);
     if (hStdOut == win32.INVALID_HANDLE_VALUE) {
         //std.debug.warn("Error: GetStdHandle failed with {}\n", .{GetLastError()});

@@ -1,37 +1,24 @@
 const std = @import("std");
-const WINAPI = std.os.windows.WINAPI;
 
 pub const UNICODE = true;
-const win32 = struct {
-    usingnamespace @import("win32").zig;
-    usingnamespace @import("win32").foundation;
-    usingnamespace @import("win32").system.system_services;
-    usingnamespace @import("win32").ui.windows_and_messaging;
-    usingnamespace @import("win32").graphics.gdi;
-};
+const win32 = @import("win32").everything;
+// Needed for unicode aliases
+const ui_window = @import("win32").ui.windows_and_messaging;
+
 const L = win32.L;
 const HWND = win32.HWND;
-
-fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
-    if (std.fmt.allocPrintZ(std.heap.page_allocator, fmt, args)) |msg| {
-        _ = win32.MessageBoxA(null, msg, "Fatal Error", .{});
-    } else |e| switch (e) {
-        error.OutOfMemory => _ = win32.MessageBoxA(null, "Out of memory", "Fatal Error", .{}),
-    }
-    std.process.exit(1);
-}
 
 pub export fn wWinMain(
     hInstance: win32.HINSTANCE,
     _: ?win32.HINSTANCE,
     pCmdLine: [*:0]u16,
     nCmdShow: u32,
-) callconv(WINAPI) c_int {
+) callconv(.winapi) c_int {
     _ = pCmdLine;
     _ = nCmdShow;
 
     const CLASS_NAME = L("Sample Window Class");
-    const wc = win32.WNDCLASS{
+    const wc = ui_window.WNDCLASS{
         .style = .{},
         .lpfnWndProc = WindowProc,
         .cbClsExtra = 0,
@@ -45,23 +32,23 @@ pub export fn wWinMain(
         .lpszClassName = CLASS_NAME,
     };
 
-    if (0 == win32.RegisterClass(&wc))
-        fatal("RegisterClass failed, error={}", .{win32.GetLastError()});
+    if (0 == ui_window.RegisterClass(&wc))
+        win32.panicWin32("RegisterClass", win32.GetLastError());
 
-    const hwnd = win32.CreateWindowEx(.{}, CLASS_NAME, L("Hello Windows"), win32.WS_OVERLAPPEDWINDOW, win32.CW_USEDEFAULT, win32.CW_USEDEFAULT, // Position
+    const hwnd = ui_window.CreateWindowEx(.{}, CLASS_NAME, L("Hello Windows"), win32.WS_OVERLAPPEDWINDOW, win32.CW_USEDEFAULT, win32.CW_USEDEFAULT, // Position
         400, 200, // Size
         null, // Parent window
         null, // Menu
         hInstance, // Instance handle
         null // Additional application data
-    ) orelse fatal("CreateWindow failed, error={}", .{win32.GetLastError()});
+    ) orelse win32.panicWin32("CreateWindow", win32.GetLastError());
 
     _ = win32.ShowWindow(hwnd, .{ .SHOWNORMAL = 1 });
 
     var msg: win32.MSG = undefined;
-    while (win32.GetMessage(&msg, null, 0, 0) != 0) {
-        _ = win32.TranslateMessage(&msg);
-        _ = win32.DispatchMessage(&msg);
+    while (ui_window.GetMessage(&msg, null, 0, 0) != 0) {
+        _ = ui_window.TranslateMessage(&msg);
+        _ = ui_window.DispatchMessage(&msg);
     }
     return @intCast(msg.wParam);
 }
@@ -71,7 +58,7 @@ fn WindowProc(
     uMsg: u32,
     wParam: win32.WPARAM,
     lParam: win32.LPARAM,
-) callconv(WINAPI) win32.LRESULT {
+) callconv(.winapi) win32.LRESULT {
     switch (uMsg) {
         win32.WM_DESTROY => {
             win32.PostQuitMessage(0);
@@ -87,5 +74,5 @@ fn WindowProc(
         },
         else => {},
     }
-    return win32.DefWindowProc(hwnd, uMsg, wParam, lParam);
+    return ui_window.DefWindowProc(hwnd, uMsg, wParam, lParam);
 }

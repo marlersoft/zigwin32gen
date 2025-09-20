@@ -1,15 +1,12 @@
 //! test basic network functionality
 const std = @import("std");
 
-const win32 = struct {
-    usingnamespace @import("win32").foundation;
-    usingnamespace @import("win32").networking.win_sock;
-    usingnamespace @import("win32").network_management.ip_helper;
-};
+const win32 = @import("win32");
+const win_sock = win32.networking.win_sock;
 
 pub fn main() void {
-    const s = win32.socket(@intFromEnum(win32.AF_INET), win32.SOCK_STREAM, @intFromEnum(win32.IPPROTO_TCP));
-    if (s == win32.INVALID_SOCKET) {
-        std.log.err("socket failed, error={}", .{win32.GetLastError()});
+    const s = win_sock.socket(@intFromEnum(win_sock.AF_INET), win_sock.SOCK_STREAM, @intFromEnum(win_sock.IPPROTO_TCP));
+    if (s == win_sock.INVALID_SOCKET) {
+        std.log.err("socket failed, error={f}", .{win32.foundation.GetLastError()});
     }
 }
