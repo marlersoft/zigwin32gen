@@ -3,7 +3,7 @@ const std = @import("std");
 
 pub fn addExamples(
     b: *std.Build,
-    optimize: std.builtin.Mode,
+    optimize: std.builtin.OptimizeMode,
     win32: *std.Build.Module,
     examples: std.Build.LazyPath,
 ) void {
@@ -30,7 +30,7 @@ pub fn addExamples(
 fn addExample(
     b: *std.Build,
     arches: []const ?[]const u8,
-    optimize: std.builtin.Mode,
+    optimize: std.builtin.OptimizeMode,
     win32: *std.Build.Module,
     examples: std.Build.LazyPath,
     root: []const u8,
@@ -46,10 +46,12 @@ fn addExample(
         const target = b.resolveTargetQuery(target_query);
         const exe = b.addExecutable(.{
             .name = name,
-            .root_source_file = examples.path(b, basename),
-            .target = target,
-            .optimize = optimize,
-            .single_threaded = true,
+            .root_module = b.createModule(.{
+                .root_source_file = examples.path(b, basename),
+                .target = target,
+                .optimize = optimize,
+                .single_threaded = true,
+            }),
             .win32_manifest = if (subsystem == .Windows) examples.path(b, "win32.manifest") else null,
         });
         exe.subsystem = subsystem;
