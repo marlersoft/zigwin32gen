@@ -81,6 +81,10 @@ const JsonFormatter = struct {
     value: std.json.Value,
     pub fn format(self: JsonFormatter, writer: *std.Io.Writer) !void {
         switch (self.value) {
+            .float => |v| try writer.printFloat(v, .{
+                // Needed for large integer float values that can't be converted in zig 0.15
+                .mode = .scientific,
+            }),
             .number_string => |s| try writer.writeAll(s),
             else => try writer.print("{f}", .{std.json.fmt(self.value, .{})}),
         }
