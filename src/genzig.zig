@@ -638,7 +638,7 @@ fn generateContainerModules(dir: std.fs.Dir, module: *Module) anyerror!void {
     };
     defer file.close();
     var buf: [output_buf_size]u8 = undefined;
-    var file_writer = file.writer(&buf);
+    var file_writer = file.writerStreaming(&buf);
     const writer = &file_writer.interface;
     defer writer.flush() catch @panic("flush failed");
 
