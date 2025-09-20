@@ -48,7 +48,6 @@ const root = @import("root");
 pub const UnicodeMode = enum { ansi, wide, unspecified };
 pub const unicode_mode: UnicodeMode = if (@hasDecl(root, "UNICODE")) (if (root.UNICODE) .wide else .ansi) else .unspecified;
 
-
 pub const L = std.unicode.utf8ToUtf16LeStringLiteral;
 
 pub const TCHAR = switch (unicode_mode) {
@@ -404,43 +403,7 @@ fn typedConst2(comptime ReturnType: type, comptime SwitchType: type, comptime va
         else => @compileError(target_type_error),
     }
 }
-fn typedConst2_0_13(comptime ReturnType: type, comptime SwitchType: type, comptime value: anytype) ReturnType {
-    const target_type_error = @as([]const u8, "typedConst cannot convert to " ++ @typeName(ReturnType));
-    const value_type_error = @as([]const u8, "typedConst cannot convert " ++ @typeName(@TypeOf(value)) ++ " to " ++ @typeName(ReturnType));
 
-    switch (@typeInfo(SwitchType)) {
-        .Int => |target_type_info| {
-            if (value >= std.math.maxInt(SwitchType)) {
-                if (target_type_info.signedness == .signed) {
-                    const UnsignedT = @Type(std.builtin.Type{ .Int = .{ .signedness = .unsigned, .bits = target_type_info.bits } });
-                    return @as(SwitchType, @bitCast(@as(UnsignedT, value)));
-                }
-            }
-            return value;
-        },
-        .Pointer => |target_type_info| switch (target_type_info.size) {
-            .One, .Many, .C => {
-                switch (@typeInfo(@TypeOf(value))) {
-                    .ComptimeInt, .Int => {
-                        const usize_value = if (value >= 0) value else @as(usize, @bitCast(@as(isize, value)));
-                        return @as(ReturnType, @ptrFromInt(usize_value));
-                    },
-                    else => @compileError(value_type_error),
-                }
-            },
-            else => target_type_error,
-        },
-        .Optional => |target_type_info| switch (@typeInfo(target_type_info.child)) {
-            .Pointer => return typedConst2_0_13(ReturnType, target_type_info.child, value),
-            else => target_type_error,
-        },
-        .Enum => |_| switch (@typeInfo(@TypeOf(value))) {
-            .Int => return @as(ReturnType, @enumFromInt(value)),
-            else => target_type_error,
-        },
-        else => @compileError(target_type_error),
-    }
-}
 test "typedConst" {
     try testing.expectEqual(@as(usize, @bitCast(@as(isize, -1))), @intFromPtr(typedConst(?*opaque {}, -1)));
     try testing.expectEqual(@as(usize, @bitCast(@as(isize, -12))), @intFromPtr(typedConst(?*opaque {}, -12)));
