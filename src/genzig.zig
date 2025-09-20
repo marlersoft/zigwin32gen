@@ -1,7 +1,7 @@
 const builtin = @import("builtin");
 const std = @import("std");
 const zigexports = @import("zigexports");
-const ArrayList = std.ArrayList;
+const ArrayList = std.array_list.Managed;
 const StringHashMap = std.StringHashMap;
 const StringPool = @import("StringPool.zig");
 
@@ -227,7 +227,7 @@ pub fn main() !u8 {
     // no need to free pass1_json_content
     global_pass1 = pass1data.parseRoot(allocator, pass1_json, pass1_json_content);
     const api_list: []StringPool.Val = blk: {
-        var api_list = std.ArrayList(StringPool.Val).init(allocator);
+        var api_list = ArrayList(StringPool.Val).init(allocator);
         const api_path = try std.fs.path.join(allocator, &.{ win32json_path, "api" });
         var api_dir = try std.fs.cwd().openDir(api_path, .{ .iterate = true });
         defer api_dir.close();
@@ -919,7 +919,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, api: metadata.Api) !voi
                 return std.ascii.lessThanIgnoreCase(lhs.name.slice, rhs.name.slice);
             }
         };
-        var sorted_imports = std.ArrayList(NamedApiImport).init(allocator);
+        var sorted_imports = ArrayList(NamedApiImport).init(allocator);
         defer sorted_imports.deinit();
         {
             var it = sdk_file.top_level_api_imports.iterator();
