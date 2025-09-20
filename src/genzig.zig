@@ -2305,17 +2305,10 @@ fn generateEnum(
                 try writer.line("// results in needing over 100Kb to store them as strings.");
                 try writer.line("// Instead, we use FormatMessage to access a string for each error.");
             }
-            try writer.line("pub fn format(");
-            try writer.linef("    self: {f},", .{pool_name});
-            try writer.line("    comptime fmt: []const u8,");
-            try writer.line("    options: @import(\"std\").fmt.FormatOptions,");
-            try writer.line("    writer: anytype,");
-            try writer.line(") !void {");
+            try writer.linef("pub fn format(self: {f}, writer: *@import(\"std\").Io.Writer) !void {{", .{pool_name});
             if (is_win32_error) {
-                try writer.line("    try @import(\"zig.zig\").fmtError(@intFromEnum(self)).format(fmt, options, writer);");
+                try writer.line("    try @import(\"zig.zig\").fmtError(@intFromEnum(self)).format(writer);");
             } else {
-                try writer.line("    _ = fmt;");
-                try writer.line("    _ = options;");
                 try writer.line("    try writer.print(\"{s}({})\", .{self.value.tagName() orelse \"?\", @intFromEnum(self.value)});");
             }
             try writer.line("}");

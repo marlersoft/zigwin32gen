@@ -156,50 +156,53 @@ pub const TRUE: win32.BOOL = 1;
 ///   5 (Access is denied.)
 ///
 /// The error is formatted using FormatMessage into a stack allocated buffer
-/// of 300 bytes. If the message exceeds 300 bytes (Messages can be arbitrarily
-/// long) then "..." is appended to the message.  The message may contain newlines
+/// of 300 bytes, or the `std.Io.Writer` buffer if it is larger.  If the message
+/// exceeds the length of either of these buffers (Messages can be arbitrarily long)
+/// then "..." is appended to the message.  The message may contain newlines
 /// and carriage returns but any trailing ones are trimmed.
 ///
-/// Provide the 's' fmt specifier to omit the error code.
-pub fn fmtError(error_code: u32) FormatError(300) {
+/// Use `fmtErrorMsg` to only write the error message
+pub fn fmtError(error_code: u32) FormatError(300, .code_and_msg) {
     return .{ .error_code = error_code };
 }
-pub fn FormatError(comptime max_len: usize) type {
+/// Returns a formatter that will print the given error in the following format:
+///
+///     <message-string>
+///
+/// Like `fmtError`, but only prints the error message
+pub fn fmtErrorMsg(error_code: u32) FormatError(300, .only_msg) {
+    return .{ .error_code = error_code };
+}
+pub fn FormatError(comptime stack_buf_size: usize, comptime kind: enum { code_and_msg, only_msg }) type {
     return struct {
         error_code: u32,
-        pub fn format(
-            self: @This(),
-            comptime fmt: []const u8,
-            options: std.fmt.FormatOptions,
-            writer: anytype,
-        ) @TypeOf(writer).Error!void {
-            _ = options;
-
-            const with_code = comptime blk: {
-                if (std.mem.eql(u8, fmt, "")) break :blk true;
-                if (std.mem.eql(u8, fmt, "s")) break :blk false;
-                @compileError("expected '{}' or '{s}' but got '{" ++ fmt ++ "}'");
-            };
-            if (with_code) try writer.print("{} (", .{self.error_code});
-            var buf: [max_len]u8 = undefined;
+        pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+            if (kind != .only_msg) try writer.print("{d} (", .{self.error_code});
+            var stack_buf: [stack_buf_size]u8 = undefined;
+            var buf: []u8 = if (writer.buffer.len >= stack_buf_size) try writer.writableSliceGreedy(stack_buf_size) else &stack_buf;
             const len = win32.FormatMessageA(
                 .{ .FROM_SYSTEM = 1, .IGNORE_INSERTS = 1 },
                 null,
                 self.error_code,
                 0,
-                @ptrCast(&buf),
-                buf.len,
+                @ptrCast(buf.ptr),
+                @intCast(buf.len),
                 null,
             );
             if (len == 0) {
                 try writer.writeAll("unknown error");
             }
-            const msg = std.mem.trimRight(u8, buf[0..len], "\r\n");
-            try writer.writeAll(msg);
+            const msg = std.mem.trimEnd(u8, buf[0..len], "\r\n");
+            if (buf.ptr == &stack_buf) {
+                try writer.writeAll(msg);
+            } else {
+                // "write" the bytes that were added
+                writer.advance(msg.len);
+            }
             if (len + 1 >= buf.len) {
                 try writer.writeAll("...");
             }
-            if (with_code) try writer.writeAll(")");
+            if (kind != .only_msg) try writer.writeAll(")");
         }
     };
 }
@@ -224,12 +227,8 @@ pub fn messageBoxThenPanic(
         ) noreturn {
             if (!thread_is_panicing) {
                 thread_is_panicing = true;
-                var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-                const msg_z: [:0]const u8 = if (std.fmt.allocPrintZ(
-                    arena.allocator(),
-                    "{s}",
-                    .{msg},
-                )) |msg_z| msg_z else |_| "failed allocate error message";
+                var buf: [1024]u8 = undefined;
+                const msg_z: [:0]const u8 = std.fmt.bufPrintZ(&buf, "{s}", .{msg}) catch "failed allocate error message";
                 _ = win32.MessageBoxA(null, msg_z, opt.title, opt.style);
             }
             std.debug.defaultPanic(msg, ret_addr);
@@ -240,7 +239,7 @@ pub fn messageBoxThenPanic(
 /// Calls std.debug.panic with a message that indicates what failed and the
 /// associated win32 error code.
 pub fn panicWin32(what: []const u8, err: win32.WIN32_ERROR) noreturn {
-    std.debug.panic("{s} failed, error={}", .{ what, err });
+    std.debug.panic("{s} failed, error={f}", .{ what, err });
 }
 
 /// Calls std.debug.panic with a message that indicates what failed and the
