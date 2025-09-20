@@ -365,9 +365,9 @@ pub fn main() !u8 {
         const w = &writer.interface;
         defer w.flush() catch @panic("flush failed");
         try w.writeAll(".{\n");
-        try w.writeAll("    .name = \"zigwin32\",\n");
+        try w.writeAll("    .name = .zigwin32,\n");
         try w.print("    .version = \"{f}\",\n", .{version});
-        try w.writeAll("    .minimum_zig_version = \"0.12.0\",\n");
+        try w.writeAll("    .minimum_zig_version = \"0.15.0\",\n");
         try w.writeAll("    .paths = .{\n");
         for (static_files) |name| {
             if (std.mem.eql(u8, name, ".gitignore")) continue;
