@@ -24,8 +24,12 @@ pub fn oom(e: error{OutOfMemory}) noreturn {
     @panic(@errorName(e));
 }
 fn parseError(filename: []const u8, lineno: u32, comptime fmt: []const u8, args: anytype) noreturn {
-    std.io.getStdErr().writer().print("{s}:{}: parse error: ", .{ filename, lineno }) catch |e| std.debug.panic("write to stderr failed with {s}", .{@errorName(e)});
-    std.io.getStdErr().writer().print(fmt, args) catch |e| std.debug.panic("write to stderr failed with {s}", .{@errorName(e)});
+    var buf: [128]u8 = undefined;
+    var stdout = std.fs.File.stderr();
+    var writer = stdout.writer(&buf);
+    writer.interface.print("{s}:{d}: parse error: ", .{ filename, lineno }) catch |e| std.debug.panic("write to stderr failed with {t}", .{e});
+    writer.interface.print(fmt, args) catch |e| std.debug.panic("write to stderr failed with {t}", .{e});
+    writer.interface.flush() catch @panic("flush failed");
     std.process.exit(0xff);
 }
 
@@ -49,7 +53,7 @@ pub fn read(
         const first_field = field_it.next() orelse continue;
         if (first_field.len == 0 or first_field[0] == '#') continue;
         const api_name = string_pool.add(first_field) catch |e| oom(e);
-        if (api_name_set.get(api_name)) |_| {} else parseError(filename, lineno, "unknown api '{}'", .{api_name});
+        if (api_name_set.get(api_name)) |_| {} else parseError(filename, lineno, "unknown api '{f}'", .{api_name});
 
         const api = blk: {
             const entry = root.getOrPut(allocator, api_name) catch |e| oom(e);
@@ -68,7 +72,7 @@ pub fn read(
 
             const func = blk: {
                 const entry = api.functions.getOrPut(allocator, func_name) catch |e| oom(e);
-                if (entry.found_existing) parseError(filename, lineno, "duplicate function '{s} {s}'", .{ api_name, func_name });
+                if (entry.found_existing) parseError(filename, lineno, "duplicate function '{f} {f}'", .{ api_name, func_name });
                 entry.value_ptr.* = .{};
                 break :blk entry.value_ptr;
             };
@@ -83,7 +87,7 @@ pub fn read(
                     func.ret = named_mod.modifier;
                 } else {
                     const entry = func.params.getOrPut(allocator, name) catch |e| oom(e);
-                    if (entry.found_existing) parseError(filename, lineno, "duplicate parameter '{s}'", .{name});
+                    if (entry.found_existing) parseError(filename, lineno, "duplicate parameter '{f}'", .{name});
                     entry.value_ptr.* = named_mod.modifier;
                 }
                 next_index = named_mod.end;
@@ -99,7 +103,7 @@ pub fn read(
             if (skipWhitespace(line, named_mod.end) != line.len) parseError(filename, lineno, "unexpected data: '{s}'", .{line[named_mod.end..]});
             const name = string_pool.add(named_mod.name) catch |e| oom(e);
             const entry = api.constants.getOrPut(allocator, name) catch |e| oom(e);
-            if (entry.found_existing) parseError(filename, lineno, "duplicate constant '{s}'", .{name});
+            if (entry.found_existing) parseError(filename, lineno, "duplicate constant '{f}'", .{name});
             entry.value_ptr.* = named_mod.modifier;
         } else parseError(filename, lineno, "unknown kind '{s}'", .{kind});
     }

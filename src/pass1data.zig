@@ -20,12 +20,12 @@ pub fn parseRoot(
         .{},
     ) catch |err| {
         std.log.err(
-            "{s}:{}:{}: {s}",
+            "{s}:{d}:{d}: {t}",
             .{
                 json_filename,
                 diagnostics.getLine(),
                 diagnostics.getColumn(),
-                @errorName(err),
+                err,
             },
         );
         @panic("json error");

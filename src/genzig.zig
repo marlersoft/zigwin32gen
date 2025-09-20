@@ -20,7 +20,7 @@ const jsonEnforce = common.jsonEnforce;
 const jsonEnforceMsg = common.jsonEnforceMsg;
 const fmtJson = common.fmtJson;
 
-const BufferedWriter = std.io.BufferedWriter(4096, std.fs.File.Writer);
+const output_buf_size = 4096;
 
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const allocator = arena.allocator();
@@ -161,7 +161,7 @@ const SdkFile = struct {
         if (self.top_level_api_imports.getPtr(top_level_symbol)) |import| {
             jsonEnforceMsg(
                 api.eql(import.api),
-                "symbol conflict '{s}', api mismatch '{s}' and '{s}'",
+                "symbol conflict '{s}', api mismatch '{f}' and '{f}'",
                 .{ name, api, import.api },
             );
             import.arches = import.arches.unionWith(arches);
@@ -185,10 +185,10 @@ pub fn main() !u8 {
         if (print_time_summary) {
             var total_millis = std.time.milliTimestamp() - main_start_millis;
             if (total_millis == 0) total_millis = 1; // prevent divide by 0
-            std.debug.print("Parse Time: {} millis ({}%)\n", .{ global_times.parse_time_millis, @divTrunc(100 * global_times.parse_time_millis, total_millis) });
-            std.debug.print("Read Time : {} millis ({}%)\n", .{ global_times.read_time_millis, @divTrunc(100 * global_times.read_time_millis, total_millis) });
-            std.debug.print("Gen Time  : {} millis ({}%)\n", .{ global_times.generate_time_millis, @divTrunc(100 * global_times.generate_time_millis, total_millis) });
-            std.debug.print("Total Time: {} millis\n", .{total_millis});
+            std.debug.print("Parse Time: {d} millis ({d}%)\n", .{ global_times.parse_time_millis, @divTrunc(100 * global_times.parse_time_millis, total_millis) });
+            std.debug.print("Read Time : {d} millis ({d}%)\n", .{ global_times.read_time_millis, @divTrunc(100 * global_times.read_time_millis, total_millis) });
+            std.debug.print("Gen Time  : {d} millis ({d}%)\n", .{ global_times.generate_time_millis, @divTrunc(100 * global_times.generate_time_millis, total_millis) });
+            std.debug.print("Total Time: {d} millis\n", .{total_millis});
         }
     }
     global_symbol_none = try global_symbol_pool.add("none");
@@ -199,7 +199,7 @@ pub fn main() !u8 {
 
     const cmd_args = all_args[1..];
     if (cmd_args.len != 5) {
-        std.log.err("expected 5 cmdline arguments but got {}", .{cmd_args.len});
+        std.log.err("expected 5 cmdline arguments but got {d}", .{cmd_args.len});
         return 1;
     }
     const extra_filename = cmd_args[0];
@@ -213,16 +213,23 @@ pub fn main() !u8 {
         defer win32json_dir.close();
         const file = try win32json_dir.openFile("version.txt", .{});
         defer file.close();
-        break :blk try file.reader().readAllAlloc(allocator, 100);
+        var buf: [100]u8 = undefined;
+        var reader = file.reader(&buf);
+        reader.interface.fillMore() catch |err| switch (err) {
+            error.EndOfStream => {}, // We read the entire file, which is expected
+            else => return err,
+        };
+        break :blk std.SemanticVersion.parse(reader.interface.buffered()) catch |err|
+            fatal("version '{s}' is not a valid semantic version: {t}", .{ reader.interface.buffered(), err });
     };
-    defer allocator.free(version);
-    _ = std.SemanticVersion.parse(version) catch |err|
-        fatal("version '{s}' is not a valid semantic version: {s}", .{ version, @errorName(err) });
 
     const pass1_json_content = blk: {
         var file = try std.fs.cwd().openFile(pass1_json, .{});
         defer file.close();
-        break :blk try file.readToEndAlloc(allocator, std.math.maxInt(usize));
+        var reader = file.reader(&.{});
+        var aw = std.Io.Writer.Allocating.init(allocator);
+        _ = try reader.interface.streamRemaining(&aw.writer);
+        break :blk try aw.toOwnedSlice();
     };
     // no need to free pass1_json_content
     global_pass1 = pass1data.parseRoot(allocator, pass1_json, pass1_json_content);
@@ -297,7 +304,7 @@ pub fn main() !u8 {
         defer api_dir.close();
 
         std.debug.print("-----------------------------------------------------------------------\n", .{});
-        std.debug.print("loading {} api json files...\n", .{api_list.len});
+        std.debug.print("loading {d} api json files...\n", .{api_list.len});
 
         var out_win32_dir = try out_dir.openDir("win32", .{});
         defer out_win32_dir.close();
@@ -305,8 +312,8 @@ pub fn main() !u8 {
         for (api_list, 0..) |api_name, api_index| {
             const api_num = api_index + 1;
             var basename_buf: [100]u8 = undefined;
-            const basename = std.fmt.bufPrint(&basename_buf, "{}.json", .{api_name}) catch @panic("basename_buf not big enough");
-            std.debug.print("{}/{}: loading '{s}'\n", .{ api_num, api_list.len, basename });
+            const basename = std.fmt.bufPrint(&basename_buf, "{f}.json", .{api_name}) catch @panic("basename_buf not big enough");
+            std.debug.print("{d}/{d}: loading '{s}'\n", .{ api_num, api_list.len, basename });
             //
             // TODO: would things run faster if I just memory mapped the file?
             //
@@ -318,12 +325,15 @@ pub fn main() !u8 {
 
         if (global_missing_com_overloads.items.len > 0) {
             std.log.err(
-                "missing {} entries in ComOverloads.txt, copy/paste the following to it:",
+                "missing {d} entries in ComOverloads.txt, copy/paste the following to it:",
                 .{global_missing_com_overloads.items.len},
             );
+            const stderr = std.fs.File.stderr();
+            var err_buf: [128]u8 = undefined;
+            var writer = stderr.writer(&err_buf);
             for (global_missing_com_overloads.items) |overload| {
-                try std.io.getStdErr().writer().print(
-                    "{s} {s} {s} {} TODO_FILL_IN_SUFFIX\n",
+                try writer.interface.print(
+                    "{f} {s} {s} {d} TODO_FILL_IN_SUFFIX\n",
                     .{
                         overload.api,
                         overload.com_type,
@@ -332,6 +342,7 @@ pub fn main() !u8 {
                     },
                 );
             }
+            try writer.interface.flush();
             std.process.exit(0xff);
         }
 
@@ -349,10 +360,13 @@ pub fn main() !u8 {
     {
         var zon = try out_dir.createFile("build.zig.zon", .{});
         defer zon.close();
-        const w = zon.writer();
+        var zon_buf: [1024]u8 = undefined;
+        var writer = zon.writer(&zon_buf);
+        const w = &writer.interface;
+        defer w.flush() catch @panic("flush failed");
         try w.writeAll(".{\n");
         try w.writeAll("    .name = \"zigwin32\",\n");
-        try w.print("    .version = \"{s}\",\n", .{version});
+        try w.print("    .version = \"{f}\",\n", .{version});
         try w.writeAll("    .minimum_zig_version = \"0.12.0\",\n");
         try w.writeAll("    .paths = .{\n");
         for (static_files) |name| {
@@ -378,9 +392,11 @@ fn stripDotDir(path: []const u8) []const u8 {
 fn installStaticFile(out_dir: std.fs.Dir, comptime name: []const u8) !void {
     const file = try out_dir.createFile(name, .{});
     defer file.close();
+    // unbuffered because we are writing only one big continuous slice
+    var writer = file.writer(&.{});
     // NOTE: it's important that we use @embedFile here so that the genzig
     //       executable tracks changes to these files
-    try file.writer().writeAll(@embedFile("static/" ++ name));
+    try writer.interface.writeAll(@embedFile("static/" ++ name));
 }
 
 fn readJson(comptime T: type, filename: []const u8, content: []const u8) T {
@@ -395,7 +411,7 @@ fn readJson(comptime T: type, filename: []const u8, content: []const u8) T {
         .{},
     ) catch |err| {
         std.log.err(
-            "{s}:{}:{}: {s}",
+            "{s}:{d}:{d}: {s}",
             .{
                 filename,
                 diagnostics.getLine(),
@@ -426,17 +442,17 @@ fn readComOverloads(
         if (line.len == 0) continue;
         var field_it = std.mem.tokenizeScalar(u8, line, ' ');
         const api = try global_symbol_pool.add(field_it.next() orelse continue);
-        if (api_name_set.get(api)) |_| {} else fatal("{s} line {}: unknown api '{}'", .{ filename, line_number, api });
-        const com_type = field_it.next() orelse fatal("{s} line {}: missing type field", .{ filename, line_number });
-        const method = field_it.next() orelse fatal("{s} line {}: missing method field", .{ filename, line_number });
-        const method_index_str = field_it.next() orelse fatal("{s} line {}: missing method index field", .{ filename, line_number });
+        if (api_name_set.get(api)) |_| {} else fatal("{s} line {d}: unknown api '{f}'", .{ filename, line_number, api });
+        const com_type = field_it.next() orelse fatal("{s} line {d}: missing type field", .{ filename, line_number });
+        const method = field_it.next() orelse fatal("{s} line {d}: missing method field", .{ filename, line_number });
+        const method_index_str = field_it.next() orelse fatal("{s} line {d}: missing method index field", .{ filename, line_number });
         const method_index = std.fmt.parseInt(u16, method_index_str, 10) catch |err| fatal(
-            "{s} line {}: invalid method index '{s}': {s}",
-            .{ filename, line_number, method_index_str, @errorName(err) },
+            "{s} line {d}: invalid method index '{s}': {t}",
+            .{ filename, line_number, method_index_str, err },
         );
-        const suffix = field_it.next() orelse fatal("{s} line {}: missing suffix field", .{ filename, line_number });
+        const suffix = field_it.next() orelse fatal("{s} line {d}: missing suffix field", .{ filename, line_number });
         if (field_it.next()) |f| fatal(
-            "{s} line {}: has extra field '{s}'",
+            "{s} line {d}: has extra field '{s}'",
             .{ filename, line_number, f },
         );
 
@@ -457,7 +473,7 @@ fn readComOverloads(
         const suffix_map = method_entry.value_ptr;
         const suffix_entry = try suffix_map.getOrPut(allocator, method_index);
         if (suffix_entry.found_existing) fatal(
-            "api '{s}' type '{s}' method '{s}' has duplicate entries for index {}",
+            "api '{f}' type '{s}' method '{s}' has duplicate entries for index {d}",
             .{ api, com_type, method, method_index },
         );
         suffix_entry.value_ptr.* = suffix;
@@ -500,9 +516,11 @@ const Export = struct {
 fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !void {
     var everything_file = try out_win32_dir.createFile("everything.zig", .{});
     defer everything_file.close();
-    var buffered_writer = BufferedWriter{ .unbuffered_writer = everything_file.writer() };
-    defer buffered_writer.flush() catch @panic("flush failed");
-    const writer = buffered_writer.writer();
+    var out_buf: [output_buf_size]u8 = undefined;
+    var file_writer = everything_file.writer(&out_buf);
+    const writer = &file_writer.interface;
+    defer writer.flush() catch @panic("flush failed");
+
     try writer.writeAll(&comptime removeCr(autogen_header ++
         \\//! This module contains aliases to ALL symbols inside the Win32 SDK.  It allows
         \\//! an application to access any and all symbols through a single import.
@@ -537,24 +555,24 @@ fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !vo
         }
     }
 
-    try addZigExports(writer.any(), &exports);
+    try addZigExports(writer, &exports);
 
     for (sdk_files.items) |sdk_file| {
-        try writer.print("// {s} exports {} constants:\n", .{ sdk_file.zig_name, sdk_file.const_exports.items.len });
+        try writer.print("// {s} exports {d} constants:\n", .{ sdk_file.zig_name, sdk_file.const_exports.items.len });
         for (sdk_file.const_exports.items) |constant| {
             const result = try exports.getOrPut(constant);
             if (result.found_existing) {
                 const existing = result.value_ptr;
                 try writer.print(
-                    "// omitting constant '{s}.{s}' in favor of {s} '{s}.{1s}'\n",
-                    .{ sdk_file.zig_name, constant, @tagName(existing.kind), existing.fileZigName() },
+                    "// omitting constant '{s}.{f}' in favor of {t} '{s}.{1f}'\n",
+                    .{ sdk_file.zig_name, constant, existing.kind, existing.fileZigName() },
                 );
             } else {
                 result.value_ptr.* = .{ .kind = .constant, .file = .{ .sdk_file = sdk_file } };
-                try writer.print("pub const {s} = @import(\"../win32.zig\").{s}.{0s};\n", .{ constant, sdk_file.zig_name });
+                try writer.print("pub const {f} = @import(\"../win32.zig\").{s}.{0f};\n", .{ constant, sdk_file.zig_name });
             }
         }
-        try writer.print("// {s} exports {} types:\n", .{ sdk_file.zig_name, sdk_file.type_exports.count() });
+        try writer.print("// {s} exports {d} types:\n", .{ sdk_file.zig_name, sdk_file.type_exports.count() });
         var export_it = sdk_file.type_exports.iterator();
         while (export_it.next()) |kv| {
             const type_name = kv.key_ptr.*;
@@ -563,40 +581,40 @@ fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !vo
             std.debug.assert(existing.kind == .type);
             if (existing.fileAsSdk() != sdk_file) {
                 try writer.print(
-                    "// omitting type '{s}.{s}' in favor of {s} '{s}.{1s}'\n",
-                    .{ sdk_file.zig_name, type_name, @tagName(existing.kind), existing.fileZigName() },
+                    "// omitting type '{s}.{f}' in favor of {t} '{s}.{1f}'\n",
+                    .{ sdk_file.zig_name, type_name, existing.kind, existing.fileZigName() },
                 );
             } else {
-                try writer.print("pub const {s} = @import(\"../win32.zig\").{s}.{0s};\n", .{ type_name, sdk_file.zig_name });
+                try writer.print("pub const {f} = @import(\"../win32.zig\").{s}.{0f};\n", .{ type_name, sdk_file.zig_name });
             }
         }
-        try writer.print("// {s} exports {} functions:\n", .{ sdk_file.zig_name, sdk_file.func_exports.count() });
+        try writer.print("// {s} exports {d} functions:\n", .{ sdk_file.zig_name, sdk_file.func_exports.count() });
         var func_it = sdk_file.func_exports.iterator();
         while (func_it.next()) |kv| {
             const func = kv.key_ptr.*;
             if (exports.get(func)) |existing| {
                 try writer.print(
-                    "// omitting function '{s}.{s}' in favor of {s} '{s}.{1s}'\n",
-                    .{ sdk_file.zig_name, func, @tagName(existing.kind), existing.fileZigName() },
+                    "// omitting function '{s}.{f}' in favor of {t} '{s}.{1f}'\n",
+                    .{ sdk_file.zig_name, func, existing.kind, existing.fileZigName() },
                 );
             } else {
-                try writer.print("pub const {s} = @import(\"../win32.zig\").{s}.{0s};\n", .{ func, sdk_file.zig_name });
+                try writer.print("pub const {f} = @import(\"../win32.zig\").{s}.{0f};\n", .{ func, sdk_file.zig_name });
                 try exports.put(func, .{ .kind = .function, .file = .{ .sdk_file = sdk_file } });
             }
         }
     }
 }
 
-fn addZigExports(writer: std.io.AnyWriter, exports: *StringPool.HashMap(Export)) !void {
+fn addZigExports(writer: *std.Io.Writer, exports: *StringPool.HashMap(Export)) !void {
     inline for (zigexports.declarations) |decl| {
         const name = try global_symbol_pool.add(decl.name);
         const result = try exports.getOrPut(name);
         if (result.found_existing) std.debug.panic(
-            "zig.zig {s} export '{}' conflicts with {s} from {s}",
-            .{ @tagName(decl.kind), name, @tagName(result.value_ptr.kind), result.value_ptr.fileZigName() },
+            "zig.zig {t} export '{f}' conflicts with {t} from {s}",
+            .{ decl.kind, name, result.value_ptr.kind, result.value_ptr.fileZigName() },
         );
         result.value_ptr.* = .{ .kind = decl.kind, .file = .zig };
-        try writer.print("pub const {s} = zig.{0s};\n", .{name});
+        try writer.print("pub const {f} = zig.{0f};\n", .{name});
     }
 }
 
@@ -619,9 +637,10 @@ fn generateContainerModules(dir: std.fs.Dir, module: *Module) anyerror!void {
         break :blk try dir.createFile(module.zig_basename, .{});
     };
     defer file.close();
-    var buffered_writer = BufferedWriter{ .unbuffered_writer = file.writer() };
-    defer buffered_writer.flush() catch @panic("flush failed");
-    const writer = buffered_writer.writer();
+    var buf: [output_buf_size]u8 = undefined;
+    var file_writer = file.writer(&buf);
+    const writer = &file_writer.interface;
+    defer writer.flush() catch @panic("flush failed");
 
     const children = try common.allocMapValues(allocator, *Module, module.children);
     defer allocator.free(children);
@@ -629,13 +648,13 @@ fn generateContainerModules(dir: std.fs.Dir, module: *Module) anyerror!void {
     std.mem.sort(*Module, children, {}, moduleLessThan);
     if (module.file) |_| {
         try writer.print("//--------------------------------------------------------------------------------\n", .{});
-        try writer.print("// Section: SubModules ({})\n", .{children.len});
+        try writer.print("// Section: SubModules ({d})\n", .{children.len});
         try writer.print("//--------------------------------------------------------------------------------\n", .{});
     } else {
         try writer.writeAll(autogen_header);
     }
     for (children) |child| {
-        try writer.print("pub const {s} = @import(\"{s}/{0s}.zig\");\n", .{ child.name, module.name.slice });
+        try writer.print("pub const {f} = @import(\"{s}/{0f}.zig\");\n", .{ child.name, module.name.slice });
     }
 
     if (module.file) |_| {} else {
@@ -671,7 +690,7 @@ fn readAndGenerateApiFile(
     // no need to free content, owned by json_arena
     const read_end_millis = std.time.milliTimestamp();
     global_times.read_time_millis += read_end_millis - read_start_millis;
-    std.debug.print("  read {} bytes\n", .{content.len});
+    std.debug.print("  read {d} bytes\n", .{content.len});
 
     const json_root = metadata.Api.parse(json_arena, api_path, json_basename, content);
     // no need to free json_root, owned by json_arena
@@ -767,9 +786,10 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, api: metadata.Api) !voi
 
     var out_file = try module_dir.createFile(module.zig_basename, .{});
     defer out_file.close();
-    var buffered_writer = BufferedWriter{ .unbuffered_writer = out_file.writer() };
-    defer buffered_writer.flush() catch @panic("flush failed");
-    var code_writer = CodeWriter{ .writer = buffered_writer.writer(), .depth = 0, .midline = false };
+    var out_buf: [output_buf_size]u8 = undefined;
+    var file_writer = out_file.writer(&out_buf);
+    defer file_writer.interface.flush() catch @panic("flush failed");
+    var code_writer = CodeWriter{ .writer = &file_writer.interface, .depth = 0, .midline = false };
     // need to specify type explicitly because of https://github.com/ziglang/zig/issues/12795
     const writer: *CodeWriter = &code_writer;
 
@@ -800,7 +820,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, api: metadata.Api) !voi
         while (it.next()) |entry| {
             const name = entry.key_ptr.*;
             try writer.linef(
-                "pub const {s} = switch(@import(\"{s}zig.zig\").arch) {{",
+                "pub const {f} = switch(@import(\"{s}zig.zig\").arch) {{",
                 .{ name, import_prefix_table[sdk_file.depth] },
             );
             var combined_arches: metadata.Architectures = .{ .filter = .{} };
@@ -825,7 +845,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, api: metadata.Api) !voi
     }
     try writer.line("");
     try writer.line("//--------------------------------------------------------------------------------");
-    try writer.linef("// Section: Functions ({})", .{api.Functions.len});
+    try writer.linef("// Section: Functions ({d})", .{api.Functions.len});
     try writer.line("//--------------------------------------------------------------------------------");
 
     const FuncNodeIndex = enum(usize) { _ };
@@ -863,7 +883,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, api: metadata.Api) !voi
             if (entry.value_ptr.generated)
                 continue;
 
-            try writer.linef("pub const {s} = switch (@import(\"{s}zig.zig\").arch) {{", .{ name_pool, import_prefix_table[sdk_file.depth] });
+            try writer.linef("pub const {f} = switch (@import(\"{s}zig.zig\").arch) {{", .{ name_pool, import_prefix_table[sdk_file.depth] });
 
             var arches_handled: metadata.Architectures = .{ .filter = .{} };
 
@@ -878,13 +898,13 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, api: metadata.Api) !voi
                 try writer.line("");
                 try generateFunction(sdk_file, writer, .{ .dll = node.func.* });
                 try writer.line("");
-                try writer.linef("}}).{},", .{name_pool});
+                try writer.linef("}}).{f},", .{name_pool});
 
                 node_index = node.next orelse break;
             }
             if (arches_handled.filter != null) {
                 try writer.linef(
-                    "    else => |a| if (@import(\"builtin\").is_test) void else @compileError(\"function '{}' is not supported on architecture \" ++ @tagName(a)),",
+                    "    else => |a| if (@import(\"builtin\").is_test) void else @compileError(\"function '{f}' is not supported on architecture \" ++ @tagName(a)),",
                     .{name_pool},
                 );
             }
@@ -898,12 +918,12 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, api: metadata.Api) !voi
     std.debug.assert(api.Functions.len >= sdk_file.func_exports.count());
     try writer.line("");
     try writer.line("//--------------------------------------------------------------------------------");
-    try writer.linef("// Section: Unicode Aliases ({})", .{api.UnicodeAliases.len});
+    try writer.linef("// Section: Unicode Aliases ({d})", .{api.UnicodeAliases.len});
     try writer.line("//--------------------------------------------------------------------------------");
     try generateUnicodeAliases(sdk_file, writer, api.UnicodeAliases);
     const import_total = @intFromBool(sdk_file.uses_guid) + sdk_file.top_level_api_imports.count();
     try writer.line("//--------------------------------------------------------------------------------");
-    try writer.linef("// Section: Imports ({})", .{import_total});
+    try writer.linef("// Section: Imports ({d})", .{import_total});
     try writer.line("//--------------------------------------------------------------------------------");
     if (sdk_file.uses_guid) {
         try writer.linef("const Guid = @import(\"{s}zig.zig\").Guid;", .{sdk_file.getWin32DirImportPrefix()});
@@ -940,15 +960,15 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, api: metadata.Api) !voi
                 // TODO: should I cache this mapping from api ref to api import path?
                 const api_path = try allocApiImportPathFromRef(api_upper.slice);
                 defer allocator.free(api_path);
-                try writer.linef("const {s} = @import(\"{s}{s}.zig\").{0s};", .{ import.name, sdk_file.getWin32DirImportPrefix(), api_path });
+                try writer.linef("const {f} = @import(\"{s}{s}.zig\").{0f};", .{ import.name, sdk_file.getWin32DirImportPrefix(), api_path });
             }
         }
         if (arch_specific_imports.count() > 0) {
-            try writer.linef("// {} arch-specific imports", .{arch_specific_imports.count()});
+            try writer.linef("// {d} arch-specific imports", .{arch_specific_imports.count()});
             var arch_imports_it = arch_specific_imports.iterator();
             while (arch_imports_it.next()) |arch_import_node| {
                 const name = arch_import_node.key_ptr.*;
-                try writer.linef("const {s} = switch(@import(\"{s}zig.zig\").arch) {{", .{ name, import_prefix_table[sdk_file.depth] });
+                try writer.linef("const {f} = switch(@import(\"{s}zig.zig\").arch) {{", .{ name, import_prefix_table[sdk_file.depth] });
                 var combined_arches: metadata.Architectures = .{ .filter = .{} };
                 for (arch_import_node.value_ptr.getItemsConst()) |object| {
                     combined_arches = combined_arches.unionWith(.{ .filter = object.filter });
@@ -958,7 +978,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, api: metadata.Api) !voi
                     // TODO: should I cache this mapping from api ref to api import path?
                     const api_path = try allocApiImportPathFromRef(api_upper.slice);
                     defer allocator.free(api_path);
-                    try writer.linef("    {s}@import(\"{s}{s}.zig\").{s},", .{ def_prefix, sdk_file.getWin32DirImportPrefix(), api_path, name });
+                    try writer.linef("    {s}@import(\"{s}{s}.zig\").{f},", .{ def_prefix, sdk_file.getWin32DirImportPrefix(), api_path, name });
                 }
                 if (combined_arches.filter != null) {
                     //try writer.line("    else => @compileError(\"unsupported on this arch\"),");
@@ -977,7 +997,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, api: metadata.Api) !voi
     if (sdk_file.tmp_func_ptr_workaround_list.items.len > 0) {
         try writer.line("    // The following '_ = <FuncPtrType>' lines are a workaround for https://github.com/ziglang/zig/issues/4476");
         for (sdk_file.tmp_func_ptr_workaround_list.items) |func_ptr_type| {
-            try writer.linef("    if (@hasDecl(@This(), \"{s}\")) {{ _ = {0s}; }}", .{func_ptr_type});
+            try writer.linef("    if (@hasDecl(@This(), \"{f}\")) {{ _ = {0f}; }}", .{func_ptr_type});
         }
         try writer.line("");
     }
@@ -1002,7 +1022,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, api: metadata.Api) !voi
         while (it.next()) |notnull_api| {
             const name = notnull_api.key_ptr.*;
             if (sdk_file.extra_funcs_applied.get(name)) |_| {} else {
-                std.log.err("extra.txt api '{s}' function '{s}' was not applied", .{ sdk_file.json_name, name });
+                std.log.err("extra.txt api '{f}' function '{f}' was not applied", .{ sdk_file.json_name, name });
                 error_count += 1;
             }
         }
@@ -1017,7 +1037,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, api: metadata.Api) !voi
         while (it.next()) |up_api| {
             const pool_name = up_api.key_ptr.*;
             if (sdk_file.extra_consts_applied.get(pool_name)) |_| {} else {
-                std.log.err("extra.txt api '{s}' constant '{s}' was not applied", .{ sdk_file.json_name, pool_name });
+                std.log.err("extra.txt api '{f}' constant '{f}' was not applied", .{ sdk_file.json_name, pool_name });
                 error_count += 1;
             }
         }
@@ -1251,7 +1271,7 @@ fn generateTypeRefRec(
                     jsonPanicMsg("missing anonymous type '{s}' (this scope does not have any anonymous types)!", .{name});
                 const name_pool = try global_symbol_pool.add(name);
                 const t = anon_types.types.get(name_pool) orelse
-                    jsonPanicMsg("missing anonymous type '{s}'!", .{name_pool});
+                    jsonPanicMsg("missing anonymous type '{f}'!", .{name_pool});
                 switch (t.Kind) {
                     .Struct => try generateStructOrUnionDef(sdk_file, writer, t, self.nested_context),
                     .Union => try generateStructOrUnionDef(sdk_file, writer, t, self.nested_context),
@@ -1353,7 +1373,7 @@ fn generateTypeRefRec(
                 // TODO: should we use size 1 here?
                 break :init 1;
             };
-            try writer.writef("[{}]", .{shape_size}, .{ .start = .any, .nl = false });
+            try writer.writef("[{d}]", .{shape_size}, .{ .start = .any, .nl = false });
             try generateTypeRefRec(sdk_file, writer, fmtTypeRef(array.Child.*, self.arches, self.options, self.nested_context), .child);
         },
         .LPArray => |array| {
@@ -1374,7 +1394,7 @@ fn generateTypeRefRec(
                 if (array.CountConst == -1 or array.CountConst == 0) {
                     try writer.writef("[*{s}]", .{sentinel_suffix}, .{ .start = .any, .nl = false });
                 } else {
-                    try writer.writef("*[{}]", .{array.CountConst}, .{ .start = .any, .nl = false });
+                    try writer.writef("*[{d}]", .{array.CountConst}, .{ .start = .any, .nl = false });
                 }
                 if (array.CountConst <= 0 and self.options.is_const)
                     try writer.write("const ", .{ .start = .any, .nl = false });
@@ -1437,19 +1457,12 @@ const ConstValueFormatter = struct {
     value_type: metadata.ValueType,
     value: std.json.Value,
     sdk_file: *SdkFile,
-    pub fn format(
-        self: @This(),
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        _ = fmt;
-        _ = options;
+    pub fn format(self: @This(), writer: *std.Io.Writer) !void {
         if (self.value_type == .String) {
             switch (self.value) {
                 .null => try writer.writeAll("null"),
-                .string => |s| try writer.print("\"{}\"", .{std.zig.fmtEscapes(s)}),
-                else => std.debug.panic("uhandled type '{s}'", .{@tagName(self.value)}),
+                .string => |s| try writer.print("\"{f}\"", .{std.zig.fmtString(s)}),
+                else => std.debug.panic("unhandled type '{t}'", .{self.value}),
             }
             return;
         }
@@ -1474,7 +1487,7 @@ const ConstValueFormatter = struct {
                 else => {},
             }
         }
-        try writer.print("@as({s}, {})", .{ zig_type, fmtJson(self.value) });
+        try writer.print("@as({s}, {f})", .{ zig_type, fmtJson(self.value) });
     }
 };
 
@@ -1512,12 +1525,12 @@ fn generateConstant(sdk_file: *SdkFile, writer: *CodeWriter, constant: metadata.
     if (constant.Type == .Native) {
         jsonEnforce(constant.ValueType != .PropertyKey);
         if (constant.Type.Native.Name == .Guid) {
-            try writer.linef("pub const {s} = Guid.initString({});", .{
+            try writer.linef("pub const {f} = Guid.initString({f});", .{
                 name_pool,
                 fmtConstValue(constant.ValueType, constant.Value, sdk_file),
             });
         } else {
-            try writer.linef("pub const {s} = {};", .{
+            try writer.linef("pub const {f} = {f};", .{
                 name_pool,
                 fmtConstValue(constant.ValueType, constant.Value, sdk_file),
             });
@@ -1526,22 +1539,22 @@ fn generateConstant(sdk_file: *SdkFile, writer: *CodeWriter, constant: metadata.
         if (constant.ValueType == .PropertyKey) {
             const value_obj = switch (constant.Value) {
                 .object => |obj| obj,
-                else => jsonPanicMsg("expected PropertyKey to be an object but got: {s}", .{fmtJson(constant.Value)}),
+                else => jsonPanicMsg("expected PropertyKey to be an object but got: {f}", .{fmtJson(constant.Value)}),
             };
             try jsonObjEnforceKnownFieldsOnly(value_obj, &[_][]const u8{ "Fmtid", "Pid" }, sdk_file);
             const fmtid = (try jsonObjGetRequired(value_obj, "Fmtid", sdk_file)).string;
             const pid = (try jsonObjGetRequired(value_obj, "Pid", sdk_file)).integer;
-            try writer.writef("pub const {s} = ", .{name_pool}, .{ .nl = false });
+            try writer.writef("pub const {f} = ", .{name_pool}, .{ .nl = false });
             try generateTypeRef(sdk_file, writer, zig_type_formatter);
             sdk_file.uses_guid = true;
-            try writer.writef(" {{ .fmtid = Guid.initString(\"{s}\"), .pid = {} }};", .{ fmtid, pid }, .{ .start = .mid });
+            try writer.writef(" {{ .fmtid = Guid.initString(\"{s}\"), .pid = {d} }};", .{ fmtid, pid }, .{ .start = .mid });
         } else {
-            try writer.writef("pub const {s} = @import(\"{s}zig.zig\").typedConst(", .{
+            try writer.writef("pub const {f} = @import(\"{s}zig.zig\").typedConst(", .{
                 name_pool,
                 sdk_file.getWin32DirImportPrefix(),
             }, .{ .nl = false });
             try generateTypeRef(sdk_file, writer, zig_type_formatter);
-            try writer.writef(", {});", .{
+            try writer.writef(", {f});", .{
                 fmtConstValue(constant.ValueType, constant.Value, sdk_file),
             }, .{ .start = .mid });
         }
@@ -1561,7 +1574,7 @@ const also_usable_type_api_map = std.StaticStringMap([]const u8).initComptime(.{
 const Depth = u3;
 
 const CodeWriter = struct {
-    writer: BufferedWriter.Writer,
+    writer: *std.Io.Writer,
     depth: u4,
     midline: bool,
 
@@ -1643,8 +1656,8 @@ fn generateType(
 ) !void {
     if (api_type_substitutes.get(t.Name)) |replacement| {
         try writer.linef(
-            "// {s} Type '{s}' has been substituted with '{s}'",
-            .{ @tagName(t.Kind), t.Name, replacement },
+            "// {t} Type '{s}' has been substituted with '{s}'",
+            .{ t.Kind, t.Name, replacement },
         );
         return;
     }
@@ -1657,8 +1670,8 @@ fn generateType(
                 jsonPanicMsg("not impl", .{});
             const clsid_pool = try global_symbol_pool.addFormatted("CLSID_{s}", .{t.Name});
             sdk_file.uses_guid = true;
-            try writer.linef("const {s}_Value = Guid.initString(\"{s}\");", .{ clsid_pool, class_id.Guid });
-            try writer.linef("pub const {s} = &{0s}_Value;", .{clsid_pool});
+            try writer.linef("const {f}_Value = Guid.initString(\"{s}\");", .{ clsid_pool, class_id.Guid });
+            try writer.linef("pub const {f} = &{0f}_Value;", .{clsid_pool});
             try sdk_file.const_exports.append(clsid_pool);
             return;
         },
@@ -1686,7 +1699,7 @@ fn generateType(
     } else if (t.Architectures.filter) |filter| {
         try addArchSpecific(metadata.Type, arch_specific, pool_name, filter, t);
     } else {
-        const def_prefix = try std.fmt.allocPrint(allocator, "pub const {p} = ", .{std.zig.fmtId(t.Name)});
+        const def_prefix = try std.fmt.allocPrint(allocator, "pub const {f} = ", .{std.zig.fmtIdP(t.Name)});
         defer allocator.free(def_prefix);
         try generateTypeDefinition(sdk_file, writer, t, enum_alias_conflicts, pool_name, def_prefix, ";");
     }
@@ -1707,7 +1720,7 @@ fn generateTypeDefinition(
                 try writer.linef("// TODO: this type has a FreeFunc '{s}', what can Zig do with this information?", .{free_func});
             }
             if (typedef.InvalidHandleValue) |v| {
-                try writer.linef("// TODO: this type has an InvalidHandleValue of '{}', what can Zig do with this information?", .{v});
+                try writer.linef("// TODO: this type has an InvalidHandleValue of '{d}', what can Zig do with this information?", .{v});
             }
 
             // HANDLE PSTR and PWSTR specially because win32metadata is not properly declaring them as arrays, only pointers
@@ -1724,15 +1737,15 @@ fn generateTypeDefinition(
                 const child_generic = switch (typedef.Def) {
                     .PointerTo => |to| to.Child,
                     else => jsonPanicMsg(
-                        "definition of {s} has changed! (Def.Kind != PointerTo, it is {s})",
-                        .{ t.Name, @tagName(typedef.Def) },
+                        "definition of {s} has changed! (Def.Kind != PointerTo, it is {t})",
+                        .{ t.Name, typedef.Def },
                     ),
                 };
                 const child_native = switch (child_generic.*) {
                     .Native => |*n| n,
                     else => jsonPanicMsg(
-                        "definition of {s} has changed! (Def.Child.Kind != Native, it is {s})",
-                        .{ pool_name, @tagName(child_generic.*) },
+                        "definition of {f} has changed! (Def.Child.Kind != Native, it is {t})",
+                        .{ pool_name, child_generic.* },
                     ),
                 };
                 // TODO: is something is referencing PSTR or PWSTR and is NotNullTerm, then
@@ -1755,7 +1768,7 @@ fn generateTypeDefinition(
                 if (also_usable_type_api_map.get(also_usable_for)) |api| {
                     const api_pool = try global_symbol_pool.add(api);
                     try sdk_file.addApiImport(t.Architectures, also_usable_for, api_pool, &.{});
-                    try writer.linef("//TODO: type '{s}' is \"AlsoUsableFor\" '{s}' which means this type is implicitly", .{ pool_name, also_usable_for });
+                    try writer.linef("//TODO: type '{f}' is \"AlsoUsableFor\" '{s}' which means this type is implicitly", .{ pool_name, also_usable_for });
                     try writer.linef("//      convertible to '{s}' but not the other way around.  I don't know how to do this", .{also_usable_for});
                     try writer.line("//      in Zig so for now I'm just defining it as an alias");
                     try writer.linef("{s}{s}{s}", .{ def_prefix, also_usable_for, def_suffix });
@@ -1872,7 +1885,7 @@ const com_types_to_skip = std.StaticStringMap(void).initComptime(.{
 
 fn generatePlatformComment(writer: *CodeWriter, maybe_platform: ?metadata.Platform) !void {
     if (maybe_platform) |platform| {
-        try writer.linef("// TODO: this type is limited to platform '{s}'", .{@tagName(platform)});
+        try writer.linef("// TODO: this type is limited to platform '{t}'", .{platform});
     }
 }
 
@@ -1915,8 +1928,8 @@ fn generateStructOrUnionDef(
         .Struct => |*c| .{ .container = c, .zig_type = "struct" },
         .Union => |*c| .{ .container = c, .zig_type = "union" },
         else => std.debug.panic(
-            "invalid type kind '{s}' passed to generateStructOrUnionDef",
-            .{@tagName(t.Kind)},
+            "invalid type kind '{t}' passed to generateStructOrUnionDef",
+            .{t.Kind},
         ),
     };
     const container = info.container;
@@ -1943,9 +1956,9 @@ fn generateStructOrUnionDef(
             try anon_types.types.put(pool_name, nested_type.*);
         } else {
             // TODO: I don't know why this isn't working!!!
-            //const def_prefix = try std.fmt.allocPrint(allocator, "pub const {p} = ", .{std.zig.fmtId(pool_name)});
+            //const def_prefix = try std.fmt.allocPrint(allocator, "pub const {f} = ", .{std.zig.fmtIdP(pool_name)});
             //defer allocator.free(def_prefix);
-            try writer.writef("pub const {s} = ", .{pool_name}, .{ .nl = false });
+            try writer.writef("pub const {f} = ", .{pool_name}, .{ .nl = false });
             switch (nested_type.Kind) {
                 .Union => try generateStructOrUnionDef(sdk_file, writer, nested_type.*, this_nested_context),
                 .Struct => try generateStructOrUnionDef(sdk_file, writer, nested_type.*, this_nested_context),
@@ -1977,10 +1990,10 @@ fn generateStructOrUnionDef(
                 try writer.line("/// Deprecated");
             }
             const field_type_formatter = try addTypeRefs(sdk_file, t.Architectures, field.Type, field_options, this_nested_context);
-            try writer.writef("{p}: ", .{std.zig.fmtId(field.Name)}, .{ .nl = false });
+            try writer.writef("{f}: ", .{std.zig.fmtIdP(field.Name)}, .{ .nl = false });
             try generateTypeRef(sdk_file, writer, field_type_formatter);
             if (container.PackingSize >= 1) {
-                try writer.writef(" align({})", .{container.PackingSize}, .{ .start = .mid, .nl = false });
+                try writer.writef(" align({d})", .{container.PackingSize}, .{ .start = .mid, .nl = false });
             }
             try writer.write(",", .{ .start = .mid });
         }
@@ -2159,12 +2172,12 @@ const EnumValue = struct {
                 if (std.mem.eql(u8, s, "9223372036854775808"))
                     return .{ .flag = 63 }; // TODO: verify this is not off-by-one
                 std.debug.panic(
-                    "todo: handle enum flag value json number string '{s}' ('{s}' '{s}')",
+                    "todo: handle enum flag value json number string '{s}' ('{f}' '{s}')",
                     .{ s, self.pool_name, self.short_name },
                 );
             },
             else => {
-                std.debug.panic("todo: flagIndex for json value {s}", .{@tagName(self.value)});
+                std.debug.panic("todo: flagIndex for json value {t}", .{self.value});
             },
         }
     }
@@ -2257,7 +2270,7 @@ fn generateEnum(
     } else if (!type_enum.Flags) {
         for (values) |val| {
             if (val.conflict_index == null) {
-                try writer.linef("    {p} = {},", .{ std.zig.fmtId(val.short_name), fmtJson(val.value) });
+                try writer.linef("    {f} = {f},", .{ std.zig.fmtIdP(val.short_name), fmtJson(val.value) });
             }
         }
         if (non_exhaustive_enums.get(pool_name.slice)) |_| {
@@ -2265,19 +2278,19 @@ fn generateEnum(
         }
         for (values) |val| {
             if (val.conflict_index) |conflict_index| {
-                try writer.linef("    pub const {p} = .{p};", .{ std.zig.fmtId(val.short_name), std.zig.fmtId(values[conflict_index].short_name) });
+                try writer.linef("    pub const {f} = .{f};", .{ std.zig.fmtIdP(val.short_name), std.zig.fmtIdP(values[conflict_index].short_name) });
             }
         }
         if (non_exhaustive_enums.get(pool_name.slice)) |_| {
             writer.depth += 1;
             defer writer.depth -= 1;
-            try writer.linef("pub fn tagName(self: {s}) ?[:0]const u8 {{", .{pool_name});
+            try writer.linef("pub fn tagName(self: {f}) ?[:0]const u8 {{", .{pool_name});
             try writer.line("    return switch (self) {");
             for (values) |val| {
                 if (val.conflict_index) |_| continue;
-                try writer.linef("        .{p} => \"{}\",", .{
-                    std.zig.fmtId(val.short_name),
-                    std.zig.fmtEscapes(val.short_name),
+                try writer.linef("        .{f} => \"{f}\",", .{
+                    std.zig.fmtIdP(val.short_name),
+                    std.zig.fmtString(val.short_name),
                 });
             }
             try writer.line("        else => null,");
@@ -2293,7 +2306,7 @@ fn generateEnum(
                 try writer.line("// Instead, we use FormatMessage to access a string for each error.");
             }
             try writer.line("pub fn format(");
-            try writer.linef("    self: {s},", .{pool_name});
+            try writer.linef("    self: {f},", .{pool_name});
             try writer.line("    comptime fmt: []const u8,");
             try writer.line("    options: @import(\"std\").fmt.FormatOptions,");
             try writer.line("    writer: anytype,");
@@ -2334,7 +2347,7 @@ fn generateEnum(
                 try writer.linef("    _{}: u1 = 0,", .{i});
                 continue;
             };
-            try writer.linef("    {p}: u1 = 0,", .{std.zig.fmtId(flag.short_name)});
+            try writer.linef("    {f}: u1 = 0,", .{std.zig.fmtIdP(flag.short_name)});
         }
         for (flag_map[bit_count..]) |maybe_flag| {
             if (maybe_flag) |_|
@@ -2347,10 +2360,10 @@ fn generateEnum(
                 .zero => {},
                 .flag => |index| {
                     if (val.conflict_index) |conflict_index| {
-                        try writer.linef("    // {p} (bit index {}) conflicts with {p}", .{
-                            std.zig.fmtId(val.short_name),
+                        try writer.linef("    // {f} (bit index {d}) conflicts with {f}", .{
+                            std.zig.fmtIdP(val.short_name),
                             index,
-                            std.zig.fmtId(values[conflict_index].short_name),
+                            std.zig.fmtIdP(values[conflict_index].short_name),
                         });
                     }
                 },
@@ -2370,7 +2383,7 @@ fn generateEnum(
         return;
     }
     if (suppress_enum_aliases.get(pool_name.slice)) |_| {
-        try writer.linef("// TODO: enum '{}' has known issues with its value aliases", .{pool_name});
+        try writer.linef("// TODO: enum '{f}' has known issues with its value aliases", .{pool_name});
         return;
     }
 
@@ -2378,10 +2391,10 @@ fn generateEnum(
     var alias_count: u32 = 0;
     for (values) |val| {
         if (enum_alias_conflicts.get(val.pool_name)) |existing| {
-            std.debug.print("error: enum value alias '{}' is defined by 2 enum types.\n", .{val.pool_name});
+            std.debug.print("error: enum value alias '{f}' is defined by 2 enum types.\n", .{val.pool_name});
             std.debug.print("       add one of the following lines to the suppress_enum_aliases list:\n", .{});
-            std.debug.print("    .{{ \"{}\", .{{}} }},\n", .{existing});
-            std.debug.print("    .{{ \"{}\", .{{}} }},\n", .{pool_name});
+            std.debug.print("    .{{ \"{f}\", .{{}} }},\n", .{existing});
+            std.debug.print("    .{{ \"{f}\", .{{}} }},\n", .{pool_name});
             std.process.exit(0xff);
         }
         if (val.no_alias) {
@@ -2392,10 +2405,10 @@ fn generateEnum(
         try sdk_file.const_exports.append(val.pool_name);
         const target_short_name = if (val.conflict_index) |i| values[i].short_name else val.short_name;
         if (type_enum.Flags) switch (val.flagsValue()) {
-            .zero => try writer.linef("pub const {} = {}{{ }};", .{ val.pool_name, pool_name }),
-            .flag => try writer.linef("pub const {} = {}{{ .{p} = 1 }};", .{ val.pool_name, pool_name, std.zig.fmtId(target_short_name) }),
+            .zero => try writer.linef("pub const {f} = {f}{{ }};", .{ val.pool_name, pool_name }),
+            .flag => try writer.linef("pub const {f} = {f}{{ .{f} = 1 }};", .{ val.pool_name, pool_name, std.zig.fmtIdP(target_short_name) }),
             .mask => |mask| {
-                try writer.linef("pub const {} = {}{{", .{ val.pool_name, pool_name });
+                try writer.linef("pub const {f} = {f}{{", .{ val.pool_name, pool_name });
                 var mask_left = mask;
                 var index: u6 = 0;
                 while (true) : (index += 1) {
@@ -2403,9 +2416,9 @@ fn generateEnum(
                     if (0 != (next_flag_bit & mask)) {
                         if (flag_map[index]) |flag| {
                             const flag_target_short_name = if (flag.conflict_index) |i| values[i].short_name else flag.short_name;
-                            try writer.linef("    .{p} = 1,", .{std.zig.fmtId(flag_target_short_name)});
+                            try writer.linef("    .{f} = 1,", .{std.zig.fmtIdP(flag_target_short_name)});
                         } else {
-                            try writer.linef("    ._{} = 1,", .{index});
+                            try writer.linef("    ._{d} = 1,", .{index});
                         }
                         mask_left &= ~next_flag_bit;
                     }
@@ -2414,7 +2427,7 @@ fn generateEnum(
                 try writer.line("};");
             },
         } else {
-            try writer.linef("pub const {} = {}.{p};", .{ val.pool_name, pool_name, std.zig.fmtId(target_short_name) });
+            try writer.linef("pub const {f} = {f}.{f};", .{ val.pool_name, pool_name, std.zig.fmtIdP(target_short_name) });
         }
     }
 }
@@ -2450,8 +2463,8 @@ fn generateCom(
     const iid_pool = try global_symbol_pool.addFormatted("IID_{s}", .{com_pool_name.slice});
     if (type_com.Guid) |guid| {
         sdk_file.uses_guid = true;
-        try writer.linef("const {s}_Value = Guid.initString(\"{s}\");", .{ iid_pool, guid });
-        try writer.linef("pub const {s} = &{0s}_Value;", .{iid_pool});
+        try writer.linef("const {f}_Value = Guid.initString(\"{s}\");", .{ iid_pool, guid });
+        try writer.linef("pub const {f} = &{0f}_Value;", .{iid_pool});
         try sdk_file.const_exports.append(iid_pool);
     }
 
@@ -2485,7 +2498,7 @@ fn generateCom(
             switch (state) {
                 .unique => {
                     if (maybe_overload_suffixes) |_| fatal(
-                        "api '{s}' COM type '{s}' method '{s}' has a unique name but also entries in ComOverloads.txt?",
+                        "api '{f}' COM type '{f}' method '{s}' has a unique name but also entries in ComOverloads.txt?",
                         .{ sdk_file.json_name, com_pool_name, method.Name },
                     );
                 },
@@ -2530,7 +2543,7 @@ fn generateCom(
                 const overload = maybe_overloads orelse break :blk "";
                 const suffixes = overload.get(method.Name) orelse break :blk "";
                 break :blk suffixes.get(@intCast(method_index)) orelse fatal(
-                    "method '{s}' is missing suffix for method at index {}",
+                    "method '{s}' is missing suffix for method at index {d}",
                     .{ method.Name, method_index },
                 );
             };
@@ -2622,7 +2635,7 @@ fn generateComMethods(
             const overload = maybe_overloads orelse break :blk "";
             const suffixes = overload.get(method.Name) orelse break :blk "";
             break :blk suffixes.get(@intCast(method_index)) orelse fatal(
-                "method '{s}' is missing suffix for method at index {}",
+                "method '{s}' is missing suffix for method at index {d}",
                 .{ method.Name, method_index },
             );
         };
@@ -2633,7 +2646,7 @@ fn generateComMethods(
             "{s}{s}",
             .{ method.Name, suffix },
         );
-        try writer.writef("{}", .{
+        try writer.writef("{f}", .{
             fmtComMethodId(method_name, sdk_file.method_conflict_map),
         }, .{ .start = .mid, .nl = false });
         try writer.writef("(self: *const {s}", .{com_type_name}, .{ .start = .mid, .nl = false });
@@ -2647,7 +2660,7 @@ fn generateComMethods(
                 _ = bytes_param_index; // NOTE: can't print this because we are currently inline
                 //try writer.linef("// TODO: what to do with BytesParamIndex {}?", .{bytes_param_index});
             }
-            try writer.writef(", {s}: ", .{fmtParamId(param.Name, sdk_file.param_conflict_map)}, .{ .start = .mid, .nl = false });
+            try writer.writef(", {f}: ", .{fmtParamId(param.Name, sdk_file.param_conflict_map)}, .{ .start = .mid, .nl = false });
             try generateTypeRef(sdk_file, writer, param_type_formatter);
         }
         // NOTE: don't need to call addTypeRefs because it was already called in generateFunction above
@@ -2668,12 +2681,12 @@ fn generateComMethods(
         try writer.write(" {", .{ .start = .mid });
         try writer.write("        return ", .{ .nl = false });
         try writer.writef(
-            "self.vtable.{}(self",
+            "self.vtable.{f}(self",
             .{fmtComMethodId(method_name, sdk_file.method_conflict_map)},
             .{ .start = .mid, .nl = false },
         );
         for (method.Params) |*param| {
-            try writer.writef(", {s}", .{fmtParamId(param.Name, sdk_file.param_conflict_map)}, .{ .start = .mid, .nl = false });
+            try writer.writef(", {f}", .{fmtParamId(param.Name, sdk_file.param_conflict_map)}, .{ .start = .mid, .nl = false });
         }
         try writer.write(");", .{ .start = .any });
         try writer.line("    }");
@@ -2752,16 +2765,9 @@ const ArchCaseContext = enum { outside_arch_case, inside_arch_case };
 
 const ConflictSuffix = struct {
     conflict_count: u8,
-    pub fn format(
-        self: ConflictSuffix,
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        _ = fmt;
-        _ = options;
+    pub fn format(self: ConflictSuffix, writer: *std.Io.Writer) !void {
         if (self.conflict_count > 0) {
-            try writer.print("{}", .{self.conflict_count});
+            try writer.print("{d}", .{self.conflict_count});
         }
     }
 };
@@ -2876,7 +2882,7 @@ fn getFuncModifiers(
             if (std.mem.eql(u8, name.slice, "Return")) @panic("todo");
 
             const index = findParam(params, name.slice) orelse std.debug.panic(
-                "function '{s}' from extra.txt does not have a parameter named '{s}'",
+                "function '{f}' from extra.txt does not have a parameter named '{f}'",
                 .{ config_name, name },
             );
             set.params[index] = entry.value_ptr.*;
@@ -2928,12 +2934,12 @@ fn generateFunction(
             // the .lib files using lowercase since that's what mingw uses.
             // note the casing only matters on case-sensitive filesystems
             try writer.linef(
-                "pub extern \"{s}\" fn {}(",
-                .{ fmtLower(dll.DllImport, 100), std.zig.fmtId(dll.Name) },
+                "pub extern \"{f}\" fn {f}(",
+                .{ fmtLower(dll.DllImport), std.zig.fmtId(dll.Name) },
             );
         },
         .com => |com| {
-            try writer.linef("{}: *const fn(", .{std.zig.fmtId(com.zig_name)});
+            try writer.linef("{f}: *const fn(", .{std.zig.fmtId(com.zig_name)});
             try writer.linef("    self: *const {s},", .{com.type_name});
         },
         .ptr => |ptr| try writer.linef("{s}*const fn(", .{ptr.def_prefix}),
@@ -2970,9 +2976,9 @@ fn generateParams(
         const param_options = TypeRefFormatter.Options.fromParamAttrs(param.Attrs, .var_decl, modifiers);
         const param_type_formatter = try addTypeRefs(sdk_file, arches, param.Type, param_options, null);
         if (param_options.optional_bytes_param_index) |bytes_param_index| {
-            try writer.linef("    // TODO: what to do with BytesParamIndex {}?", .{bytes_param_index});
+            try writer.linef("    // TODO: what to do with BytesParamIndex {d}?", .{bytes_param_index});
         }
-        try writer.writef("    {p}: ", .{std.zig.fmtId(param.Name)}, .{ .nl = false });
+        try writer.writef("    {f}: ", .{std.zig.fmtIdP(param.Name)}, .{ .nl = false });
         try generateTypeRef(sdk_file, writer, param_type_formatter);
         try writer.write(",", .{ .start = .mid });
     }
@@ -3045,7 +3051,7 @@ pub fn jsonObjEnforceKnownFieldsOnly(
                 continue :fieldLoop;
         }
         std.log.err(
-            "{s}: JSON object has unknown field '{s}', expected one of: {}\n",
+            "{s}: JSON object has unknown field '{s}', expected one of: {f}\n",
             .{ sdk_file.json_basename, kv.key_ptr.*, common.formatSliceT([]const u8, "s", known_fields) },
         );
         jsonPanic();
@@ -3059,7 +3065,7 @@ pub fn jsonObjGetRequired(
 ) !std.json.Value {
     return map.get(field) orelse {
         // TODO: print file location?
-        std.log.err("{s}: json object is missing '{s}' field: {}\n", .{ sdk_file.json_basename, field, fmtJson(map) });
+        std.log.err("{s}: json object is missing '{s}' field: {f}\n", .{ sdk_file.json_basename, field, fmtJson(map) });
         jsonPanic();
     };
 }
@@ -3191,14 +3197,7 @@ pub const FmtId = struct {
     s: []const u8,
     kind: enum { param, com_method },
     avoid_map: std.StaticStringMap(void),
-    pub fn format(
-        self: @This(),
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        _ = fmt;
-        _ = options;
+    pub fn format(self: @This(), writer: *std.Io.Writer) !void {
         if (self.avoid_map.get(self.s)) |_| {
             const prefix: []const u8 = switch (self.kind) {
                 .param => "_param_",
@@ -3206,30 +3205,10 @@ pub const FmtId = struct {
             };
             try writer.print("{s}{s}", .{ prefix, self.s });
         } else {
-            try writer.print("{}", .{std.zig.fmtId(self.s)});
+            try writer.print("{f}", .{std.zig.fmtId(self.s)});
         }
     }
 };
-
-fn FmtOptOrEmpty(comptime T: type) type {
-    return struct {
-        opt: T,
-        pub fn format(
-            self: @This(),
-            comptime fmt: []const u8,
-            options: std.fmt.FormatOptions,
-            writer: anytype,
-        ) !void {
-            _ = options;
-            if (self.opt) |v| {
-                try writer.print(fmt, .{v});
-            }
-        }
-    };
-}
-pub fn fmtOptOrEmpty(opt: anytype) FmtOptOrEmpty(@TypeOf(opt)) {
-    return .{ .opt = opt };
-}
 
 pub fn fmtParamId(s: []const u8, avoid_map: std.StaticStringMap(void)) FmtId {
     return FmtId{ .s = s, .kind = .param, .avoid_map = avoid_map };
@@ -3238,27 +3217,16 @@ pub fn fmtComMethodId(s: []const u8, avoid_map: std.StaticStringMap(void)) FmtId
     return FmtId{ .s = s, .kind = .com_method, .avoid_map = avoid_map };
 }
 
-pub fn FmtLower(comptime buffer_size: comptime_int) type {
-    return struct {
-        s: []const u8,
-        pub fn format(
-            self: @This(),
-            comptime fmt: []const u8,
-            options: std.fmt.FormatOptions,
-            writer: anytype,
-        ) !void {
-            _ = fmt;
-            _ = options;
-            var buffered = std.io.BufferedWriter(buffer_size, @TypeOf(writer)){ .unbuffered_writer = writer };
-            for (self.s) |c| {
-                const lower = [_]u8{std.ascii.toLower(c)};
-                try buffered.writer().writeAll(&lower);
-            }
-            try buffered.flush();
+const FmtLower = struct {
+    s: []const u8,
+    pub fn format(self: @This(), writer: *std.Io.Writer) !void {
+        for (self.s) |c| {
+            try writer.writeByte(std.ascii.toLower(c));
         }
-    };
-}
-pub fn fmtLower(s: []const u8, comptime buffer_size: comptime_int) FmtLower(buffer_size) {
+    }
+};
+
+pub fn fmtLower(s: []const u8) FmtLower {
     return .{ .s = s };
 }
 
@@ -3290,12 +3258,12 @@ fn cleanDir(dir: std.fs.Dir, sub_path: []const u8) !void {
     var attempt: u32 = 1;
     while (true) : (attempt += 1) {
         if (attempt > MAX_ATTEMPTS)
-            fatal("failed to delete '{s}' after {} attempts", .{ sub_path, MAX_ATTEMPTS });
+            fatal("failed to delete '{s}' after {d} attempts", .{ sub_path, MAX_ATTEMPTS });
 
         // ERROR: windows.OpenFile is not handling error.Unexpected NTSTATUS=0xc0000056
         dir.makeDir(sub_path) catch |e| switch (e) {
             else => {
-                std.debug.print("[DEBUG] makedir failed with {}\n", .{e});
+                std.debug.print("[DEBUG] makedir failed with {t}\n", .{e});
                 //std.process.exit(0xff);
                 continue;
             },

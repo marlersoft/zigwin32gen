@@ -20,7 +20,7 @@ pub fn getcwd(a: std.mem.Allocator) ![]u8 {
     return path_allocated;
 }
 
-pub fn readApiList(api_dir: std.fs.Dir, api_list: *std.ArrayList([]const u8)) !void {
+pub fn readApiList(api_dir: std.fs.Dir, api_list: *std.array_list.Managed([]const u8)) !void {
     var dir_it = api_dir.iterate();
     while (try dir_it.next()) |entry| {
         if (!std.mem.endsWith(u8, entry.name, ".json")) {
@@ -38,14 +38,7 @@ pub fn asciiLessThanIgnoreCase(_: void, lhs: []const u8, rhs: []const u8) bool {
 fn SliceFormatter(comptime T: type, comptime spec: []const u8) type {
     return struct {
         slice: []const T,
-        pub fn format(
-            self: @This(),
-            comptime fmt: []const u8,
-            options: std.fmt.FormatOptions,
-            writer: anytype,
-        ) !void {
-            _ = fmt;
-            _ = options;
+        pub fn format(self: @This(), writer: *std.Io.Writer) !void {
             var first: bool = true;
             for (self.slice) |e| {
                 if (first) {
@@ -53,7 +46,7 @@ fn SliceFormatter(comptime T: type, comptime spec: []const u8) type {
                 } else {
                     try writer.writeAll(", ");
                 }
-                try std.fmt.format(writer, "{" ++ spec ++ "}", .{e});
+                try writer.print("{" ++ spec ++ "}", .{e});
             }
         }
     };
@@ -86,20 +79,10 @@ pub fn jsonEnforceMsg(cond: bool, comptime msg: []const u8, args: anytype) void 
 
 const JsonFormatter = struct {
     value: std.json.Value,
-    pub fn format(
-        self: JsonFormatter,
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        _ = fmt;
-        _ = options;
+    pub fn format(self: JsonFormatter, writer: *std.Io.Writer) !void {
         switch (self.value) {
-            // avoid issues where std.json adds quotes to big numbers
-            // (potential fix: https://github.com/ziglang/zig/pull/16707)
-            .integer => |i| try std.fmt.formatIntValue(i, "", .{}, writer),
             .number_string => |s| try writer.writeAll(s),
-            else => try std.json.stringify(self.value, .{}, writer),
+            else => try writer.print("{f}", .{std.json.fmt(self.value, .{})}),
         }
     }
 };
@@ -119,14 +102,7 @@ pub fn fmtJson(value: anytype) JsonFormatter {
 pub const ComInterface = struct {
     name: []const u8,
     api: []const u8,
-    pub fn format(
-        self: ComInterface,
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        _ = fmt;
-        _ = options;
+    pub fn format(self: ComInterface, writer: *std.Io.Writer) !void {
         try writer.print(
             "{{\"Kind\":\"ApiRef\",\"Name\":\"{s}\",\"TargetKind\":\"Com\",\"Api\":\"{s}\",\"Parents\":[]}}",
             .{ self.name, self.api },
