@@ -3,7 +3,7 @@ const std = @import("std");
 const Build = std.Build;
 const Step = std.Build.Step;
 const CrossTarget = std.zig.CrossTarget;
-const buildcommon = @import("buildcommon.zig");
+const buildcommon = @import("0.14.1/common.zig");
 
 comptime {
     const required_zig = "0.14.0";
