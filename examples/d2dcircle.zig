@@ -1,7 +1,6 @@
 //! This example is ported from : https://github.com/microsoft/Windows-classic-samples/blob/master/Samples/Win7Samples/begin/LearnWin32/Direct2DCircle/cpp/main.cpp
 pub const UNICODE = true;
 
-const WINAPI = @import("std").os.windows.WINAPI;
 const win32 = struct {
     usingnamespace @import("win32").zig;
     usingnamespace @import("win32").foundation;
@@ -158,7 +157,7 @@ fn MainWindowResize(self: *MainWindow) void {
     }
 }
 
-pub export fn wWinMain(_: HINSTANCE, __: ?HINSTANCE, ___: [*:0]u16, nCmdShow: u32) callconv(WINAPI) c_int {
+pub export fn wWinMain(_: HINSTANCE, __: ?HINSTANCE, ___: [*:0]u16, nCmdShow: u32) callconv(.winapi) c_int {
     _ = __;
     _ = ___;
 

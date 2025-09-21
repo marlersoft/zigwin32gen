@@ -1,6 +1,5 @@
 //! This example is ported from : https://github.com/microsoft/Windows-classic-samples/blob/master/Samples/Win7Samples/begin/LearnWin32/Direct2DCircle/cpp/basewin.h
 
-const WINAPI = @import("std").os.windows.WINAPI;
 const win32 = struct {
     usingnamespace @import("win32").zig;
     usingnamespace @import("win32").foundation;
@@ -20,7 +19,7 @@ const mnr = @import("win32").ui.menus_and_resources;
 
 pub fn BaseWindow(comptime DERIVED_TYPE: type) type {
     return struct {
-        fn WindowProc(hwnd: HWND, uMsg: u32, wParam: win32.WPARAM, lParam: win32.LPARAM) callconv(WINAPI) win32.LRESULT {
+        fn WindowProc(hwnd: HWND, uMsg: u32, wParam: win32.WPARAM, lParam: win32.LPARAM) callconv(.winapi) win32.LRESULT {
             var pThis: ?*DERIVED_TYPE = null;
             if (uMsg == win32.WM_NCCREATE) {
                 const pCreate: *win32.CREATESTRUCT = @ptrFromInt(@as(usize, @bitCast(lParam)));

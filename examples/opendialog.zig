@@ -1,13 +1,11 @@
 const std = @import("std");
 pub const UNICODE = true;
 
-const WINAPI = @import("std").os.windows.WINAPI;
-
 const win32 = @import("win32").everything;
 
 pub const panic = win32.messageBoxThenPanic(.{ .title = "Opendialog Example Panic" });
 
-pub export fn wWinMain(__: win32.HINSTANCE, _: ?win32.HINSTANCE, ___: [*:0]u16, ____: u32) callconv(WINAPI) c_int {
+pub export fn wWinMain(__: win32.HINSTANCE, _: ?win32.HINSTANCE, ___: [*:0]u16, ____: u32) callconv(.winapi) c_int {
     _ = __;
     _ = ___;
     _ = ____;

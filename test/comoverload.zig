@@ -1,5 +1,4 @@
 const std = @import("std");
-const WINAPI = std.os.windows.WINAPI;
 const win32 = struct {
     usingnamespace @import("win32").foundation;
     usingnamespace @import("win32").graphics.direct2d;
@@ -12,7 +11,7 @@ fn GetAttributeValueString(
     @"type": win32.D2D1_SVG_ATTRIBUTE_STRING_TYPE,
     value: [*:0]u16,
     valueCount: u32,
-) callconv(WINAPI) win32.HRESULT {
+) callconv(.winapi) win32.HRESULT {
     _ = self;
     _ = name;
     _ = @"type";
