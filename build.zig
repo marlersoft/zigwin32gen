@@ -50,9 +50,11 @@ pub fn build(b: *Build) !void {
     const pass1_out_file = blk: {
         const pass1_exe = b.addExecutable(.{
             .name = "pass1",
-            .root_source_file = b.path("src/pass1.zig"),
-            .optimize = optimize,
-            .target = b.graph.host,
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/pass1.zig"),
+                .optimize = optimize,
+                .target = b.graph.host,
+            }),
         });
 
         const run = b.addRunArtifact(pass1_exe);
@@ -66,8 +68,10 @@ pub fn build(b: *Build) !void {
     const zigexports = blk: {
         const exe = b.addExecutable(.{
             .name = "genzigexports",
-            .root_source_file = b.path("src/genzigexports.zig"),
-            .target = b.graph.host,
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/genzigexports.zig"),
+                .target = b.graph.host,
+            }),
         });
         exe.root_module.addImport("win32_stub", b.createModule(.{
             .root_source_file = b.path("src/static/win32.zig"),
@@ -80,9 +84,11 @@ pub fn build(b: *Build) !void {
     const gen_out_dir = blk: {
         const exe = b.addExecutable(.{
             .name = "genzig",
-            .root_source_file = b.path("src/genzig.zig"),
-            .optimize = optimize,
-            .target = b.graph.host,
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/genzig.zig"),
+                .optimize = optimize,
+                .target = b.graph.host,
+            }),
         });
         exe.root_module.addImport(
             "zigexports",
@@ -112,9 +118,11 @@ pub fn build(b: *Build) !void {
     {
         const diff_exe = b.addExecutable(.{
             .name = "diff",
-            .root_source_file = b.path("src/diff.zig"),
-            .target = b.graph.host,
-            .optimize = .Debug,
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/diff.zig"),
+                .target = b.graph.host,
+                .optimize = .Debug,
+            }),
         });
         const diff = b.addRunArtifact(diff_exe);
         // fetches from zigwin32 github and also modifies the contents
@@ -133,9 +141,11 @@ pub fn build(b: *Build) !void {
 
     {
         const unittest = b.addTest(.{
-            .root_source_file = gen_out_dir.path(b, "win32.zig"),
-            .target = b.graph.host,
-            .optimize = optimize,
+            .root_module = b.createModule(.{
+                .root_source_file = gen_out_dir.path(b, "win32.zig"),
+                .target = b.graph.host,
+                .optimize = optimize,
+            }),
         });
         unittest.pie = true;
         unittest_step.dependOn(&unittest.step);
@@ -150,8 +160,10 @@ pub fn build(b: *Build) !void {
     {
         const exe = b.addExecutable(.{
             .name = "comoverload",
-            .root_source_file = b.path("test/comoverload.zig"),
-            .target = b.graph.host,
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("test/comoverload.zig"),
+                .target = b.graph.host,
+            }),
         });
         exe.root_module.addImport("win32", win32);
         const run = b.addRunArtifact(exe);
