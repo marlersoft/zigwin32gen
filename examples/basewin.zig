@@ -1,12 +1,6 @@
 //! This example is ported from : https://github.com/microsoft/Windows-classic-samples/blob/master/Samples/Win7Samples/begin/LearnWin32/Direct2DCircle/cpp/basewin.h
 
-const win32 = struct {
-    usingnamespace @import("win32").zig;
-    usingnamespace @import("win32").foundation;
-    usingnamespace @import("win32").system.system_services;
-    usingnamespace @import("win32").system.library_loader;
-    usingnamespace @import("win32").ui.windows_and_messaging;
-};
+const win32 = @import("win32").everything;
 const L = win32.L;
 const HWND = win32.HWND;
 
@@ -22,7 +16,7 @@ pub fn BaseWindow(comptime DERIVED_TYPE: type) type {
         fn WindowProc(hwnd: HWND, uMsg: u32, wParam: win32.WPARAM, lParam: win32.LPARAM) callconv(.winapi) win32.LRESULT {
             var pThis: ?*DERIVED_TYPE = null;
             if (uMsg == win32.WM_NCCREATE) {
-                const pCreate: *win32.CREATESTRUCT = @ptrFromInt(@as(usize, @bitCast(lParam)));
+                const pCreate: *win32.CREATESTRUCTW = @ptrFromInt(@as(usize, @bitCast(lParam)));
                 pThis = @ptrCast(@alignCast(pCreate.lpCreateParams));
                 _ = windowlongptr.SetWindowLongPtr(hwnd, win32.GWL_USERDATA, @bitCast(@intFromPtr(pThis)));
                 pThis.?.base.m_hwnd = hwnd;
@@ -33,7 +27,7 @@ pub fn BaseWindow(comptime DERIVED_TYPE: type) type {
             if (pThis) |this| {
                 return this.HandleMessage(uMsg, wParam, lParam);
             } else {
-                return win32.DefWindowProc(hwnd, uMsg, wParam, lParam);
+                return win32.DefWindowProcW(hwnd, uMsg, wParam, lParam);
             }
         }
 
@@ -51,12 +45,12 @@ pub fn BaseWindow(comptime DERIVED_TYPE: type) type {
                 hMenu: ?win32.HMENU = null,
             },
         ) win32.BOOL {
-            const wc = win32.WNDCLASS{
+            const wc = win32.WNDCLASSW{
                 .style = .{},
                 .lpfnWndProc = WindowProc,
                 .cbClsExtra = 0,
                 .cbWndExtra = 0,
-                .hInstance = win32.GetModuleHandle(null),
+                .hInstance = win32.GetModuleHandleW(null),
                 .hIcon = null,
                 .hCursor = null,
                 .hbrBackground = null,
@@ -65,9 +59,9 @@ pub fn BaseWindow(comptime DERIVED_TYPE: type) type {
                 .lpszClassName = DERIVED_TYPE.ClassName(),
             };
 
-            _ = win32.RegisterClass(&wc);
+            _ = win32.RegisterClassW(&wc);
 
-            self.m_hwnd = win32.CreateWindowEx(
+            self.m_hwnd = win32.CreateWindowExW(
                 options.dwExStyle,
                 DERIVED_TYPE.ClassName(),
                 lpWindowName,
@@ -78,7 +72,7 @@ pub fn BaseWindow(comptime DERIVED_TYPE: type) type {
                 options.nHeight,
                 options.hWndParent,
                 options.hMenu,
-                win32.GetModuleHandle(null),
+                win32.GetModuleHandleW(null),
                 @ptrCast(self),
             );
 

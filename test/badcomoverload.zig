@@ -1,6 +1,4 @@
-const win32 = struct {
-    usingnamespace @import("win32").graphics.direct2d;
-};
+const win32 = @import("win32").everything;
 
 pub fn main() void {
     var elem: *win32.ID2D1SvgElement = undefined;

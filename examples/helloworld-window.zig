@@ -1,13 +1,7 @@
 const std = @import("std");
 
 pub const UNICODE = true;
-const win32 = struct {
-    usingnamespace @import("win32").zig;
-    usingnamespace @import("win32").foundation;
-    usingnamespace @import("win32").system.system_services;
-    usingnamespace @import("win32").ui.windows_and_messaging;
-    usingnamespace @import("win32").graphics.gdi;
-};
+const win32 = @import("win32").everything;
 const L = win32.L;
 const HWND = win32.HWND;
 
@@ -30,7 +24,7 @@ pub export fn wWinMain(
     _ = nCmdShow;
 
     const CLASS_NAME = L("Sample Window Class");
-    const wc = win32.WNDCLASS{
+    const wc = win32.WNDCLASSW{
         .style = .{},
         .lpfnWndProc = WindowProc,
         .cbClsExtra = 0,

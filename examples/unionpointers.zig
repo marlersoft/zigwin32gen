@@ -1,13 +1,7 @@
 const std = @import("std");
 
 pub const UNICODE = true;
-const win32 = struct {
-    usingnamespace @import("win32").zig;
-    usingnamespace @import("win32").foundation;
-    usingnamespace @import("win32").system.system_services;
-    usingnamespace @import("win32").ui.windows_and_messaging;
-    usingnamespace @import("win32").graphics.gdi;
-};
+const win32 = @import("win32").everything;
 const L = win32.L;
 const HWND = win32.HWND;
 
@@ -25,7 +19,7 @@ pub export fn wWinMain(
     for (0..20) |atom| {
         // we don't care if this works, we're just verifying @ptrFromInt(atom)
         // doesn't trigger a runtime panic
-        if (win32.CreateWindowEx(
+        if (win32.CreateWindowExW(
             .{},
             @ptrFromInt(atom),
             L("Test Window"),
@@ -51,7 +45,7 @@ pub export fn wWinMain(
 
     {
         const CLASS_NAME = L("Sample Window Class");
-        const wc = win32.WNDCLASS{
+        const wc = win32.WNDCLASSW{
             .style = .{},
             .lpfnWndProc = WindowProc,
             .cbClsExtra = 0,
@@ -64,9 +58,9 @@ pub export fn wWinMain(
             .lpszMenuName = L("Some Menu Name"),
             .lpszClassName = CLASS_NAME,
         };
-        const atom = win32.RegisterClass(&wc);
+        const atom = win32.RegisterClassW(&wc);
         if (0 == atom) win32.panicWin32("RegisterClass", win32.GetLastError());
-        const hwnd = win32.CreateWindowEx(
+        const hwnd = win32.CreateWindowExW(
             .{},
             @ptrFromInt(atom),
             L("Test Window"),
@@ -108,5 +102,5 @@ fn WindowProc(
         },
         else => {},
     }
-    return win32.DefWindowProc(hwnd, uMsg, wParam, lParam);
+    return win32.DefWindowProcW(hwnd, uMsg, wParam, lParam);
 }

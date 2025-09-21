@@ -1,18 +1,7 @@
 //! This example is ported from : https://github.com/microsoft/Windows-classic-samples/blob/master/Samples/Win7Samples/begin/LearnWin32/Direct2DCircle/cpp/main.cpp
 pub const UNICODE = true;
 
-const win32 = struct {
-    usingnamespace @import("win32").zig;
-    usingnamespace @import("win32").foundation;
-    usingnamespace @import("win32").system.system_services;
-    usingnamespace @import("win32").ui.windows_and_messaging;
-    usingnamespace @import("win32").graphics.gdi;
-    usingnamespace @import("win32").graphics.direct2d;
-    usingnamespace @import("win32").graphics.direct2d.common;
-    usingnamespace @import("win32").graphics.direct3d9;
-    usingnamespace @import("win32").graphics.dxgi.common;
-    usingnamespace @import("win32").system.com;
-};
+const win32 = @import("win32").everything;
 const L = win32.L;
 const FAILED = win32.FAILED;
 const SUCCEEDED = win32.SUCCEEDED;
@@ -172,9 +161,9 @@ pub export fn wWinMain(_: HINSTANCE, __: ?HINSTANCE, ___: [*:0]u16, nCmdShow: u3
     // Run the message loop.
 
     var msg: MSG = undefined;
-    while (0 != win32.GetMessage(&msg, null, 0, 0)) {
+    while (0 != win32.GetMessageW(&msg, null, 0, 0)) {
         _ = win32.TranslateMessage(&msg);
-        _ = win32.DispatchMessage(&msg);
+        _ = win32.DispatchMessageW(&msg);
     }
 
     return 0;
@@ -212,7 +201,7 @@ fn MainWindowHandleMessage(self: *MainWindow, uMsg: u32, wParam: WPARAM, lParam:
         },
         else => {},
     }
-    return win32.DefWindowProc(self.base.m_hwnd.?, uMsg, wParam, lParam);
+    return win32.DefWindowProcW(self.base.m_hwnd.?, uMsg, wParam, lParam);
 }
 
 // TODO: tthis D2D1 namespace is referenced in the C++ example but it doesn't exist in win32metadata

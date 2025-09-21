@@ -1,9 +1,5 @@
 const std = @import("std");
-const win32 = struct {
-    usingnamespace @import("win32").foundation;
-    usingnamespace @import("win32").graphics.direct2d;
-    usingnamespace @import("win32").zig;
-};
+const win32 = @import("win32").everything;
 
 fn GetAttributeValueString(
     self: *const win32.ID2D1SvgElement,

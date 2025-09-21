@@ -774,8 +774,6 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, api: metadata.Api) !voi
     const writer: *CodeWriter = &code_writer;
 
     try writer.writeBlock(autogen_header);
-    // We can't import the everything module because it will re-introduce the same symbols we are exporting
-    //try writer.print("usingnamespace @import(\"everything.zig\");\n", .{});
     try writer.line("//--------------------------------------------------------------------------------");
     try writer.linef("// Section: Constants ({})", .{api.Constants.len});
     try writer.line("//--------------------------------------------------------------------------------");
