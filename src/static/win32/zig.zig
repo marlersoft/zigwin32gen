@@ -3,6 +3,8 @@ const std = @import("std");
 const builtin = @import("builtin");
 const testing = std.testing;
 
+const zig_atleast_15 = builtin.zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) != .lt;
+
 const mod_root = @import("../win32.zig");
 const win32 = struct {
     const BOOL = mod_root.foundation.BOOL;
@@ -47,7 +49,6 @@ const win32 = struct {
 const root = @import("root");
 pub const UnicodeMode = enum { ansi, wide, unspecified };
 pub const unicode_mode: UnicodeMode = if (@hasDecl(root, "UNICODE")) (if (root.UNICODE) .wide else .ansi) else .unspecified;
-
 
 pub const L = std.unicode.utf8ToUtf16LeStringLiteral;
 
@@ -147,41 +148,34 @@ pub fn SUCCEEDED(hr: win32.HRESULT) bool {
 pub const FALSE: win32.BOOL = 0;
 pub const TRUE: win32.BOOL = 1;
 
-/// Returns a formatter that will print the given error in the following format:
+/// Returns a formatter that will print the given error code using FormatMessage, i.e.
 ///
-///   <error-code> (<message-string>[...])
+///   "The system cannot find the file specified."
+///   "Access is denied."
 ///
-/// For example:
-///
-///   2 (The system cannot find the file specified.)
-///   5 (Access is denied.)
-///
-/// The error is formatted using FormatMessage into a stack allocated buffer
-/// of 300 bytes. If the message exceeds 300 bytes (Messages can be arbitrarily
-/// long) then "..." is appended to the message.  The message may contain newlines
-/// and carriage returns but any trailing ones are trimmed.
-///
-/// Provide the 's' fmt specifier to omit the error code.
-pub fn fmtError(error_code: u32) FormatError(300) {
+/// The error is formatted into a stack allocated buffer of 300 bytes. If the message
+/// exceeds 300 bytes (Messages can be arbitrarily long) then "..." is appended to the
+/// message.  The message may contain newlines and carriage returns but any trailing
+/// ones are trimmed.
+pub fn fmtErrorString(error_code: u32) FormatErrorString(300) {
     return .{ .error_code = error_code };
 }
-pub fn FormatError(comptime max_len: usize) type {
+pub fn FormatErrorString(comptime max_len: usize) type {
     return struct {
         error_code: u32,
-        pub fn format(
+
+        pub const format = if (@import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) == .lt)
+            formatLegacy
+        else
+            formatNew;
+        fn formatLegacy(
             self: @This(),
             comptime fmt: []const u8,
             options: std.fmt.FormatOptions,
             writer: anytype,
         ) @TypeOf(writer).Error!void {
+            _ = fmt;
             _ = options;
-
-            const with_code = comptime blk: {
-                if (std.mem.eql(u8, fmt, "")) break :blk true;
-                if (std.mem.eql(u8, fmt, "s")) break :blk false;
-                @compileError("expected '{}' or '{s}' but got '{" ++ fmt ++ "}'");
-            };
-            if (with_code) try writer.print("{} (", .{self.error_code});
             var buf: [max_len]u8 = undefined;
             const len = win32.FormatMessageA(
                 .{ .FROM_SYSTEM = 1, .IGNORE_INSERTS = 1 },
@@ -200,10 +194,75 @@ pub fn FormatError(comptime max_len: usize) type {
             if (len + 1 >= buf.len) {
                 try writer.writeAll("...");
             }
-            if (with_code) try writer.writeAll(")");
+        }
+        fn formatNew(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+            var buf: [max_len]u8 = undefined;
+            const len = win32.FormatMessageA(
+                .{ .FROM_SYSTEM = 1, .IGNORE_INSERTS = 1 },
+                null,
+                self.error_code,
+                0,
+                @ptrCast(&buf),
+                buf.len,
+                null,
+            );
+            if (len == 0) {
+                try writer.writeAll("unknown error");
+            }
+            const msg = std.mem.trimRight(u8, buf[0..len], "\r\n");
+            try writer.writeAll(msg);
+            if (len + 1 >= buf.len) {
+                try writer.writeAll("...");
+            }
         }
     };
 }
+
+/// Returns a formatter that will print the given error in the following format:
+///
+///   <error-code> (<message-string>[...])
+///
+/// For example:
+///
+///   2 (The system cannot find the file specified.)
+///   5 (Access is denied.)
+///
+/// The error is formatted using FormatMessage into a stack allocated buffer
+/// of 300 bytes. If the message exceeds 300 bytes (Messages can be arbitrarily
+/// long) then "..." is appended to the message.  The message may contain newlines
+/// and carriage returns but any trailing ones are trimmed.
+pub fn fmtError(error_code: u32) FormatError {
+    return .{ .error_code = error_code };
+}
+pub const FormatError = struct {
+    error_code: u32,
+
+    pub const format = if (@import("builtin").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) == .lt)
+        formatLegacy
+        else
+        formatNew;
+    fn formatLegacy(
+        self: @This(),
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) @TypeOf(writer).Error!void {
+        _ = options;
+        const with_code = comptime blk: {
+            if (std.mem.eql(u8, fmt, "") or std.mem.eql(u8, fmt, "f")) break :blk true;
+            if (std.mem.eql(u8, fmt, "s")) break :blk false;
+            @compileError("expected '{}' or '{s}' but got '{" ++ fmt ++ "}'");
+        };
+        if (with_code) try writer.print("{} (", .{self.error_code});
+        try fmtErrorString(self.error_code).format("", .{}, writer);
+        if (with_code) try writer.writeAll(")");
+    }
+    fn formatNew(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        try writer.print("{} (", .{self.error_code});
+        try fmtErrorString(self.error_code).format(writer);
+        try writer.writeAll(")");
+    }
+};
 
 threadlocal var thread_is_panicing = false;
 
@@ -226,11 +285,13 @@ pub fn messageBoxThenPanic(
             if (!thread_is_panicing) {
                 thread_is_panicing = true;
                 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-                const msg_z: [:0]const u8 = if (std.fmt.allocPrintZ(
+                const oom_msg = "allocate error message failed";
+                const msg_z: [:0]const u8 = if (zig_atleast_15) std.fmt.allocPrintSentinel(
                     arena.allocator(),
                     "{s}",
                     .{msg},
-                )) |msg_z| msg_z else |_| "failed allocate error message";
+                    0,
+                ) catch oom_msg else std.fmt.allocPrintZ(arena.allocator(), "{s}", .{msg}) catch oom_msg;
                 _ = win32.MessageBoxA(null, msg_z, opt.title, opt.style);
             }
             std.debug.defaultPanic(msg, ret_addr);
@@ -241,7 +302,7 @@ pub fn messageBoxThenPanic(
 /// Calls std.debug.panic with a message that indicates what failed and the
 /// associated win32 error code.
 pub fn panicWin32(what: []const u8, err: win32.WIN32_ERROR) noreturn {
-    std.debug.panic("{s} failed, error={}", .{ what, err });
+    std.debug.panic("{s} failed, error={f}", .{ what, err });
 }
 
 /// Calls std.debug.panic with a message that indicates what failed and the

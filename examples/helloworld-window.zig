@@ -5,15 +5,6 @@ const win32 = @import("win32").everything;
 const L = win32.L;
 const HWND = win32.HWND;
 
-fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
-    if (std.fmt.allocPrintZ(std.heap.page_allocator, fmt, args)) |msg| {
-        _ = win32.MessageBoxA(null, msg, "Fatal Error", .{});
-    } else |e| switch (e) {
-        error.OutOfMemory => _ = win32.MessageBoxA(null, "Out of memory", "Fatal Error", .{}),
-    }
-    std.process.exit(1);
-}
-
 pub export fn wWinMain(
     hInstance: win32.HINSTANCE,
     _: ?win32.HINSTANCE,
@@ -39,7 +30,7 @@ pub export fn wWinMain(
     };
 
     if (0 == win32.RegisterClassW(&wc))
-        fatal("RegisterClass failed, error={}", .{win32.GetLastError()});
+        win32.panicWin32("RegisterClass", win32.GetLastError());
 
     const hwnd = win32.CreateWindowExW(
         .{},
@@ -54,7 +45,7 @@ pub export fn wWinMain(
         null, // Menu
         hInstance, // Instance handle
         null, // Additional application data
-    ) orelse fatal("CreateWindow failed, error={}", .{win32.GetLastError()});
+    ) orelse win32.panicWin32("CreateWindow", win32.GetLastError());
 
     _ = win32.ShowWindow(hwnd, .{ .SHOWNORMAL = 1 });
 

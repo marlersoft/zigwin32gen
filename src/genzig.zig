@@ -2315,7 +2315,11 @@ fn generateEnum(
                 try writer.line("// results in needing over 100Kb to store them as strings.");
                 try writer.line("// Instead, we use FormatMessage to access a string for each error.");
             }
-            try writer.line("pub fn format(");
+            try writer.line("pub const format = if (@import(\"builtin\").zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) == .lt)");
+            try writer.line("    formatLegacy");
+            try writer.line("else");
+            try writer.line("    formatNew;");
+            try writer.line("fn formatLegacy(");
             try writer.linef("    self: {f},", .{pool_name});
             try writer.line("    comptime fmt: []const u8,");
             try writer.line("    options: @import(\"std\").fmt.FormatOptions,");
@@ -2326,6 +2330,13 @@ fn generateEnum(
             } else {
                 try writer.line("    _ = fmt;");
                 try writer.line("    _ = options;");
+                try writer.line("    try writer.print(\"{s}({})\", .{self.value.tagName() orelse \"?\", @intFromEnum(self.value)});");
+            }
+            try writer.line("}");
+            try writer.linef("fn formatNew(self: {f}, writer: *@import(\"std\").Io.Writer) @import(\"std\").Io.Writer.Error!void {{", .{pool_name});
+            if (is_win32_error) {
+                try writer.line("    try @import(\"zig.zig\").fmtError(@intFromEnum(self)).format(writer);");
+            } else {
                 try writer.line("    try writer.print(\"{s}({})\", .{self.value.tagName() orelse \"?\", @intFromEnum(self.value)});");
             }
             try writer.line("}");

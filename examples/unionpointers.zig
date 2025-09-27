@@ -39,7 +39,7 @@ pub export fn wWinMain(
                 win32.GetLastError(),
             );
         } else {
-            std.log.info("atom={} CreateWindow failed, error={} (this is fine)", .{ atom, win32.GetLastError() });
+            std.log.info("atom={} CreateWindow failed, error={f} (this is fine)", .{ atom, win32.GetLastError() });
         }
     }
 
@@ -79,10 +79,10 @@ pub export fn wWinMain(
 
     {
         // Well this sucks...ptr and const cast?
-        const old_cursor = win32.SetCursor(@constCast(@ptrCast(win32.IDC_ARROW)));
+        const old_cursor = win32.SetCursor(@ptrCast(@constCast(win32.IDC_ARROW)));
         defer _ = win32.SetCursor(old_cursor);
-        _ = win32.SetCursor(@constCast(@ptrCast(win32.IDC_IBEAM)));
-        _ = win32.SetCursor(@constCast(@ptrCast(win32.IDC_WAIT)));
+        _ = win32.SetCursor(@ptrCast(@constCast(win32.IDC_IBEAM)));
+        _ = win32.SetCursor(@ptrCast(@constCast(win32.IDC_WAIT)));
     }
 
     std.log.info("success!", .{});
