@@ -38,23 +38,30 @@ pub export fn wWinMain(
         .lpszClassName = CLASS_NAME,
     };
 
-    if (0 == win32.RegisterClass(&wc))
+    if (0 == win32.RegisterClassW(&wc))
         fatal("RegisterClass failed, error={}", .{win32.GetLastError()});
 
-    const hwnd = win32.CreateWindowEx(.{}, CLASS_NAME, L("Hello Windows"), win32.WS_OVERLAPPEDWINDOW, win32.CW_USEDEFAULT, win32.CW_USEDEFAULT, // Position
-        400, 200, // Size
+    const hwnd = win32.CreateWindowExW(
+        .{},
+        CLASS_NAME,
+        L("Hello Windows"),
+        win32.WS_OVERLAPPEDWINDOW,
+        win32.CW_USEDEFAULT,
+        win32.CW_USEDEFAULT, // Position
+        400,
+        200, // Size
         null, // Parent window
         null, // Menu
         hInstance, // Instance handle
-        null // Additional application data
+        null, // Additional application data
     ) orelse fatal("CreateWindow failed, error={}", .{win32.GetLastError()});
 
     _ = win32.ShowWindow(hwnd, .{ .SHOWNORMAL = 1 });
 
     var msg: win32.MSG = undefined;
-    while (win32.GetMessage(&msg, null, 0, 0) != 0) {
+    while (win32.GetMessageW(&msg, null, 0, 0) != 0) {
         _ = win32.TranslateMessage(&msg);
-        _ = win32.DispatchMessage(&msg);
+        _ = win32.DispatchMessageW(&msg);
     }
     return @intCast(msg.wParam);
 }
@@ -80,5 +87,5 @@ fn WindowProc(
         },
         else => {},
     }
-    return win32.DefWindowProc(hwnd, uMsg, wParam, lParam);
+    return win32.DefWindowProcW(hwnd, uMsg, wParam, lParam);
 }
