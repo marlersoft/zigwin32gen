@@ -6,7 +6,7 @@ const CrossTarget = std.zig.CrossTarget;
 const buildcommon = @import("0.14.1/common.zig");
 
 comptime {
-    const required_zig = "0.14.0";
+    const required_zig = "0.15.1";
     const v = std.SemanticVersion.parse(required_zig) catch unreachable;
     if (builtin.zig_version.order(v) != .eq) @compileError(
         "zig version " ++ required_zig ++ " is required to ensure zigwin32 output is always the same",
@@ -209,10 +209,10 @@ const PrintLazyPath = struct {
     fn make(step: *Step, opt: std.Build.Step.MakeOptions) !void {
         _ = opt;
         const print: *PrintLazyPath = @fieldParentPtr("step", step);
-        try std.io.getStdOut().writer().print(
-            "{s}\n",
-            .{print.lazy_path.getPath(step.owner)},
-        );
+
+        const stdout = std.fs.File.stdout();
+        var writer = stdout.writer(&.{});
+        try writer.interface.print("{s}\n", .{print.lazy_path.getPath(step.owner)});
     }
 };
 

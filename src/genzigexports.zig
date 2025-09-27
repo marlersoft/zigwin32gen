@@ -21,11 +21,12 @@ pub fn main() !void {
     const out_file = try std.fs.cwd().createFile(out_file_path, .{});
     defer out_file.close();
 
-    var bw = std.io.bufferedWriter(out_file.writer());
-    try generate(bw.writer().any());
-    try bw.flush();
+    var out_buf: [4096]u8 = undefined;
+    var w = out_file.writer(&out_buf);
+    try generate(&w.interface);
+    try w.interface.flush();
 }
-fn generate(writer: std.io.AnyWriter) !void {
+fn generate(writer: *std.Io.Writer) !void {
     try writer.writeAll("pub const Kind = enum { constant, type, function };\n");
     try writer.writeAll("pub const Decl = struct { kind: Kind, name: []const u8};\n");
     try writer.writeAll("pub const declarations = [_]Decl{\n");

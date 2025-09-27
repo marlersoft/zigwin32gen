@@ -7,7 +7,9 @@ pub fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
 
 fn usage(zigbuild: bool) !void {
     const options = "[--nofetch|-n]";
-    const stderr = std.io.getStdErr().writer();
+    var out_buf: [4096]u8 = undefined;
+    var stderr_writer = std.fs.File.stderr().writer(&out_buf);
+    const stderr = &stderr_writer.interface;
     const parts: struct {
         diffrepo: []const u8,
         generated: []const u8,
@@ -36,6 +38,7 @@ fn usage(zigbuild: bool) !void {
     ,
         .{ parts.diffrepo, parts.generated },
     );
+    try stderr.flush();
 }
 
 pub fn main() !void {
@@ -147,14 +150,7 @@ fn gitInit(repo: []const u8) !void {
 
 const FormatArgv = struct {
     argv: []const []const u8,
-    pub fn format(
-        self: @This(),
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        _ = fmt;
-        _ = options;
+    pub fn format(self: @This(), writer: *std.Io.Writer) !void {
         var prefix: []const u8 = "";
         for (self.argv) |arg| {
             try writer.print("{s}{s}", .{ prefix, arg });
@@ -176,14 +172,7 @@ pub fn childProcFailed(term: std.process.Child.Term) bool {
 }
 const FormatTerm = struct {
     term: std.process.Child.Term,
-    pub fn format(
-        self: @This(),
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        _ = fmt;
-        _ = options;
+    pub fn format(self: @This(), writer: *std.Io.Writer) !void {
         switch (self.term) {
             .Exited => |code| try writer.print("exited with code {}", .{code}),
             .Signal => |sig| try writer.print("exited with signal {}", .{sig}),
@@ -202,11 +191,11 @@ pub fn run(
     argv: []const []const u8,
 ) !void {
     var child = std.process.Child.init(argv, allocator);
-    std.log.info("{}", .{fmtArgv(child.argv)});
+    std.log.info("{f}", .{fmtArgv(child.argv)});
     try child.spawn();
     const term = try child.wait();
     if (childProcFailed(term)) {
-        fatal("{s} {}", .{ name, fmtTerm(term) });
+        fatal("{s} {f}", .{ name, fmtTerm(term) });
     }
 }
 
