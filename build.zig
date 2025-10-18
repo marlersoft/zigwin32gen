@@ -8,12 +8,18 @@ const buildcommon = @import("0.14.1/common.zig");
 comptime {
     const required_zig = "0.15.1";
     const v = std.SemanticVersion.parse(required_zig) catch unreachable;
-    if (builtin.zig_version.order(v) != .eq) @compileError(
-        "zig version " ++ required_zig ++ " is required to ensure zigwin32 output is always the same",
+    if (builtin.zig_version.order(v) == .lt) @compileError(
+        "zig version " ++ required_zig ++ " or higher is required",
     );
 }
 
 pub fn build(b: *Build) !void {
+    // Set custom default install prefix (defaults to "zig-out" if not overridden)
+    const custom_prefix = b.option([]const u8, "install-prefix", "Custom installation prefix directory");
+    if (custom_prefix) |prefix| {
+        b.install_prefix = prefix;
+    }
+
     const default_steps = "install diff test";
     b.default_step = b.step(
         "default",
