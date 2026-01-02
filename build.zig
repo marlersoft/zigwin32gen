@@ -202,8 +202,9 @@ const PrintLazyPath = struct {
         _ = opt;
         const print: *PrintLazyPath = @fieldParentPtr("step", step);
 
-        const stdout = std.fs.File.stdout();
-        var writer = stdout.writer(&.{});
+        const stdout = std.Io.File.stdout();
+        var buf: [128]u8 = undefined;
+        var writer = stdout.writer(step.owner.graph.io, &buf);
         try writer.interface.print("{s}\n", .{print.lazy_path.getPath(step.owner)});
     }
 };

@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 
 const StringPool = @import("StringPool.zig");
 
@@ -23,10 +24,10 @@ const Function = struct {
 pub fn oom(e: error{OutOfMemory}) noreturn {
     @panic(@errorName(e));
 }
-fn parseError(filename: []const u8, lineno: u32, comptime fmt: []const u8, args: anytype) noreturn {
-    var buf: [1000]u8 = undefined;
-    var stderr = std.fs.File.stderr();
-    var file_writer = stderr.writer(&buf);
+fn parseError(io: Io, filename: []const u8, lineno: u32, comptime fmt: []const u8, args: anytype) noreturn {
+    var buf: [1024]u8 = undefined;
+    var stderr = std.Io.File.stderr();
+    var file_writer = stderr.writer(io, &buf);
     const writer = &file_writer.interface;
     writer.print("{s}:{}: parse error: ", .{ filename, lineno }) catch |e| std.debug.panic("write to stderr failed with {s}", .{@errorName(e)});
     writer.print(fmt, args) catch |e| std.debug.panic("write to stderr failed with {s}", .{@errorName(e)});
@@ -35,6 +36,7 @@ fn parseError(filename: []const u8, lineno: u32, comptime fmt: []const u8, args:
 }
 
 pub fn read(
+    io: Io,
     api_name_set: StringPool.HashMapUnmanaged(void),
     string_pool: *StringPool,
     allocator: std.mem.Allocator,
@@ -54,7 +56,7 @@ pub fn read(
         const first_field = field_it.next() orelse continue;
         if (first_field.len == 0 or first_field[0] == '#') continue;
         const api_name = string_pool.add(first_field) catch |e| oom(e);
-        if (api_name_set.get(api_name)) |_| {} else parseError(filename, lineno, "unknown api '{f}'", .{api_name});
+        if (api_name_set.get(api_name)) |_| {} else parseError(io, filename, lineno, "unknown api '{f}'", .{api_name});
 
         const api = blk: {
             const entry = root.getOrPut(allocator, api_name) catch |e| oom(e);
@@ -64,54 +66,56 @@ pub fn read(
             break :blk entry.value_ptr;
         };
 
-        const kind = field_it.next() orelse parseError(filename, lineno, "missing kind specifier", .{});
+        const kind = field_it.next() orelse parseError(io, filename, lineno, "missing kind specifier", .{});
 
         if (std.mem.eql(u8, kind, "Function")) {
             const func_name = string_pool.add(
-                field_it.next() orelse parseError(filename, lineno, "missing function name", .{}),
+                field_it.next() orelse parseError(io, filename, lineno, "missing function name", .{}),
             ) catch |e| oom(e);
 
             const func = blk: {
                 const entry = api.functions.getOrPut(allocator, func_name) catch |e| oom(e);
-                if (entry.found_existing) parseError(filename, lineno, "duplicate function '{f} {f}'", .{ api_name, func_name });
+                if (entry.found_existing) parseError(io, filename, lineno, "duplicate function '{f} {f}'", .{ api_name, func_name });
                 entry.value_ptr.* = .{};
                 break :blk entry.value_ptr;
             };
 
             var next_index = field_it.index;
             var mod_count: u32 = 0;
-            while (parseNamedModifier(filename, lineno, line, next_index)) |named_mod| {
+            while (parseNamedModifier(io, filename, lineno, line, next_index)) |named_mod| {
                 mod_count += 1;
                 const name = string_pool.add(named_mod.name) catch |e| oom(e);
                 if (name.eql(return_id)) {
-                    if (func.ret) |_| parseError(filename, lineno, "duplicate return specifier", .{});
+                    if (func.ret) |_| parseError(io, filename, lineno, "duplicate return specifier", .{});
                     func.ret = named_mod.modifier;
                 } else {
                     const entry = func.params.getOrPut(allocator, name) catch |e| oom(e);
-                    if (entry.found_existing) parseError(filename, lineno, "duplicate parameter '{f}'", .{name});
+                    if (entry.found_existing) parseError(io, filename, lineno, "duplicate parameter '{f}'", .{name});
                     entry.value_ptr.* = named_mod.modifier;
                 }
                 next_index = named_mod.end;
             }
-            if (mod_count == 0) parseError(filename, lineno, "missing return/parameter specifiers", .{});
+            if (mod_count == 0) parseError(io, filename, lineno, "missing return/parameter specifiers", .{});
         } else if (std.mem.eql(u8, kind, "Constant")) {
-            const named_mod = parseNamedModifier(filename, lineno, line, field_it.index) orelse parseError(
+            const named_mod = parseNamedModifier(io, filename, lineno, line, field_it.index) orelse parseError(
+                io,
                 filename,
                 lineno,
                 "missing name/modifiers",
                 .{},
             );
-            if (skipWhitespace(line, named_mod.end) != line.len) parseError(filename, lineno, "unexpected data: '{s}'", .{line[named_mod.end..]});
+            if (skipWhitespace(line, named_mod.end) != line.len) parseError(io, filename, lineno, "unexpected data: '{s}'", .{line[named_mod.end..]});
             const name = string_pool.add(named_mod.name) catch |e| oom(e);
             const entry = api.constants.getOrPut(allocator, name) catch |e| oom(e);
-            if (entry.found_existing) parseError(filename, lineno, "duplicate constant '{f}'", .{name});
+            if (entry.found_existing) parseError(io, filename, lineno, "duplicate constant '{f}'", .{name});
             entry.value_ptr.* = named_mod.modifier;
-        } else parseError(filename, lineno, "unknown kind '{s}'", .{kind});
+        } else parseError(io, filename, lineno, "unknown kind '{s}'", .{kind});
     }
     return root;
 }
 
 fn parseNamedModifier(
+    io: Io,
     filename: []const u8,
     lineno: u32,
     line: []const u8,
@@ -125,9 +129,9 @@ fn parseNamedModifier(
     if (name_start == line.len) return null;
     const name_end = scanId(line, name_start);
     const name = line[name_start..name_end];
-    if (name.len == 0) parseError(filename, lineno, "expected id [a-zA-Z0-9_] but got '{s}'", .{line[name_start..]});
-    if (!matches(line, name_end, '(')) parseError(filename, lineno, "expected '(' but got '{s}'", .{line[name_end..]});
-    const result = parseModifier(filename, lineno, line, name_end + 1);
+    if (name.len == 0) parseError(io, filename, lineno, "expected id [a-zA-Z0-9_] but got '{s}'", .{line[name_start..]});
+    if (!matches(line, name_end, '(')) parseError(io, filename, lineno, "expected '(' but got '{s}'", .{line[name_end..]});
+    const result = parseModifier(io, filename, lineno, line, name_end + 1);
     return .{
         .end = result.end,
         .name = name,
@@ -135,7 +139,7 @@ fn parseNamedModifier(
     };
 }
 
-fn parseModifier(filename: []const u8, lineno: u32, line: []const u8, start: usize) struct {
+fn parseModifier(io: Io, filename: []const u8, lineno: u32, line: []const u8, start: usize) struct {
     end: usize,
     modifier: TypeModifier,
 } {
@@ -143,16 +147,16 @@ fn parseModifier(filename: []const u8, lineno: u32, line: []const u8, start: usi
     var next_index = start;
     while (true) {
         const id_start = skipWhitespace(line, next_index);
-        if (id_start == line.len) parseError(filename, lineno, "missing ')'", .{});
+        if (id_start == line.len) parseError(io, filename, lineno, "missing ')'", .{});
         if (matches(line, id_start, ')'))
             return .{ .end = next_index + 1, .modifier = modifier };
 
         const id_end = scanId(line, id_start);
         const id = line[id_start..id_end];
-        if (id.len == 0) parseError(filename, lineno, "expected id [a-zA-Z0-9_] but got '{s}'", .{line[id_start..]});
+        if (id.len == 0) parseError(io, filename, lineno, "expected id [a-zA-Z0-9_] but got '{s}'", .{line[id_start..]});
 
         if (std.mem.eql(u8, id, "NotNull")) {
-            if (!matches(line, id_end, '=')) parseError(filename, lineno, "expected '=' after NotNull but got '{s}'", .{line[id_start..]});
+            if (!matches(line, id_end, '=')) parseError(io, filename, lineno, "expected '=' after NotNull but got '{s}'", .{line[id_start..]});
 
             next_index = id_end + 1;
             var flags: NullModifier = 0;
@@ -166,16 +170,16 @@ fn parseModifier(filename: []const u8, lineno: u32, line: []const u8, start: usi
                     break;
                 next_index += 1;
                 flag_count += 1;
-                if (flag_count > @typeInfo(NullModifier).int.bits) parseError(filename, lineno, "NullModifier type doesn't have enough bits", .{});
+                if (flag_count > @typeInfo(NullModifier).int.bits) parseError(io, filename, lineno, "NullModifier type doesn't have enough bits", .{});
                 flags = flags << 1;
                 if (on) flags |= 1;
             }
-            if (flag_count == 0) parseError(filename, lineno, "expected 1's and 0's after 'NotNull=' but got '{s}'", .{line[id_start..]});
+            if (flag_count == 0) parseError(io, filename, lineno, "expected 1's and 0's after 'NotNull=' but got '{s}'", .{line[id_start..]});
             modifier.null_modifier = flags;
         } else if (std.mem.eql(u8, id, "UnionPointer")) {
             modifier.union_pointer = true;
             next_index = id_end;
-        } else parseError(filename, lineno, "unknown type modifier '{s}'", .{id});
+        } else parseError(io, filename, lineno, "unknown type modifier '{s}'", .{id});
     }
 }
 
