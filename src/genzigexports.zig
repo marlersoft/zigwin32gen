@@ -6,15 +6,8 @@ const zig = win32_stub.zig;
 // make win32/zig.zig happy
 pub const UNICODE = true;
 
-pub fn main() !void {
-    var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    const arena = arena_instance.allocator();
-    const all_args = try std.process.argsAlloc(arena);
-    // don't care about freeing args
-
-    var threaded: Io.Threaded = .init(arena, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+pub fn main(init: std.process.Init) !void {
+    const all_args = try init.minimal.args.toSlice(init.arena.allocator());
 
     const cmd_args = all_args[1..];
     if (cmd_args.len != 1) {
@@ -23,11 +16,11 @@ pub fn main() !void {
     }
     const out_file_path = cmd_args[0];
 
-    const out_file = try std.Io.Dir.cwd().createFile(io, out_file_path, .{});
-    defer out_file.close(io);
+    const out_file = try std.Io.Dir.cwd().createFile(init.io, out_file_path, .{});
+    defer out_file.close(init.io);
 
     var out_buf: [4096]u8 = undefined;
-    var w = out_file.writer(io, &out_buf);
+    var w = out_file.writer(init.io, &out_buf);
     try generate(&w.interface);
     try w.interface.flush();
 }

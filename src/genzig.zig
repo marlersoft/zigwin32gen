@@ -176,11 +176,7 @@ const Times = struct {
 };
 var global_times = Times{};
 
-pub fn main() !u8 {
-    var threaded: Io.Threaded = .init(allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
+pub fn main(init: std.process.Init) !u8 {
     const main_start = try std.time.Instant.now();
     var print_time_summary = false;
     defer {
@@ -201,9 +197,7 @@ pub fn main() !u8 {
     global_symbol_none = try global_symbol_pool.add("none");
     global_symbol_None = try global_symbol_pool.add("None");
 
-    const all_args = try std.process.argsAlloc(allocator);
-    // don't care about freeing args
-
+    const all_args = try init.minimal.args.toSlice(init.arena.allocator());
     const cmd_args = all_args[1..];
     if (cmd_args.len != 5) {
         std.log.err("expected 5 cmdline arguments but got {}", .{cmd_args.len});
@@ -216,12 +210,12 @@ pub fn main() !u8 {
     const zigwin32_out_path = stripDotDir(cmd_args[4]);
 
     const version = blk: {
-        var win32json_dir = try std.Io.Dir.cwd().openDir(io, win32json_path, .{});
-        defer win32json_dir.close(io);
-        const file = try win32json_dir.openFile(io, "version.txt", .{});
-        defer file.close(io);
+        var win32json_dir = try std.Io.Dir.cwd().openDir(init.io, win32json_path, .{});
+        defer win32json_dir.close(init.io);
+        const file = try win32json_dir.openFile(init.io, "version.txt", .{});
+        defer file.close(init.io);
         var buf: [100]u8 = undefined;
-        var reader = file.reader(io, &buf);
+        var reader = file.reader(init.io, &buf);
         reader.interface.fillMore() catch |err| switch (err) {
             error.EndOfStream => @panic("version too long"),
             else => |e| return e,
@@ -231,10 +225,10 @@ pub fn main() !u8 {
 
     var reader_buf: [4096]u8 = undefined;
     const pass1_json_content = blk: {
-        var file = try std.Io.Dir.cwd().openFile(io, pass1_json, .{});
-        defer file.close(io);
+        var file = try std.Io.Dir.cwd().openFile(init.io, pass1_json, .{});
+        defer file.close(init.io);
 
-        var reader = file.reader(io, &reader_buf);
+        var reader = file.reader(init.io, &reader_buf);
         break :blk try reader.interface.allocRemaining(allocator, .unlimited);
     };
     // no need to free pass1_json_content
@@ -242,10 +236,10 @@ pub fn main() !u8 {
     const api_list: []StringPool.Val = blk: {
         var api_list = std.array_list.Managed(StringPool.Val).init(allocator);
         const api_path = try std.fs.path.join(allocator, &.{ win32json_path, "api" });
-        var api_dir = try std.Io.Dir.cwd().openDir(io, api_path, .{ .iterate = true });
-        defer api_dir.close(io);
+        var api_dir = try std.Io.Dir.cwd().openDir(init.io, api_path, .{ .iterate = true });
+        defer api_dir.close(init.io);
         var it = api_dir.iterate();
-        while (try it.next(io)) |entry| {
+        while (try it.next(init.io)) |entry| {
             if (!std.mem.endsWith(u8, entry.name, ".json")) {
                 std.log.err("expected all files to end in '.json' but got '{s}'\n", .{entry.name});
                 return error.AlreadyReported;
@@ -268,21 +262,21 @@ pub fn main() !u8 {
     };
 
     const extra_content = blk: {
-        var file = try std.Io.Dir.cwd().openFile(io, extra_filename, .{});
-        defer file.close(io);
+        var file = try std.Io.Dir.cwd().openFile(init.io, extra_filename, .{});
+        defer file.close(init.io);
 
-        var reader = file.reader(io, &reader_buf);
+        var reader = file.reader(init.io, &reader_buf);
         break :blk try reader.interface.allocRemaining(allocator, .unlimited);
     };
     // no need to free extra_content
-    global_extra = extra.read(io, api_set, &global_symbol_pool, allocator, extra_filename, extra_content);
+    global_extra = extra.read(init.io, api_set, &global_symbol_pool, allocator, extra_filename, extra_content);
     // no need to free
-    try readComOverloads(io, api_set, &global_com_overloads, com_overloads_filename);
+    try readComOverloads(init.io, api_set, &global_com_overloads, com_overloads_filename);
 
-    try cleanDir(io, std.Io.Dir.cwd(), zigwin32_out_path);
-    var out_dir = try std.Io.Dir.cwd().openDir(io, zigwin32_out_path, .{});
-    defer out_dir.close(io);
-    try out_dir.createDir(io, "win32", .default_dir);
+    try cleanDir(init.io, std.Io.Dir.cwd(), zigwin32_out_path);
+    var out_dir = try std.Io.Dir.cwd().openDir(init.io, zigwin32_out_path, .{});
+    defer out_dir.close(init.io);
+    try out_dir.createDir(init.io, "win32", .default_dir);
 
     const static_zig_files = [_][]const u8{
         "zig",
@@ -290,7 +284,7 @@ pub fn main() !u8 {
     };
 
     inline for (static_zig_files) |name| {
-        try installStaticFile(io, out_dir, "win32/" ++ name ++ ".zig");
+        try installStaticFile(init.io, out_dir, "win32/" ++ name ++ ".zig");
     }
 
     const static_files = [_][]const u8{
@@ -301,21 +295,21 @@ pub fn main() !u8 {
         "zig.mod",
     };
     inline for (static_files) |name| {
-        try installStaticFile(io, out_dir, name);
+        try installStaticFile(init.io, out_dir, name);
     }
 
     const root_module = try Module.alloc(null, try global_symbol_pool.add("win32"));
 
     {
         const api_path = try std.fs.path.join(allocator, &.{ win32json_path, "api" });
-        var api_dir = try std.Io.Dir.cwd().openDir(io, api_path, .{ .iterate = true });
-        defer api_dir.close(io);
+        var api_dir = try std.Io.Dir.cwd().openDir(init.io, api_path, .{ .iterate = true });
+        defer api_dir.close(init.io);
 
         std.debug.print("-----------------------------------------------------------------------\n", .{});
         std.debug.print("loading {} api json files...\n", .{api_list.len});
 
-        var out_win32_dir = try out_dir.openDir(io, "win32", .{});
-        defer out_win32_dir.close(io);
+        var out_win32_dir = try out_dir.openDir(init.io, "win32", .{});
+        defer out_win32_dir.close(init.io);
 
         for (api_list, 0..) |api_name, api_index| {
             const api_num = api_index + 1;
@@ -325,9 +319,9 @@ pub fn main() !u8 {
             //
             // TODO: would things run faster if I just memory mapped the file?
             //
-            var file = try api_dir.openFile(io, basename, .{});
-            defer file.close(io);
-            try readAndGenerateApiFile(io, root_module, out_win32_dir, api_path, basename, file);
+            var file = try api_dir.openFile(init.io, basename, .{});
+            defer file.close(init.io);
+            try readAndGenerateApiFile(init.io, root_module, out_win32_dir, api_path, basename, file);
         }
         std.debug.assert(found_win32_error);
 
@@ -337,7 +331,7 @@ pub fn main() !u8 {
                 .{global_missing_com_overloads.items.len},
             );
             var stderr_buf: [4096]u8 = undefined;
-            var stderr = std.Io.File.stderr().writer(io, &stderr_buf);
+            var stderr = std.Io.File.stderr().writer(init.io, &stderr_buf);
             for (global_missing_com_overloads.items) |overload| {
                 try stderr.interface.print(
                     "{f} {s} {s} {d} TODO_FILL_IN_SUFFIX\n",
@@ -360,15 +354,15 @@ pub fn main() !u8 {
             try root_module.children.put(submodule, try Module.alloc(root_module, submodule));
         }
 
-        try generateContainerModules(io, out_dir, root_module);
-        try generateEverythingModule(io, out_win32_dir, root_module);
+        try generateContainerModules(init.io, out_dir, root_module);
+        try generateEverythingModule(init.io, out_win32_dir, root_module);
     }
 
     {
-        var zon = try out_dir.createFile(io, "build.zig.zon", .{});
-        defer zon.close(io);
+        var zon = try out_dir.createFile(init.io, "build.zig.zon", .{});
+        defer zon.close(init.io);
         var out_buf: [4096]u8 = undefined;
-        var file_writer = zon.writer(io, &out_buf);
+        var file_writer = zon.writer(init.io, &out_buf);
         const w = &file_writer.interface;
         try w.writeAll(".{\n");
         try w.writeAll("    .name = \"zigwin32\",\n");

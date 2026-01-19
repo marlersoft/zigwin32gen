@@ -457,7 +457,7 @@ fn typedConst2(comptime ReturnType: type, comptime SwitchType: type, comptime va
             .pointer => return typedConst2(ReturnType, target_type_info.child, value),
             else => target_type_error,
         },
-        .@"enum" => |_| switch (@typeInfo(@TypeOf(value))) {
+        .@"enum" => switch (@typeInfo(@TypeOf(value))) {
             .Int => return @as(ReturnType, @enumFromInt(value)),
             else => target_type_error,
         },
@@ -493,7 +493,7 @@ fn typedConst2_0_13(comptime ReturnType: type, comptime SwitchType: type, compti
             .Pointer => return typedConst2_0_13(ReturnType, target_type_info.child, value),
             else => target_type_error,
         },
-        .Enum => |_| switch (@typeInfo(@TypeOf(value))) {
+        .Enum => switch (@typeInfo(@TypeOf(value))) {
             .Int => return @as(ReturnType, @enumFromInt(value)),
             else => target_type_error,
         },

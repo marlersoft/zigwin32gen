@@ -8,26 +8,18 @@ const fatal = common.fatal;
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const allocator = arena.allocator();
 
-pub fn main() !u8 {
-    const all_args = try std.process.argsAlloc(allocator);
-    // don't care about freeing args
-
-    const gpa = std.heap.smp_allocator;
-    var threaded: Io.Threaded = .init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    const cmd_args = all_args[1..];
-    if (cmd_args.len != 2) {
+pub fn main(init: std.process.Init) !u8 {
+    const cmd_args = try init.minimal.args.toSlice(init.arena.allocator());
+    if (cmd_args.len != 3) {
         std.log.err("expected 2 arguments but got {}", .{cmd_args.len});
         return 1;
     }
-    const win32json_path = cmd_args[0];
-    const out_filename = cmd_args[1];
+    const win32json_path = cmd_args[1];
+    const out_filename = cmd_args[2];
 
     const api_path = try std.fs.path.join(allocator, &.{ win32json_path, "api" });
-    var api_dir = try Io.Dir.cwd().openDir(io, api_path, .{ .iterate = true });
-    defer api_dir.close(io);
+    var api_dir = try Io.Dir.cwd().openDir(init.io, api_path, .{ .iterate = true });
+    defer api_dir.close(init.io);
 
     var api_list = std.array_list.Managed([]const u8).init(allocator);
     defer {
@@ -36,15 +28,15 @@ pub fn main() !u8 {
         }
         api_list.deinit();
     }
-    try common.readApiList(io, api_dir, &api_list);
+    try common.readApiList(init.io, api_dir, &api_list);
 
     // sort so our data is always in the same order
     std.mem.sort([]const u8, api_list.items, {}, common.asciiLessThanIgnoreCase);
 
-    const out_file = try Io.Dir.cwd().createFile(io, out_filename, .{});
-    defer out_file.close(io);
+    const out_file = try Io.Dir.cwd().createFile(init.io, out_filename, .{});
+    defer out_file.close(init.io);
     var out_buf: [4096]u8 = undefined;
-    var file_writer = out_file.writer(io, &out_buf);
+    var file_writer = out_file.writer(init.io, &out_buf);
     const out = &file_writer.interface;
 
     try out.writeAll("{\n");
@@ -53,9 +45,9 @@ pub fn main() !u8 {
     for (api_list.items) |api_json_basename| {
         const name = api_json_basename[0 .. api_json_basename.len - 5];
         try out.print("    {s}\"{s}\": {{\n", .{ json_obj_prefix, name });
-        var file = try api_dir.openFile(io, api_json_basename, .{});
-        defer file.close(io);
-        try pass1OnFile(io, out, api_path, api_json_basename, file);
+        var file = try api_dir.openFile(init.io, api_json_basename, .{});
+        defer file.close(init.io);
+        try pass1OnFile(init.io, out, api_path, api_json_basename, file);
         try out.writeAll("    }\n");
         json_obj_prefix = ",";
     }
