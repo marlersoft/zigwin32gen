@@ -15,16 +15,16 @@ pub fn addExamples(
     };
     const examples_step = b.step("examples", "Build/run examples. Use -j1 to run one at a time");
 
-    try addExample(b, arches, optimize, win32, examples, "helloworld", .Console, examples_step);
-    try addExample(b, arches, optimize, win32, examples, "wasapi", .Console, examples_step);
-    try addExample(b, arches, optimize, win32, examples, "net", .Console, examples_step);
-    try addExample(b, arches, optimize, win32, examples, "tests", .Console, examples_step);
+    try addExample(b, arches, optimize, win32, examples, "helloworld", .console, examples_step);
+    try addExample(b, arches, optimize, win32, examples, "wasapi", .console, examples_step);
+    try addExample(b, arches, optimize, win32, examples, "net", .console, examples_step);
+    try addExample(b, arches, optimize, win32, examples, "tests", .console, examples_step);
 
-    try addExample(b, arches, optimize, win32, examples, "helloworld-window", .Windows, examples_step);
-    try addExample(b, arches, optimize, win32, examples, "d2dcircle", .Windows, examples_step);
-    try addExample(b, arches, optimize, win32, examples, "opendialog", .Windows, examples_step);
-    try addExample(b, arches, optimize, win32, examples, "unionpointers", .Windows, examples_step);
-    try addExample(b, arches, optimize, win32, examples, "testwindow", .Windows, examples_step);
+    try addExample(b, arches, optimize, win32, examples, "helloworld-window", .windows, examples_step);
+    try addExample(b, arches, optimize, win32, examples, "d2dcircle", .windows, examples_step);
+    try addExample(b, arches, optimize, win32, examples, "opendialog", .windows, examples_step);
+    try addExample(b, arches, optimize, win32, examples, "unionpointers", .windows, examples_step);
+    try addExample(b, arches, optimize, win32, examples, "testwindow", .windows, examples_step);
 }
 
 fn addExample(
@@ -52,7 +52,7 @@ fn addExample(
                 .optimize = optimize,
                 .single_threaded = true,
             }),
-            .win32_manifest = if (subsystem == .Windows) examples.path(b, "win32.manifest") else null,
+            .win32_manifest = if (subsystem == .windows) examples.path(b, "win32.manifest") else null,
         });
         exe.subsystem = subsystem;
         exe.root_module.addImport("win32", win32);

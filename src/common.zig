@@ -20,9 +20,9 @@ pub fn getcwd(a: std.mem.Allocator) ![]u8 {
     return path_allocated;
 }
 
-pub fn readApiList(api_dir: std.fs.Dir, api_list: *std.array_list.Managed([]const u8)) !void {
+pub fn readApiList(io: std.Io, api_dir: std.Io.Dir, api_list: *std.array_list.Managed([]const u8)) !void {
     var dir_it = api_dir.iterate();
-    while (try dir_it.next()) |entry| {
+    while (try dir_it.next(io)) |entry| {
         if (!std.mem.endsWith(u8, entry.name, ".json")) {
             std.log.err("expected all files to end in '.json' but got '{s}'\n", .{entry.name});
             return error.AlreadyReported;

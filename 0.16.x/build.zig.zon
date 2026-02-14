@@ -2,7 +2,7 @@
     .name = .zigwin32,
     .fingerprint = 0x2044322953864c34,
     .version = "0.0.0",
-    .minimum_zig_version = "0.14.1",
+    .minimum_zig_version = "0.16.0-dev.1892+53ebfde6b",
     .dependencies = .{
         .win32 = .{ .path = "../zig-out" },
         .examples = .{ .path = "../examples" },

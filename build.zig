@@ -3,15 +3,7 @@ const std = @import("std");
 const Build = std.Build;
 const Step = std.Build.Step;
 const CrossTarget = std.zig.CrossTarget;
-const buildcommon = @import("0.14.1/common.zig");
-
-comptime {
-    const required_zig = "0.15.1";
-    const v = std.SemanticVersion.parse(required_zig) catch unreachable;
-    if (builtin.zig_version.order(v) != .eq) @compileError(
-        "zig version " ++ required_zig ++ " is required to ensure zigwin32 output is always the same",
-    );
-}
+const buildcommon = @import("0.16.x/common.zig");
 
 pub fn build(b: *Build) !void {
     const default_steps = "install diff test";
@@ -210,8 +202,9 @@ const PrintLazyPath = struct {
         _ = opt;
         const print: *PrintLazyPath = @fieldParentPtr("step", step);
 
-        const stdout = std.fs.File.stdout();
-        var writer = stdout.writer(&.{});
+        const stdout = std.Io.File.stdout();
+        var buf: [128]u8 = undefined;
+        var writer = stdout.writer(step.owner.graph.io, &buf);
         try writer.interface.print("{s}\n", .{print.lazy_path.getPath(step.owner)});
     }
 };

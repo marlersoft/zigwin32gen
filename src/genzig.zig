@@ -1,5 +1,6 @@
 const builtin = @import("builtin");
 const std = @import("std");
+const Io = std.Io;
 const zigexports = @import("zigexports");
 const StringHashMap = std.StringHashMap;
 const StringPool = @import("StringPool.zig");
@@ -169,31 +170,34 @@ const SdkFile = struct {
 };
 
 const Times = struct {
-    parse_time_millis: i64 = 0,
-    read_time_millis: i64 = 0,
-    generate_time_millis: i64 = 0,
+    parse_time_ns: u64 = 0,
+    read_time_ns: u64 = 0,
+    generate_time_ns: u64 = 0,
 };
 var global_times = Times{};
 
-pub fn main() !u8 {
-    const main_start_millis = std.time.milliTimestamp();
+pub fn main(init: std.process.Init) !u8 {
+    const main_start = try std.time.Instant.now();
     var print_time_summary = false;
     defer {
-        if (print_time_summary) {
-            var total_millis = std.time.milliTimestamp() - main_start_millis;
+        if (print_time_summary) blk: {
+            var total_millis = @divTrunc((std.time.Instant.now() catch break :blk).since(main_start), std.time.ns_per_ms);
             if (total_millis == 0) total_millis = 1; // prevent divide by 0
-            std.debug.print("Parse Time: {} millis ({}%)\n", .{ global_times.parse_time_millis, @divTrunc(100 * global_times.parse_time_millis, total_millis) });
-            std.debug.print("Read Time : {} millis ({}%)\n", .{ global_times.read_time_millis, @divTrunc(100 * global_times.read_time_millis, total_millis) });
-            std.debug.print("Gen Time  : {} millis ({}%)\n", .{ global_times.generate_time_millis, @divTrunc(100 * global_times.generate_time_millis, total_millis) });
+
+            const parse_time_millis = @divTrunc(global_times.parse_time_ns, std.time.ns_per_ms);
+            const read_time_millis = @divTrunc(global_times.read_time_ns, std.time.ns_per_ms);
+            const generate_time_millis = @divTrunc(global_times.generate_time_ns, std.time.ns_per_ms);
+
+            std.debug.print("Parse Time: {} millis ({}%)\n", .{ parse_time_millis, @divTrunc(100 * parse_time_millis, total_millis) });
+            std.debug.print("Read Time : {} millis ({}%)\n", .{ read_time_millis, @divTrunc(100 * read_time_millis, total_millis) });
+            std.debug.print("Gen Time  : {} millis ({}%)\n", .{ generate_time_millis, @divTrunc(100 * generate_time_millis, total_millis) });
             std.debug.print("Total Time: {} millis\n", .{total_millis});
         }
     }
     global_symbol_none = try global_symbol_pool.add("none");
     global_symbol_None = try global_symbol_pool.add("None");
 
-    const all_args = try std.process.argsAlloc(allocator);
-    // don't care about freeing args
-
+    const all_args = try init.minimal.args.toSlice(init.arena.allocator());
     const cmd_args = all_args[1..];
     if (cmd_args.len != 5) {
         std.log.err("expected 5 cmdline arguments but got {}", .{cmd_args.len});
@@ -206,12 +210,12 @@ pub fn main() !u8 {
     const zigwin32_out_path = stripDotDir(cmd_args[4]);
 
     const version = blk: {
-        var win32json_dir = try std.fs.cwd().openDir(win32json_path, .{});
-        defer win32json_dir.close();
-        const file = try win32json_dir.openFile("version.txt", .{});
-        defer file.close();
+        var win32json_dir = try std.Io.Dir.cwd().openDir(init.io, win32json_path, .{});
+        defer win32json_dir.close(init.io);
+        const file = try win32json_dir.openFile(init.io, "version.txt", .{});
+        defer file.close(init.io);
         var buf: [100]u8 = undefined;
-        var reader = file.reader(&buf);
+        var reader = file.reader(init.io, &buf);
         reader.interface.fillMore() catch |err| switch (err) {
             error.EndOfStream => @panic("version too long"),
             else => |e| return e,
@@ -219,20 +223,23 @@ pub fn main() !u8 {
         break :blk std.SemanticVersion.parse(reader.interface.buffered()) catch fatal("invalid version '{s}'", .{reader.interface.buffered()});
     };
 
+    var reader_buf: [4096]u8 = undefined;
     const pass1_json_content = blk: {
-        var file = try std.fs.cwd().openFile(pass1_json, .{});
-        defer file.close();
-        break :blk try file.readToEndAlloc(allocator, std.math.maxInt(usize));
+        var file = try std.Io.Dir.cwd().openFile(init.io, pass1_json, .{});
+        defer file.close(init.io);
+
+        var reader = file.reader(init.io, &reader_buf);
+        break :blk try reader.interface.allocRemaining(allocator, .unlimited);
     };
     // no need to free pass1_json_content
     global_pass1 = pass1data.parseRoot(allocator, pass1_json, pass1_json_content);
     const api_list: []StringPool.Val = blk: {
         var api_list = std.array_list.Managed(StringPool.Val).init(allocator);
         const api_path = try std.fs.path.join(allocator, &.{ win32json_path, "api" });
-        var api_dir = try std.fs.cwd().openDir(api_path, .{ .iterate = true });
-        defer api_dir.close();
+        var api_dir = try std.Io.Dir.cwd().openDir(init.io, api_path, .{ .iterate = true });
+        defer api_dir.close(init.io);
         var it = api_dir.iterate();
-        while (try it.next()) |entry| {
+        while (try it.next(init.io)) |entry| {
             if (!std.mem.endsWith(u8, entry.name, ".json")) {
                 std.log.err("expected all files to end in '.json' but got '{s}'\n", .{entry.name});
                 return error.AlreadyReported;
@@ -255,19 +262,21 @@ pub fn main() !u8 {
     };
 
     const extra_content = blk: {
-        var file = try std.fs.cwd().openFile(extra_filename, .{});
-        defer file.close();
-        break :blk try file.readToEndAlloc(allocator, std.math.maxInt(usize));
+        var file = try std.Io.Dir.cwd().openFile(init.io, extra_filename, .{});
+        defer file.close(init.io);
+
+        var reader = file.reader(init.io, &reader_buf);
+        break :blk try reader.interface.allocRemaining(allocator, .unlimited);
     };
     // no need to free extra_content
-    global_extra = extra.read(api_set, &global_symbol_pool, allocator, extra_filename, extra_content);
+    global_extra = extra.read(init.io, api_set, &global_symbol_pool, allocator, extra_filename, extra_content);
     // no need to free
-    try readComOverloads(api_set, &global_com_overloads, com_overloads_filename);
+    try readComOverloads(init.io, api_set, &global_com_overloads, com_overloads_filename);
 
-    try cleanDir(std.fs.cwd(), zigwin32_out_path);
-    var out_dir = try std.fs.cwd().openDir(zigwin32_out_path, .{});
-    defer out_dir.close();
-    try out_dir.makeDir("win32");
+    try cleanDir(init.io, std.Io.Dir.cwd(), zigwin32_out_path);
+    var out_dir = try std.Io.Dir.cwd().openDir(init.io, zigwin32_out_path, .{});
+    defer out_dir.close(init.io);
+    try out_dir.createDir(init.io, "win32", .default_dir);
 
     const static_zig_files = [_][]const u8{
         "zig",
@@ -275,7 +284,7 @@ pub fn main() !u8 {
     };
 
     inline for (static_zig_files) |name| {
-        try installStaticFile(out_dir, "win32/" ++ name ++ ".zig");
+        try installStaticFile(init.io, out_dir, "win32/" ++ name ++ ".zig");
     }
 
     const static_files = [_][]const u8{
@@ -286,21 +295,21 @@ pub fn main() !u8 {
         "zig.mod",
     };
     inline for (static_files) |name| {
-        try installStaticFile(out_dir, name);
+        try installStaticFile(init.io, out_dir, name);
     }
 
     const root_module = try Module.alloc(null, try global_symbol_pool.add("win32"));
 
     {
         const api_path = try std.fs.path.join(allocator, &.{ win32json_path, "api" });
-        var api_dir = try std.fs.cwd().openDir(api_path, .{ .iterate = true });
-        defer api_dir.close();
+        var api_dir = try std.Io.Dir.cwd().openDir(init.io, api_path, .{ .iterate = true });
+        defer api_dir.close(init.io);
 
         std.debug.print("-----------------------------------------------------------------------\n", .{});
         std.debug.print("loading {} api json files...\n", .{api_list.len});
 
-        var out_win32_dir = try out_dir.openDir("win32", .{});
-        defer out_win32_dir.close();
+        var out_win32_dir = try out_dir.openDir(init.io, "win32", .{});
+        defer out_win32_dir.close(init.io);
 
         for (api_list, 0..) |api_name, api_index| {
             const api_num = api_index + 1;
@@ -310,9 +319,9 @@ pub fn main() !u8 {
             //
             // TODO: would things run faster if I just memory mapped the file?
             //
-            var file = try api_dir.openFile(basename, .{});
-            defer file.close();
-            try readAndGenerateApiFile(root_module, out_win32_dir, api_path, basename, file);
+            var file = try api_dir.openFile(init.io, basename, .{});
+            defer file.close(init.io);
+            try readAndGenerateApiFile(init.io, root_module, out_win32_dir, api_path, basename, file);
         }
         std.debug.assert(found_win32_error);
 
@@ -322,7 +331,7 @@ pub fn main() !u8 {
                 .{global_missing_com_overloads.items.len},
             );
             var stderr_buf: [4096]u8 = undefined;
-            var stderr = std.fs.File.stderr().writer(&stderr_buf);
+            var stderr = std.Io.File.stderr().writer(init.io, &stderr_buf);
             for (global_missing_com_overloads.items) |overload| {
                 try stderr.interface.print(
                     "{f} {s} {s} {d} TODO_FILL_IN_SUFFIX\n",
@@ -345,15 +354,15 @@ pub fn main() !u8 {
             try root_module.children.put(submodule, try Module.alloc(root_module, submodule));
         }
 
-        try generateContainerModules(out_dir, root_module);
-        try generateEverythingModule(out_win32_dir, root_module);
+        try generateContainerModules(init.io, out_dir, root_module);
+        try generateEverythingModule(init.io, out_win32_dir, root_module);
     }
 
     {
-        var zon = try out_dir.createFile("build.zig.zon", .{});
-        defer zon.close();
+        var zon = try out_dir.createFile(init.io, "build.zig.zon", .{});
+        defer zon.close(init.io);
         var out_buf: [4096]u8 = undefined;
-        var file_writer = zon.writer(&out_buf);
+        var file_writer = zon.writer(init.io, &out_buf);
         const w = &file_writer.interface;
         try w.writeAll(".{\n");
         try w.writeAll("    .name = \"zigwin32\",\n");
@@ -381,11 +390,11 @@ fn stripDotDir(path: []const u8) []const u8 {
     return path;
 }
 
-fn installStaticFile(out_dir: std.fs.Dir, comptime name: []const u8) !void {
-    const file = try out_dir.createFile(name, .{});
-    defer file.close();
+fn installStaticFile(io: Io, out_dir: std.Io.Dir, comptime name: []const u8) !void {
+    const file = try out_dir.createFile(io, name, .{});
+    defer file.close(io);
     // unbuffered because we are writing only one big continuous slice
-    var writer = file.writer(&.{});
+    var writer = file.writer(io, &.{});
     // NOTE: it's important that we use @embedFile here so that the genzig
     //       executable tracks changes to these files
     try writer.interface.writeAll(@embedFile("static/" ++ name));
@@ -420,13 +429,18 @@ const ComMethodMap = std.StringHashMapUnmanaged(ComSuffixMap);
 const ComTypeMap = std.StringHashMapUnmanaged(ComMethodMap);
 
 fn readComOverloads(
+    io: Io,
     api_name_set: StringPool.HashMapUnmanaged(void),
     api_map: *StringPool.HashMapUnmanaged(ComTypeMap),
     filename: []const u8,
 ) !void {
-    var file = try std.fs.cwd().openFile(filename, .{});
-    defer file.close();
-    const content = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
+    var file = try std.Io.Dir.cwd().openFile(io, filename, .{});
+    defer file.close(io);
+
+    var buf: [4096]u8 = undefined;
+    var reader = file.reader(io, &buf);
+    const content = try reader.interface.allocRemaining(allocator, .unlimited);
+
     // don't free, we'll keep the strings around
     var lines = std.mem.splitScalar(u8, content, '\n');
     var line_number: u32 = 1;
@@ -505,11 +519,11 @@ const Export = struct {
     }
 };
 
-fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !void {
-    var everything_file = try out_win32_dir.createFile("everything.zig", .{});
-    defer everything_file.close();
+fn generateEverythingModule(io: Io, out_win32_dir: std.Io.Dir, root_module: *Module) !void {
+    var everything_file = try out_win32_dir.createFile(io, "everything.zig", .{});
+    defer everything_file.close(io);
     var buffer: [4096]u8 = undefined;
-    var file_writer = everything_file.writer(&buffer);
+    var file_writer = everything_file.writer(io, &buffer);
     const writer = &file_writer.interface;
     try writer.writeAll(&comptime removeCr(autogen_header ++
         \\//! This module contains aliases to ALL symbols inside the Win32 SDK.  It allows
@@ -615,24 +629,23 @@ fn moduleLessThan(context: void, lhs: *Module, rhs: *Module) bool {
     return std.ascii.lessThanIgnoreCase(lhs.name.slice, rhs.name.slice);
 }
 
-fn generateContainerModules(dir: std.fs.Dir, module: *Module) anyerror!void {
+fn generateContainerModules(io: Io, dir: std.Io.Dir, module: *Module) anyerror!void {
     if (module.children.count() == 0) {
         return;
     }
 
-    var file = blk: {
-        if (module.file) |_| {
-            const file = try dir.openFile(module.zig_basename, .{ .mode = .write_only });
-            try file.seekFromEnd(0);
-            break :blk file;
-        }
-        break :blk try dir.createFile(module.zig_basename, .{});
+    var file, const existing_size = blk: {
+        if (module.file) |_|
+            break :blk .{ try dir.openFile(io, module.zig_basename, .{ .mode = .write_only }), (try dir.statFile(io, module.zig_basename, .{})).size };
+        break :blk .{ try dir.createFile(io, module.zig_basename, .{}), 0 };
     };
-    defer file.close();
-    var buffer: [4096]u8 = undefined;
-    var file_writer = file.writerStreaming(&buffer);
-    const writer = &file_writer.interface;
 
+    defer file.close(io);
+    var buffer: [4096]u8 = undefined;
+    var file_writer = file.writerStreaming(io, &buffer);
+    try file_writer.seekToUnbuffered(existing_size);
+
+    const writer = &file_writer.interface;
     const children = try common.allocMapValues(allocator, *Module, module.children);
     defer allocator.free(children);
 
@@ -657,37 +670,41 @@ fn generateContainerModules(dir: std.fs.Dir, module: *Module) anyerror!void {
         ));
     }
 
-    var next_dir = try dir.openDir(module.name.slice, .{});
-    defer next_dir.close();
+    var next_dir = try dir.openDir(io, module.name.slice, .{});
+    defer next_dir.close(io);
 
     for (children) |child| {
-        try generateContainerModules(next_dir, child);
+        try generateContainerModules(io, next_dir, child);
     }
 
     try writer.flush();
 }
 
 fn readAndGenerateApiFile(
+    io: Io,
     root_module: *Module,
-    out_dir: std.fs.Dir,
+    out_dir: std.Io.Dir,
     api_path: []const u8,
     json_basename: []const u8,
-    file: std.fs.File,
+    file: std.Io.File,
 ) !void {
     var json_arena_instance = std.heap.ArenaAllocator.init(allocator);
     defer json_arena_instance.deinit();
     const json_arena = json_arena_instance.allocator();
 
-    const read_start_millis = std.time.milliTimestamp();
-    const content = try file.readToEndAlloc(json_arena, std.math.maxInt(usize));
+    const read_start = try std.time.Instant.now();
+
+    var buf: [4096]u8 = undefined;
+    var reader = file.reader(io, &buf);
+    const content = try reader.interface.allocRemaining(json_arena, .unlimited);
     // no need to free content, owned by json_arena
-    const read_end_millis = std.time.milliTimestamp();
-    global_times.read_time_millis += read_end_millis - read_start_millis;
+    const read_end = try std.time.Instant.now();
+    global_times.read_time_ns += read_end.since(read_start);
     std.debug.print("  read {} bytes\n", .{content.len});
 
     const json_root = metadata.Api.parse(json_arena, api_path, json_basename, content);
     // no need to free json_root, owned by json_arena
-    global_times.parse_time_millis += std.time.milliTimestamp() - read_end_millis;
+    global_times.parse_time_ns += (try std.time.Instant.now()).since(read_end);
 
     const json_basename_copy = try allocator.dupe(u8, json_basename);
     const json_name = try global_symbol_pool.add(json_basename_copy[0 .. json_basename_copy.len - ".json".len]);
@@ -695,7 +712,7 @@ fn readAndGenerateApiFile(
     errdefer allocator.free(zig_name);
 
     var module_dir = out_dir;
-    defer if (module_dir.fd != out_dir.fd) module_dir.close();
+    defer if (module_dir.handle != out_dir.handle) module_dir.close(io);
 
     var module: *Module = root_module;
     var depth: u2 = 0;
@@ -706,11 +723,11 @@ fn readAndGenerateApiFile(
             if (module != root_module) {
                 depth += 1;
                 if (module.children.count() == 0) {
-                    try module_dir.makeDir(module.name.slice);
+                    try module_dir.createDir(io, module.name.slice, .default_dir);
                 }
-                const next_dir = try module_dir.openDir(module.name.slice, .{});
-                if (module_dir.fd != out_dir.fd)
-                    module_dir.close();
+                const next_dir = try module_dir.openDir(io, module.name.slice, .{});
+                if (module_dir.handle != out_dir.handle)
+                    module_dir.close(io);
                 module_dir = next_dir;
             }
 
@@ -756,9 +773,9 @@ fn readAndGenerateApiFile(
         .com_type_overloads = global_com_overloads.get(json_name),
     };
 
-    const generate_start_millis = std.time.milliTimestamp();
-    try generateFile(module_dir, module, json_root);
-    global_times.generate_time_millis += std.time.milliTimestamp() - generate_start_millis;
+    const generate_start = try std.time.Instant.now();
+    try generateFile(io, module_dir, module, json_root);
+    global_times.generate_time_ns += (try std.time.Instant.now()).since(generate_start);
 }
 
 pub fn EmptyStaticStringMap(comptime V: type) type {
@@ -774,13 +791,13 @@ fn ArchSpecificMap(comptime T: type) type {
     return StringPoolArrayHashMap(ArchSpecificObjects(T));
 }
 
-fn generateFile(module_dir: std.fs.Dir, module: *Module, api: metadata.Api) !void {
+fn generateFile(io: Io, module_dir: std.Io.Dir, module: *Module, api: metadata.Api) !void {
     const sdk_file = &module.file.?;
 
-    var out_file = try module_dir.createFile(module.zig_basename, .{});
-    defer out_file.close();
+    var out_file = try module_dir.createFile(io, module.zig_basename, .{});
+    defer out_file.close(io);
     var buffer: [4096]u8 = undefined;
-    var file_writer = out_file.writer(&buffer);
+    var file_writer = out_file.writer(io, &buffer);
     var code_writer = CodeWriter{ .writer = &file_writer.interface, .depth = 0, .midline = false };
     // need to specify type explicitly because of https://github.com/ziglang/zig/issues/12795
     const writer: *CodeWriter = &code_writer;
@@ -3021,8 +3038,7 @@ fn generateUnicodeAliases(sdk_file: *SdkFile, writer: *CodeWriter, unicode_alias
 }
 
 pub fn formatArchesCase(filter: metadata.Architectures.Filter, buf: []u8) !usize {
-    var fbs = std.io.fixedBufferStream(buf);
-    const arch_writer = fbs.writer();
+    var arch_writer = Io.Writer.fixed(buf);
     var case_prefix: []const u8 = "";
     inline for (std.meta.fields(metadata.Architectures.Filter)) |arch_field| {
         const enabled = @field(filter, arch_field.name);
@@ -3032,7 +3048,7 @@ pub fn formatArchesCase(filter: metadata.Architectures.Filter, buf: []u8) !usize
         }
     }
     try arch_writer.writeAll(" => ");
-    return fbs.pos;
+    return arch_writer.end;
 }
 
 const ArchCount = 3;
@@ -3288,9 +3304,9 @@ fn removeCr(comptime s: []const u8) [withoutCrLen(s):0]u8 {
     }
 }
 
-fn cleanDir(dir: std.fs.Dir, sub_path: []const u8) !void {
+fn cleanDir(io: Io, dir: std.Io.Dir, sub_path: []const u8) !void {
     std.log.info("cleandir '{s}'", .{sub_path});
-    try dir.deleteTree(sub_path);
+    try dir.deleteTree(io, sub_path);
     const MAX_ATTEMPTS = 30;
     var attempt: u32 = 1;
     while (true) : (attempt += 1) {
@@ -3298,7 +3314,7 @@ fn cleanDir(dir: std.fs.Dir, sub_path: []const u8) !void {
             fatal("failed to delete '{s}' after {} attempts", .{ sub_path, MAX_ATTEMPTS });
 
         // ERROR: windows.OpenFile is not handling error.Unexpected NTSTATUS=0xc0000056
-        dir.makeDir(sub_path) catch |e| switch (e) {
+        dir.createDir(io, sub_path, .default_dir) catch |e| switch (e) {
             else => {
                 std.debug.print("[DEBUG] makedir failed with {}\n", .{e});
                 //std.process.exit(0xff);
