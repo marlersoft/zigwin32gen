@@ -1978,7 +1978,7 @@ fn generateStructOrUnionDef(
                 .anon_types = &anon_types,
                 .extra_mod = .{},
             });
-            if (field.Attrs.Obselete) {
+            if (field.Attrs.Obsolete) {
                 try writer.line("/// Deprecated");
             }
             const field_type_formatter = try addTypeRefs(sdk_file, t.Architectures, field.Type, field_options, this_nested_context);

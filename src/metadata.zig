@@ -199,7 +199,7 @@ pub const StructOrUnionField = struct {
 
 pub const FieldAttrs = struct {
     Const: bool = false,
-    Obselete: bool = false,
+    Obsolete: bool = false,
     Optional: bool = false,
     NotNullTerminated: bool = false,
     NullNullTerminated: bool = false,
