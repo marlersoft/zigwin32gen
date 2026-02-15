@@ -5,8 +5,8 @@
     .minimum_zig_version = "0.15.2",
     .dependencies = .{
         .win32json = .{
-            .url = "git+https://github.com/marlersoft/win32json#cd1ec74c16fd0c2005cc0a0e8ae6ec9b0e0aab32",
-            .hash = "N-V-__8AAFne6AN8IAwCClI_IYs85q9CNvMI6FUBzWkvWzXd",
+            .url = "git+https://github.com/marlersoft/win32json#a998a7aa17ca5b61960fcd363d0137e82bcd5577",
+            .hash = "N-V-__8AAIkG6QOBcqQgLeq7Dq3kHZL7NXC041mKkKy4i9pN",
         },
     },
     .paths = .{"build.zig.zon"},
