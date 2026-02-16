@@ -187,6 +187,7 @@ pub const FunctionPointer = struct {
 pub const StructOrUnion = struct {
     Size: u32,
     PackingSize: u32,
+    Attrs: StructOrUnionAttrs,
     Fields: []const StructOrUnionField,
     NestedTypes: []const Type,
     Comment: ?[]const u8 = null,
@@ -199,7 +200,7 @@ pub const StructOrUnionField = struct {
 
 pub const FieldAttrs = struct {
     Const: bool = false,
-    Obsolete: bool = false,
+    Obsolete: ?ObsoleteAttr = null,
     Optional: bool = false,
     NotNullTerminated: bool = false,
     NullNullTerminated: bool = false,
@@ -412,12 +413,28 @@ pub const FunctionAttrs = struct {
     SpecialName: bool = false,
     PreserveSig: bool = false,
     DoesNotReturn: bool = false,
+    Obsolete: ?ObsoleteAttr = null,
     pub fn jsonParse(
         allocator: std.mem.Allocator,
         source: anytype,
         options: std.json.ParseOptions,
     ) std.json.ParseError(@TypeOf(source.*))!FunctionAttrs {
         return parseAttrsArray(FunctionAttrs, allocator, source, options);
+    }
+};
+
+const ObsoleteAttr = struct {
+    Message: ?[]const u8 = null,
+};
+
+pub const StructOrUnionAttrs = struct {
+    Obsolete: ?ObsoleteAttr = null,
+    pub fn jsonParse(
+        allocator: std.mem.Allocator,
+        source: anytype,
+        options: std.json.ParseOptions,
+    ) std.json.ParseError(@TypeOf(source.*))!StructOrUnionAttrs {
+        return parseAttrsArray(StructOrUnionAttrs, allocator, source, options);
     }
 };
 
@@ -578,9 +595,17 @@ fn parseAttrsArray(
             .array_end => return result,
             .string => |s| {
                 inline for (structInfo.fields) |field| {
-                    if (field.type == bool and std.mem.eql(u8, s, field.name)) {
-                        @field(result, field.name) = true;
-                        break;
+                    if (std.mem.eql(u8, s, field.name)) {
+                        if (field.type == bool) {
+                            @field(result, field.name) = true;
+                            break;
+                        }
+                        if (field.type == ?ObsoleteAttr) {
+                            @field(result, field.name) = .{};
+                            break;
+                        }
+                        std.log.err("unable to interpret array string attribute as {s}", .{@typeName(field.type)});
+                        return error.UnexpectedToken;
                     }
                 } else {
                     std.log.err(
@@ -618,6 +643,17 @@ fn parseAttrsArray(
                     if (std.mem.eql(u8, kind, "FreeWith")) {
                         result.FreeWith = try parseUnionObject(
                             FreeWith,
+                            allocator,
+                            source,
+                            options,
+                        );
+                        continue;
+                    }
+                }
+                if (@hasField(Attrs, "Obsolete")) {
+                    if (std.mem.eql(u8, kind, "Obsolete")) {
+                        result.Obsolete = try parseUnionObject(
+                            ObsoleteAttr,
                             allocator,
                             source,
                             options,

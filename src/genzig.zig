@@ -1978,8 +1978,9 @@ fn generateStructOrUnionDef(
                 .anon_types = &anon_types,
                 .extra_mod = .{},
             });
-            if (field.Attrs.Obsolete) {
-                try writer.line("/// Deprecated");
+            if (field.Attrs.Obsolete) |Obsolete| {
+                const prefix: []const u8 = if (Obsolete.Message != null) " " else "";
+                try writer.linef("/// Deprecated{s}{s}", .{ prefix, Obsolete.Message orelse "" });
             }
             const field_type_formatter = try addTypeRefs(sdk_file, t.Architectures, field.Type, field_options, this_nested_context);
             try writer.writef("{f}: ", .{fmtIdP(field.Name)}, .{ .nl = false });
@@ -2912,6 +2913,28 @@ fn getFuncModifiers(
     return set;
 }
 
+fn externFromDllImport(import: []const u8) []const u8 {
+    const suffix = ".dll";
+    if (std.mem.endsWith(u8, import, suffix)) {
+        const name = import[0 .. import.len - suffix.len];
+        std.debug.assert(name.len > 0);
+        return name;
+    }
+
+    // These are DLL-like but need their extension preserved
+    if (std.mem.endsWith(u8, import, ".drv")) return import;
+    if (std.mem.endsWith(u8, import, ".cpl")) return import;
+
+    if (std.mem.startsWith(u8, import, "api-ms-") or std.mem.startsWith(u8, import, "ext-ms-")) {
+        std.debug.assert(std.mem.indexOf(u8, import, ".") == null);
+        return import;
+    }
+    std.debug.panic(
+        "DllImport '{s}' does not end with '{s}",
+        .{ import, suffix },
+    );
+}
+
 fn generateFunction(
     sdk_file: *SdkFile,
     writer: *CodeWriter,
@@ -2956,7 +2979,7 @@ fn generateFunction(
             // note the casing only matters on case-sensitive filesystems
             try writer.linef(
                 "pub extern \"{f}\" fn {f}(",
-                .{ fmtLower(dll.DllImport), std.zig.fmtId(dll.Name) },
+                .{ fmtLower(externFromDllImport(dll.DllImport)), std.zig.fmtId(dll.Name) },
             );
         },
         .com => |com| {
