@@ -22,7 +22,7 @@ pub export fn wWinMain(__: win32.HINSTANCE, _: ?win32.HINSTANCE, ___: [*:0]u16, 
     const dialog = blk: {
         var dialog: ?*win32.IFileOpenDialog = undefined;
         const hr = win32.CoCreateInstance(
-            &win32.FileOpenDialog,
+            win32.CLSID_FileOpenDialog,
             null,
             win32.CLSCTX_ALL,
             win32.IID_IFileOpenDialog,

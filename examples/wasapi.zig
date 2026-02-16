@@ -9,7 +9,7 @@ pub fn getDefaultDevice() !void {
 
     {
         const status = win32.CoCreateInstance(
-            &win32.MMDeviceEnumerator,
+            win32.CLSID_MMDeviceEnumerator,
             null,
             win32.CLSCTX_ALL,
             win32.IID_IMMDeviceEnumerator,
