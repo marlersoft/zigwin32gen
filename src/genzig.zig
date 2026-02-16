@@ -2358,6 +2358,7 @@ fn generateEnum(
         }
 
         const bit_count: usize = blk: {
+            if (std.mem.eql(u8, integer_base, "u8")) break :blk 8;
             if (std.mem.eql(u8, integer_base, "u16")) break :blk 16;
             if (std.mem.eql(u8, integer_base, "i32")) break :blk 32;
             if (std.mem.eql(u8, integer_base, "u32")) break :blk 32;
@@ -3143,6 +3144,7 @@ fn getMethodConflictMap(json_name: []const u8) std.StaticStringMap(void) {
 fn getParamConflictMap(json_name: []const u8) std.StaticStringMap(void) {
     @setEvalBranchQuota(9999);
     if (std.mem.eql(u8, json_name, "System.Mmc")) return std.StaticStringMap(void).initComptime(.{
+        .{"Application"},
         .{"Node"},
         .{"Nodes"},
         .{"Frame"},
@@ -3176,6 +3178,8 @@ fn getParamConflictMap(json_name: []const u8) std.StaticStringMap(void) {
         .{"EventMask"},
         .{"InkDisplayMode"},
         .{"Guid"},
+        .{"Ink"},
+        .{"InkStrokes"},
         .{"Item"},
         .{"DoesPropertyExist"},
         .{"Transform"},
@@ -3204,6 +3208,13 @@ fn getParamConflictMap(json_name: []const u8) std.StaticStringMap(void) {
         .{"UseWhenFullScreen"},
         .{"UseScanLine"},
         .{"UseWhenFullScreen"},
+        .{"TuningSpace"},
+        .{"TuneRequest"},
+        .{"ComponentType"},
+        .{"ComponentTypes"},
+        .{"Component"},
+        .{"Components"},
+        .{"Locator"},
     });
     if (std.mem.eql(u8, json_name, "Media.Speech")) return std.StaticStringMap(void).initComptime(.{
         .{"Guid"},

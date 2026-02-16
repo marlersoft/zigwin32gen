@@ -414,6 +414,7 @@ pub const FunctionAttrs = struct {
     PreserveSig: bool = false,
     DoesNotReturn: bool = false,
     Obsolete: ?ObsoleteAttr = null,
+    Cdecl: bool = false,
     pub fn jsonParse(
         allocator: std.mem.Allocator,
         source: anytype,
