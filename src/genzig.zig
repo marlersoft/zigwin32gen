@@ -2699,19 +2699,40 @@ fn generateComMethods(
             TypeRefFormatter.Options.fromParamAttrs(method.ReturnAttrs, .var_decl, modifier_set.ret),
             null,
         );
+        const is_struct_return = comMethodReturnsStructByValue(method.ReturnType);
         try writer.write(") callconv(.@\"inline\") ", .{ .start = .mid, .nl = false });
         try generateTypeRef(sdk_file, writer, return_type_formatter);
         try writer.write(" {", .{ .start = .mid });
-        try writer.write("        return ", .{ .nl = false });
-        try writer.writef(
-            "self.vtable.{f}(self",
-            .{fmtComMethodId(method_name, sdk_file.method_conflict_map)},
-            .{ .start = .mid, .nl = false },
-        );
-        for (method.Params) |*param| {
-            try writer.writef(", {f}", .{fmtParamId(param.Name, sdk_file.param_conflict_map)}, .{ .start = .mid, .nl = false });
+
+        if (is_struct_return) {
+            // For COM methods returning structs by value, call the vtable
+            // function with a hidden return pointer and return the result.
+            try writer.write("        var __result: ", .{ .nl = false });
+            try generateTypeRef(sdk_file, writer, return_type_formatter);
+            try writer.write(" = undefined;", .{ .start = .mid });
+            try writer.write("        _ = ", .{ .nl = false });
+            try writer.writef(
+                "self.vtable.{f}(self, &__result",
+                .{fmtComMethodId(method_name, sdk_file.method_conflict_map)},
+                .{ .start = .mid, .nl = false },
+            );
+            for (method.Params) |*param| {
+                try writer.writef(", {f}", .{fmtParamId(param.Name, sdk_file.param_conflict_map)}, .{ .start = .mid, .nl = false });
+            }
+            try writer.write(");", .{ .start = .any });
+            try writer.line("        return __result;");
+        } else {
+            try writer.write("        return ", .{ .nl = false });
+            try writer.writef(
+                "self.vtable.{f}(self",
+                .{fmtComMethodId(method_name, sdk_file.method_conflict_map)},
+                .{ .start = .mid, .nl = false },
+            );
+            for (method.Params) |*param| {
+                try writer.writef(", {f}", .{fmtParamId(param.Name, sdk_file.param_conflict_map)}, .{ .start = .mid, .nl = false });
+            }
+            try writer.write(");", .{ .start = .any });
         }
-        try writer.write(");", .{ .start = .any });
         try writer.line("    }");
     }
 }
@@ -2936,6 +2957,26 @@ fn externFromDllImport(import: []const u8) []const u8 {
     );
 }
 
+/// Check if a COM method return type is a struct or union that needs the
+/// hidden return pointer ABI transformation. On MSVC, C++ virtual functions
+/// returning user-defined types (structs/unions) pass the return value via
+/// a hidden pointer parameter after 'this', rather than as a true return value.
+/// See: https://github.com/microsoft/win32metadata/issues/636
+fn comMethodReturnsStructByValue(return_type: metadata.TypeRef) bool {
+    switch (return_type) {
+        .ApiRef => |api_ref| {
+            if (api_ref.TargetKind != .Default) return false;
+            const type_map = global_pass1.get(api_ref.Api) orelse return false;
+            const pass1_type = type_map.get(api_ref.Name) orelse return false;
+            return switch (pass1_type) {
+                .Struct, .Union => true,
+                else => false,
+            };
+        },
+        else => return false,
+    }
+}
+
 fn generateFunction(
     sdk_file: *SdkFile,
     writer: *CodeWriter,
@@ -2954,6 +2995,14 @@ fn generateFunction(
     }
 
     const modifier_set = getFuncModifiers(sdk_file, func.ConfigName(), params);
+
+    // For COM methods returning structs/unions by value, the MSVC ABI uses a
+    // hidden return pointer parameter after 'this'. We need to transform the
+    // vtable signature to match.
+    const is_com_struct_return = switch (func) {
+        .com => comMethodReturnsStructByValue(return_type),
+        else => false,
+    };
 
     if (attrs.SpecialName) {
         try writer.line("// TODO: this function has a \"SpecialName\", should Zig do anything with this?");
@@ -2986,6 +3035,14 @@ fn generateFunction(
         .com => |com| {
             try writer.linef("{f}: *const fn(", .{std.zig.fmtId(com.zig_name)});
             try writer.linef("    self: *const {s},", .{com.type_name});
+            if (is_com_struct_return) {
+                // Hidden return pointer parameter inserted after 'self'
+                const return_opts = TypeRefFormatter.Options.fromParamAttrs(return_attrs, .var_decl, modifier_set.ret);
+                const return_type_formatter = try addTypeRefs(sdk_file, arches, return_type, return_opts, null);
+                try writer.write("    __return_ptr: *", .{ .nl = false });
+                try generateTypeRef(sdk_file, writer, return_type_formatter);
+                try writer.write(",", .{ .start = .mid });
+            }
         },
         .ptr => |ptr| try writer.linef("{s}*const fn(", .{ptr.def_prefix}),
     }
@@ -2995,6 +3052,12 @@ fn generateFunction(
     try writer.writef(") callconv(.winapi) ", .{}, .{ .nl = false });
     if (attrs.DoesNotReturn) {
         try writer.write("noreturn", .{ .start = .mid, .nl = false });
+    } else if (is_com_struct_return) {
+        // Return type becomes pointer to the struct (the hidden pointer is returned in RAX)
+        const return_opts = TypeRefFormatter.Options.fromParamAttrs(return_attrs, .var_decl, modifier_set.ret);
+        const return_type_formatter = try addTypeRefs(sdk_file, arches, return_type, return_opts, null);
+        try writer.write("*", .{ .start = .mid, .nl = false });
+        try generateTypeRef(sdk_file, writer, return_type_formatter);
     } else {
         // TODO: set is_const, in and out properly
         const return_opts = TypeRefFormatter.Options.fromParamAttrs(return_attrs, .var_decl, modifier_set.ret);
