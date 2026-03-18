@@ -63,13 +63,7 @@ const MainWindow = struct {
 
 fn MainWindowCalculateLayout(self: *MainWindow) void {
     if (self.pRenderTarget) |pRenderTarget| {
-        // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        // TODO: this call is causing a segfault when we return from this function!!!
-        //       I believe it is caused by this issue: https://github.com/ziglang/zig/issues/1481
-        //       Zig unable to handle a return type of extern struct { x: f32, y: f32 } for WINAPI
-        _ = pRenderTarget;
-        //const size: D2D_SIZE_F = pRenderTarget.ID2D1RenderTarget_GetSize();
-        const size = D2D_SIZE_F{ .width = 300, .height = 300 };
+        const size: D2D_SIZE_F = pRenderTarget.ID2D1RenderTarget.GetSize();
         const x: f32 = size.width / 2;
         const y: f32 = size.height / 2;
         const radius = @min(x, y);
