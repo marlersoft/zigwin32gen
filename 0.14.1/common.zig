@@ -1,11 +1,14 @@
 const builtin = @import("builtin");
 const std = @import("std");
 
+pub const Autoexit = enum { no, yes };
+
 pub fn addExamples(
     b: *std.Build,
     optimize: std.builtin.OptimizeMode,
     win32: *std.Build.Module,
     examples: std.Build.LazyPath,
+    autoexit: Autoexit,
 ) void {
     const arches: []const ?[]const u8 = &[_]?[]const u8{
         null,
@@ -15,16 +18,16 @@ pub fn addExamples(
     };
     const examples_step = b.step("examples", "Build/run examples. Use -j1 to run one at a time");
 
-    try addExample(b, arches, optimize, win32, examples, "helloworld", .Console, examples_step);
-    try addExample(b, arches, optimize, win32, examples, "wasapi", .Console, examples_step);
-    try addExample(b, arches, optimize, win32, examples, "net", .Console, examples_step);
-    try addExample(b, arches, optimize, win32, examples, "tests", .Console, examples_step);
+    try addExample(b, arches, optimize, win32, examples, "helloworld", .Console, examples_step, autoexit);
+    try addExample(b, arches, optimize, win32, examples, "wasapi", .Console, examples_step, autoexit);
+    try addExample(b, arches, optimize, win32, examples, "net", .Console, examples_step, autoexit);
+    try addExample(b, arches, optimize, win32, examples, "tests", .Console, examples_step, autoexit);
 
-    try addExample(b, arches, optimize, win32, examples, "helloworld-window", .Windows, examples_step);
-    try addExample(b, arches, optimize, win32, examples, "d2dcircle", .Windows, examples_step);
-    try addExample(b, arches, optimize, win32, examples, "opendialog", .Windows, examples_step);
-    try addExample(b, arches, optimize, win32, examples, "unionpointers", .Windows, examples_step);
-    try addExample(b, arches, optimize, win32, examples, "testwindow", .Windows, examples_step);
+    try addExample(b, arches, optimize, win32, examples, "helloworld-window", .Windows, examples_step, autoexit);
+    try addExample(b, arches, optimize, win32, examples, "d2dcircle", .Windows, examples_step, autoexit);
+    try addExample(b, arches, optimize, win32, examples, "opendialog", .Windows, examples_step, autoexit);
+    try addExample(b, arches, optimize, win32, examples, "unionpointers", .Windows, examples_step, autoexit);
+    try addExample(b, arches, optimize, win32, examples, "testwindow", .Windows, examples_step, autoexit);
 }
 
 fn addExample(
@@ -36,6 +39,7 @@ fn addExample(
     root: []const u8,
     subsystem: std.Target.SubSystem,
     examples_step: *std.Build.Step,
+    autoexit: Autoexit,
 ) !void {
     const basename = b.fmt("{s}.zig", .{root});
     for (arches) |cross_arch_opt| {
@@ -64,6 +68,7 @@ fn addExample(
         b.step(b.fmt("{s}-build", .{name}), build_desc).dependOn(&exe.step);
 
         const run_cmd = b.addRunArtifact(exe);
+        if (autoexit == .yes) run_cmd.addArg("--autoexit");
         const run_desc = b.fmt("Run {s}{s}", .{ name, desc_suffix });
         b.step(name, run_desc).dependOn(&run_cmd.step);
 

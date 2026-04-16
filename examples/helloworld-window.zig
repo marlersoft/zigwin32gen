@@ -8,11 +8,12 @@ const HWND = win32.HWND;
 pub export fn wWinMain(
     hInstance: win32.HINSTANCE,
     _: ?win32.HINSTANCE,
-    pCmdLine: [*:0]u16,
+    cmdline: [*:0]u16,
     nCmdShow: u32,
 ) callconv(.winapi) c_int {
-    _ = pCmdLine;
     _ = nCmdShow;
+
+    autoexit.enabled = std.mem.indexOf(u16, std.mem.span(cmdline), L("--autoexit")) != null;
 
     const CLASS_NAME = L("Sample Window Class");
     const wc = win32.WNDCLASSW{
@@ -64,19 +65,39 @@ fn WindowProc(
     lParam: win32.LPARAM,
 ) callconv(.winapi) win32.LRESULT {
     switch (uMsg) {
+        win32.WM_CREATE => {
+            autoexit.noteMsg(.create);
+            return 0;
+        },
         win32.WM_DESTROY => {
             win32.PostQuitMessage(0);
             return 0;
         },
-        win32.WM_PAINT => {
-            var ps: win32.PAINTSTRUCT = undefined;
-            const hdc = win32.BeginPaint(hwnd, &ps);
-            _ = win32.FillRect(hdc, &ps.rcPaint, @ptrFromInt(@intFromEnum(win32.COLOR_WINDOW) + 1));
-            _ = win32.TextOutA(hdc, 20, 20, "Hello", 5);
-            _ = win32.EndPaint(hwnd, &ps);
+        win32.WM_SIZE => {
+            autoexit.noteMsg(.size);
             return 0;
         },
-        else => {},
+        win32.WM_PAINT => {
+            const hdc, const ps = win32.beginPaint(hwnd);
+            defer win32.endPaint(hwnd, &ps);
+            win32.fillRect(hdc, ps.rcPaint, @ptrFromInt(@intFromEnum(win32.COLOR_WINDOW) + 1));
+            win32.textOutA(hdc, 20, 20, "Hello");
+            autoexit.noteMsg(.paint);
+            return 0;
+        },
+        else => return win32.DefWindowProcW(hwnd, uMsg, wParam, lParam),
     }
-    return win32.DefWindowProcW(hwnd, uMsg, wParam, lParam);
 }
+
+const autoexit = struct {
+    var enabled: bool = false;
+    var seen: std.EnumSet(Msg) = .{};
+    const Msg = enum { create, size, paint };
+    fn noteMsg(msg: Msg) void {
+        if (!enabled) return;
+        seen.insert(msg);
+        if (seen.eql(std.EnumSet(Msg).initFull())) {
+            win32.PostQuitMessage(0);
+        }
+    }
+};

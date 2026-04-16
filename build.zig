@@ -19,6 +19,7 @@ pub fn build(b: *Build) !void {
         "default",
         "The default step, equivalent to: " ++ default_steps,
     );
+    const autoexit = b.option(bool, "autoexit", "Automatically exit examples without waiting for the user to close them.") orelse false;
     const test_step = b.step("test", "Run all the tests (except the examples)");
     const unittest_step = b.step("unittest", "Unit test the generated bindings");
     test_step.dependOn(unittest_step);
@@ -139,41 +140,70 @@ pub fn build(b: *Build) !void {
         diff_step.dependOn(&diff.step);
     }
 
-    {
+    // TODO: running the test binary needs import libraries (e.g. bcp47mrm)
+    // that aren't bundled with Zig, refAllDecls in the generated win32.zig
+    // forces every extern decl to link. Flip once that's resolved.
+    const run_unittest = false;
+    for ([_][]const u8{ "x86_64-windows", "aarch64-windows" }) |arch_os_abi| {
+        const target_query = std.Target.Query.parse(.{ .arch_os_abi = arch_os_abi }) catch unreachable;
+        const target = b.resolveTargetQuery(target_query);
         const unittest = b.addTest(.{
             .root_module = b.createModule(.{
                 .root_source_file = gen_out_dir.path(b, "win32.zig"),
-                .target = b.graph.host,
+                .target = target,
                 .optimize = optimize,
             }),
         });
         unittest.pie = true;
-        unittest_step.dependOn(&unittest.step);
+        const runnable = run_unittest and builtin.os.tag == .windows and
+            target.result.cpu.arch == builtin.cpu.arch;
+        if (runnable) {
+            unittest_step.dependOn(&b.addRunArtifact(unittest).step);
+        } else {
+            unittest_step.dependOn(&unittest.step);
+        }
     }
 
     const win32 = b.createModule(.{
         .root_source_file = gen_out_dir.path(b, "win32.zig"),
     });
 
-    buildcommon.addExamples(b, optimize, win32, b.path("examples"));
+    buildcommon.addExamples(b, optimize, win32, b.path("examples"), if (autoexit) .yes else .no);
 
+    // Exercise the Zig compiler's COM overload handling against the generated
+    // Windows bindings for each arch. Run the exe when the target matches
+    // the host; otherwise just compile-check.
     {
-        const exe = b.addExecutable(.{
-            .name = "comoverload",
-            .root_module = b.createModule(.{
-                .root_source_file = b.path("test/comoverload.zig"),
-                .target = b.graph.host,
-            }),
-        });
-        exe.root_module.addImport("win32", win32);
-        const run = b.addRunArtifact(exe);
-        b.step("comoverload", "").dependOn(&run.step);
-        test_step.dependOn(&run.step);
+        const comoverload_step = b.step("comoverload", "");
+        for ([_][]const u8{ "x86_64-windows", "aarch64-windows" }) |arch_os_abi| {
+            const target_query = std.Target.Query.parse(.{ .arch_os_abi = arch_os_abi }) catch unreachable;
+            const target = b.resolveTargetQuery(target_query);
+            const exe = b.addExecutable(.{
+                .name = b.fmt("comoverload-{s}", .{arch_os_abi}),
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path("test/comoverload.zig"),
+                    .target = target,
+                }),
+            });
+            exe.root_module.addImport("win32", win32);
+            const runnable = builtin.os.tag == .windows and
+                target.result.cpu.arch == builtin.cpu.arch;
+            if (runnable) {
+                const run = b.addRunArtifact(exe);
+                comoverload_step.dependOn(&run.step);
+                test_step.dependOn(&run.step);
+            } else {
+                comoverload_step.dependOn(&exe.step);
+                test_step.dependOn(&exe.step);
+            }
+        }
     }
     {
         const compile = b.addSystemCommand(&.{
             b.graph.zig_exe,
             "build-exe",
+            "-target",
+            "x86_64-windows",
             "--dep",
             "win32",
         });

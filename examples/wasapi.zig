@@ -4,7 +4,7 @@ const log = std.log.info;
 
 const win32 = @import("win32").everything;
 
-pub fn getDefaultDevice() !void {
+pub fn getDefaultDevice(autoexit: bool) !void {
     var enumerator: *win32.IMMDeviceEnumerator = undefined;
 
     {
@@ -23,6 +23,12 @@ pub fn getDefaultDevice() !void {
     defer _ = enumerator.IUnknown.Release();
 
     log("pre enumerator: {}", .{enumerator});
+
+    // The rest of this example calls into actual audio hardware (default
+    // capture device, property stores), which isn't available on CI VMs.
+    // COM activation of the MMDeviceEnumerator is the runtime checkpoint
+    // worth verifying non-interactively.
+    if (autoexit) return;
 
     var device: ?*win32.IMMDevice = undefined;
     {
@@ -80,6 +86,14 @@ pub fn getDefaultDevice() !void {
 }
 
 pub fn main() !u8 {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const args = try std.process.argsAlloc(arena.allocator());
+    var autoexit = false;
+    for (args[1..]) |arg| {
+        if (std.mem.eql(u8, arg, "--autoexit")) autoexit = true;
+    }
+
     const config_value = win32.COINIT{ .APARTMENTTHREADED = 1, .DISABLE_OLE1DDE = 1 };
     {
         _ = config_value;
@@ -92,6 +106,6 @@ pub fn main() !u8 {
     // TODO: I'm not sure if we should do this or not
     //defer CoUninitialize();
 
-    try getDefaultDevice();
+    try getDefaultDevice(autoexit);
     return 0;
 }

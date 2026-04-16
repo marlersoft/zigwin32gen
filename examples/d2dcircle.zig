@@ -1,6 +1,7 @@
 //! This example is ported from : https://github.com/microsoft/Windows-classic-samples/blob/master/Samples/Win7Samples/begin/LearnWin32/Direct2DCircle/cpp/main.cpp
 pub const UNICODE = true;
 
+const std = @import("std");
 const win32 = @import("win32").everything;
 const L = win32.L;
 const FAILED = win32.FAILED;
@@ -140,9 +141,9 @@ fn MainWindowResize(self: *MainWindow) void {
     }
 }
 
-pub export fn wWinMain(_: HINSTANCE, __: ?HINSTANCE, ___: [*:0]u16, nCmdShow: u32) callconv(.winapi) c_int {
+pub export fn wWinMain(_: HINSTANCE, __: ?HINSTANCE, lpCmdLine: [*:0]u16, nCmdShow: u32) callconv(.winapi) c_int {
     _ = __;
-    _ = ___;
+    autoexit.enabled = std.mem.indexOf(u16, std.mem.span(lpCmdLine), L("--autoexit")) != null;
 
     var win = MainWindow{};
 
@@ -176,6 +177,7 @@ fn MainWindowHandleMessage(self: *MainWindow, uMsg: u32, wParam: WPARAM, lParam:
             ))) {
                 return -1; // Fail CreateWindowEx.
             }
+            autoexit.noteMsg(.create);
             return 0;
         },
         win32.WM_DESTROY => {
@@ -186,11 +188,13 @@ fn MainWindowHandleMessage(self: *MainWindow, uMsg: u32, wParam: WPARAM, lParam:
         },
         win32.WM_PAINT => {
             self.OnPaint();
+            autoexit.noteMsg(.paint);
             return 0;
         },
         // Other messages not shown...
         win32.WM_SIZE => {
             self.Resize();
+            autoexit.noteMsg(.size);
             return 0;
         },
         else => {},
@@ -257,5 +261,18 @@ const D2D1 = struct {
             .pixelSize = size,
             .presentOptions = win32.D2D1_PRESENT_OPTIONS_NONE,
         };
+    }
+};
+
+const autoexit = struct {
+    var enabled: bool = false;
+    var seen: std.EnumSet(Msg) = .{};
+    const Msg = enum { create, size, paint };
+    fn noteMsg(msg: Msg) void {
+        if (!enabled) return;
+        seen.insert(msg);
+        if (seen.eql(std.EnumSet(Msg).initFull())) {
+            win32.PostQuitMessage(0);
+        }
     }
 };

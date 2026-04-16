@@ -12,8 +12,9 @@ pub export fn wWinMain(
     pCmdLine: [*:0]u16,
     nCmdShow: u32,
 ) callconv(.winapi) c_int {
-    _ = pCmdLine;
     _ = nCmdShow;
+
+    autoexit.enabled = std.mem.indexOf(u16, std.mem.span(pCmdLine), L("--autoexit")) != null;
 
     std.debug.assert(0x5678 == win32.loword(@as(i32, 0x12345678)));
     std.debug.assert(0x1234 == win32.hiword(@as(i32, 0x12345678)));
@@ -92,9 +93,14 @@ fn WindowProc(
                 std.debug.assert(0 == win32.setWindowLongPtrW(hwnd, 0, 0x1234));
                 std.debug.assert(0x1234 == win32.getWindowLongPtrW(hwnd, 0));
             }
+            autoexit.noteMsg(.create);
         },
         win32.WM_DESTROY => {
             win32.PostQuitMessage(0);
+            return 0;
+        },
+        win32.WM_SIZE => {
+            autoexit.noteMsg(.size);
             return 0;
         },
         win32.WM_DPICHANGED => win32.invalidateHwnd(hwnd),
@@ -144,9 +150,23 @@ fn WindowProc(
             }
 
             _ = win32.EndPaint(hwnd, &ps);
+            autoexit.noteMsg(.paint);
             return 0;
         },
         else => {},
     }
     return win32.DefWindowProcW(hwnd, uMsg, wParam, lParam);
 }
+
+const autoexit = struct {
+    var enabled: bool = false;
+    var seen: std.EnumSet(Msg) = .{};
+    const Msg = enum { create, size, paint };
+    fn noteMsg(msg: Msg) void {
+        if (!enabled) return;
+        seen.insert(msg);
+        if (seen.eql(std.EnumSet(Msg).initFull())) {
+            win32.PostQuitMessage(0);
+        }
+    }
+};

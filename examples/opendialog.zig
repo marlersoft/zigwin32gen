@@ -5,10 +5,11 @@ const win32 = @import("win32").everything;
 
 pub const panic = win32.messageBoxThenPanic(.{ .title = "Opendialog Example Panic" });
 
-pub export fn wWinMain(__: win32.HINSTANCE, _: ?win32.HINSTANCE, ___: [*:0]u16, ____: u32) callconv(.winapi) c_int {
+pub export fn wWinMain(__: win32.HINSTANCE, _: ?win32.HINSTANCE, cmdline: [*:0]u16, ____: u32) callconv(.winapi) c_int {
     _ = __;
-    _ = ___;
     _ = ____;
+
+    const autoexit = std.mem.indexOf(u16, std.mem.span(cmdline), win32.L("--autoexit")) != null;
 
     {
         const hr = win32.CoInitializeEx(null, win32.COINIT{
@@ -32,6 +33,9 @@ pub export fn wWinMain(__: win32.HINSTANCE, _: ?win32.HINSTANCE, ___: [*:0]u16, 
         break :blk dialog.?;
     };
     defer _ = dialog.IUnknown.Release();
+
+    // The rest of this example shows a modal dialog that blocks on user input.
+    if (autoexit) return 0;
 
     {
         const hr = dialog.IModalWindow.Show(null);
