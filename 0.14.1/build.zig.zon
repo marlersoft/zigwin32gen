@@ -4,6 +4,7 @@
     .version = "0.0.0",
     .minimum_zig_version = "0.14.1",
     .dependencies = .{
+        .common = .{ .path = "../common" },
         .win32 = .{ .path = "../zig-out" },
         .examples = .{ .path = "../examples" },
     },

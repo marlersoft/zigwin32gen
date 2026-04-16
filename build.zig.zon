@@ -4,6 +4,7 @@
     .fingerprint = 0xab047bbd59488dae,
     .minimum_zig_version = "0.15.2",
     .dependencies = .{
+        .common = .{ .path = "common" },
         .win32json = .{
             .url = "git+https://github.com/marlersoft/win32json#ca9dd560f598062be334f4b5687764a85de1416c",
             .hash = "N-V-__8AAGPG7AO50VI-Po_HVpd_4i0gFRAc9_PoDGpDYg1v",

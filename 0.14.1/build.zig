@@ -36,4 +36,4 @@ pub fn build(b: *std.Build) !void {
 }
 const builtin = @import("builtin");
 const std = @import("std");
-const common = @import("common.zig");
+const common = @import("common");
