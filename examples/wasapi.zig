@@ -1,4 +1,7 @@
 const std = @import("std");
+const builtin = @import("builtin");
+
+const zig_atleast_16 = builtin.zig_version.order(.{ .major = 0, .minor = 16, .patch = 0 }) != .lt;
 
 const log = std.log.info;
 
@@ -88,10 +91,22 @@ pub fn getDefaultDevice(autoexit: bool) !void {
 pub fn main() !u8 {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
-    const args = try std.process.argsAlloc(arena.allocator());
     var autoexit = false;
-    for (args[1..]) |arg| {
-        if (std.mem.eql(u8, arg, "--autoexit")) autoexit = true;
+    if (zig_atleast_16) {
+        var it = try std.process.Args.Iterator.initAllocator(
+            .{ .vector = std.os.windows.peb().ProcessParameters.CommandLine.slice() },
+            arena.allocator(),
+        );
+        defer it.deinit();
+        _ = it.skip();
+        while (it.next()) |arg| {
+            if (std.mem.eql(u8, arg, "--autoexit")) autoexit = true;
+        }
+    } else {
+        const args = try std.process.argsAlloc(arena.allocator());
+        for (args[1..]) |arg| {
+            if (std.mem.eql(u8, arg, "--autoexit")) autoexit = true;
+        }
     }
 
     const config_value = win32.COINIT{ .APARTMENTTHREADED = 1, .DISABLE_OLE1DDE = 1 };

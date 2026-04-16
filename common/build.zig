@@ -58,7 +58,7 @@ fn addExample(
                 .optimize = optimize,
                 .single_threaded = true,
             }),
-            .win32_manifest = if (subsystem == .Windows) examples.path(b, "win32.manifest") else null,
+            .win32_manifest = examples.path(b, "win32.manifest"),
         });
         exe.subsystem = subsystem;
         exe.root_module.addImport("win32", win32);

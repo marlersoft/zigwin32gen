@@ -22,3 +22,8 @@ jobs:
       - run: zig build examples -Dautoexit --summary all
         working-directory: 0.14.1
         if: runner.os == 'Windows'
+      - run: zig build test --summary all
+        working-directory: 0.16.0
+      - run: zig build examples -Dautoexit --summary all
+        working-directory: 0.16.0
+        if: runner.os == 'Windows'

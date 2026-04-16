@@ -4,6 +4,7 @@ const builtin = @import("builtin");
 const testing = std.testing;
 
 const zig_atleast_15 = builtin.zig_version.order(.{ .major = 0, .minor = 15, .patch = 0 }) != .lt;
+const zig_atleast_16 = builtin.zig_version.order(.{ .major = 0, .minor = 16, .patch = 0 }) != .lt;
 
 const mod_root = @import("../win32.zig");
 const win32 = struct {
@@ -209,7 +210,7 @@ pub fn FormatErrorString(comptime max_len: usize) type {
             if (len == 0) {
                 try writer.writeAll("unknown error");
             }
-            const msg = std.mem.trimRight(u8, buf[0..len], "\r\n");
+            const msg = (if (zig_atleast_16) std.mem.trimEnd else std.mem.trimRight)(u8, buf[0..len], "\r\n");
             try writer.writeAll(msg);
             if (len + 1 >= buf.len) {
                 try writer.writeAll("...");
@@ -332,7 +333,7 @@ pub fn pointFromLparam(lparam: win32.LPARAM) win32.POINT {
 pub fn loword(value: anytype) u16 {
     switch (@typeInfo(@TypeOf(value))) {
         .int => |int| switch (int.signedness) {
-            .signed => return loword(@as(@Type(.{ .int = .{ .signedness = .unsigned, .bits = int.bits } }), @bitCast(value))),
+            .signed => return loword(@as(std.meta.Int(.unsigned, int.bits), @bitCast(value))),
             .unsigned => return if (int.bits <= 16) value else @intCast(0xffff & value),
         },
         else => {},
@@ -342,7 +343,7 @@ pub fn loword(value: anytype) u16 {
 pub fn hiword(value: anytype) u16 {
     switch (@typeInfo(@TypeOf(value))) {
         .int => |int| switch (int.signedness) {
-            .signed => return hiword(@as(@Type(.{ .int = .{ .signedness = .unsigned, .bits = int.bits } }), @bitCast(value))),
+            .signed => return hiword(@as(std.meta.Int(.unsigned, int.bits), @bitCast(value))),
             .unsigned => return @intCast(0xffff & (value >> 16)),
         },
         else => {},
@@ -436,7 +437,7 @@ fn typedConst2(comptime ReturnType: type, comptime SwitchType: type, comptime va
         .int => |target_type_info| {
             if (value >= std.math.maxInt(SwitchType)) {
                 if (target_type_info.signedness == .signed) {
-                    const UnsignedT = @Type(std.builtin.Type{ .int = .{ .signedness = .unsigned, .bits = target_type_info.bits } });
+                    const UnsignedT = std.meta.Int(.unsigned, target_type_info.bits);
                     return @as(SwitchType, @bitCast(@as(UnsignedT, value)));
                 }
             }
@@ -473,7 +474,7 @@ fn typedConst2_0_13(comptime ReturnType: type, comptime SwitchType: type, compti
         .Int => |target_type_info| {
             if (value >= std.math.maxInt(SwitchType)) {
                 if (target_type_info.signedness == .signed) {
-                    const UnsignedT = @Type(std.builtin.Type{ .Int = .{ .signedness = .unsigned, .bits = target_type_info.bits } });
+                    const UnsignedT = std.meta.Int(.unsigned, target_type_info.bits);
                     return @as(SwitchType, @bitCast(@as(UnsignedT, value)));
                 }
             }

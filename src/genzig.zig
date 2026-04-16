@@ -1773,7 +1773,15 @@ fn generateTypeDefinition(
             // NOTE: for now, I'm just hardcoding a few types to redirect to the ones defined in 'std'
             //       this allows apps to use values of these types interchangeably with bindings in std
             if (@import("handletypes.zig").std_handle_types.get(pool_name.slice)) |std_sym| {
-                try writer.linef("{s}@import(\"std\").{s}{s}", .{ def_prefix, std_sym, def_suffix });
+                if (std.mem.eql(u8, pool_name.slice, "SOCKET")) {
+                    // zig 0.16.0 removed SOCKET
+                    try writer.linef(
+                        "{s}if (@import(\"builtin\").zig_version.order(.{{ .major = 0, .minor = 16, .patch = 0 }}) != .lt) *opaque{{}} else @import(\"std\").{s}{s}",
+                        .{ def_prefix, std_sym, def_suffix },
+                    );
+                } else {
+                    try writer.linef("{s}@import(\"std\").{s}{s}", .{ def_prefix, std_sym, def_suffix });
+                }
                 return;
             }
             // workaround https://github.com/microsoft/win32metadata/issues/395
