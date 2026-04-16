@@ -356,9 +356,10 @@ pub fn main() !u8 {
         var file_writer = zon.writer(&out_buf);
         const w = &file_writer.interface;
         try w.writeAll(".{\n");
-        try w.writeAll("    .name = \"zigwin32\",\n");
+        try w.writeAll("    .name = .win32,\n");
+        try w.writeAll("    .fingerprint = 0xb50ba1d115697e99,\n");
         try w.print("    .version = \"{f}\",\n", .{version});
-        try w.writeAll("    .minimum_zig_version = \"0.12.0\",\n");
+        try w.writeAll("    .minimum_zig_version = \"0.14.0\",\n");
         try w.writeAll("    .paths = .{\n");
         for (static_files) |name| {
             if (std.mem.eql(u8, name, ".gitignore")) continue;
