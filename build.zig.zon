@@ -5,9 +5,13 @@
     .minimum_zig_version = "0.15.2",
     .dependencies = .{
         .common = .{ .path = "common" },
-        .win32json = .{
-            .url = "git+https://github.com/marlersoft/win32json#071df4995290b72320010ecfc2fca51946b5c6b4",
-            .hash = "N-V-__8AAGLG7AMatNCptphdSsb9oy79rrCqtF3RkplHmlRE",
+        .winmd = .{
+            .url = "git+https://github.com/marler8997/winmd-zig#d0d8daff01b4fb1a6324c79a855c34ced5bbc8d2",
+            .hash = "winmd-0.0.0-2QIrG4MpAQCCh0ReC0jZKAps9Frn3jbbR--W7szyGAOS",
+        },
+        .zipcmdline = .{
+            .url = "git+https://github.com/marler8997/zipcmdline#a6de65875023c52d2f56f21a31c6487266f8105f",
+            .hash = "zipcmdline-0.0.0-DFii07hmAwCFNhtMpml64Pj_hr8kN4WesClygZErQHsk",
         },
     },
     .paths = .{"build.zig.zon"},

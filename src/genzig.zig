@@ -9,15 +9,15 @@ const cameltosnake = @import("cameltosnake.zig");
 const common = @import("common.zig");
 const metadata = @import("metadata.zig");
 const extra = @import("extra.zig");
-const jsonextra = @import("jsonextra.zig");
 const pass1data = @import("pass1data.zig");
+const pass1 = @import("pass1.zig");
+const textparse = @import("textparse.zig");
 const oom = common.oom;
 const fatal = common.fatal;
-const jsonPanic = common.jsonPanic;
-const jsonPanicMsg = common.jsonPanicMsg;
-const jsonEnforce = common.jsonEnforce;
-const jsonEnforceMsg = common.jsonEnforceMsg;
-const fmtJson = common.fmtJson;
+const fail = common.fail;
+const failMsg = common.failMsg;
+const enforce = common.enforce;
+const enforceMsg = common.enforceMsg;
 
 var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const allocator = arena.allocator();
@@ -116,8 +116,7 @@ fn StringPoolArrayHashMap(comptime T: type) type {
 }
 
 const SdkFile = struct {
-    json_basename: []const u8,
-    json_name: StringPool.Val,
+    api_name: StringPool.Val,
     zig_name: []const u8,
     depth: u2,
     const_exports: std.array_list.Managed(StringPool.Val),
@@ -140,9 +139,6 @@ const SdkFile = struct {
     pub fn getWin32DirImportPrefix(self: SdkFile) []const u8 {
         return import_prefix_table[self.depth];
     }
-    pub fn getSrcDirImportPrefix(self: SdkFile) []const u8 {
-        return import_prefix_table[self.depth + 1];
-    }
 
     pub fn addApiImport(
         self: *SdkFile,
@@ -151,12 +147,12 @@ const SdkFile = struct {
         api: StringPool.Val,
         parents: []const []const u8,
     ) !void {
-        if (self.json_name.eql(api))
+        if (self.api_name.eql(api))
             return;
 
         const top_level_symbol = try global_symbol_pool.add(if (parents.len == 0) name else parents[0]);
         if (self.top_level_api_imports.getPtr(top_level_symbol)) |import| {
-            jsonEnforceMsg(
+            enforceMsg(
                 api.eql(import.api),
                 "symbol conflict '{s}', api mismatch '{f}' and '{f}'",
                 .{ name, api, import.api },
@@ -169,8 +165,6 @@ const SdkFile = struct {
 };
 
 const Times = struct {
-    parse_time_millis: i64 = 0,
-    read_time_millis: i64 = 0,
     generate_time_millis: i64 = 0,
 };
 var global_times = Times{};
@@ -182,8 +176,6 @@ pub fn main() !u8 {
         if (print_time_summary) {
             var total_millis = std.time.milliTimestamp() - main_start_millis;
             if (total_millis == 0) total_millis = 1; // prevent divide by 0
-            std.debug.print("Parse Time: {} millis ({}%)\n", .{ global_times.parse_time_millis, @divTrunc(100 * global_times.parse_time_millis, total_millis) });
-            std.debug.print("Read Time : {} millis ({}%)\n", .{ global_times.read_time_millis, @divTrunc(100 * global_times.read_time_millis, total_millis) });
             std.debug.print("Gen Time  : {} millis ({}%)\n", .{ global_times.generate_time_millis, @divTrunc(100 * global_times.generate_time_millis, total_millis) });
             std.debug.print("Total Time: {} millis\n", .{total_millis});
         }
@@ -200,51 +192,55 @@ pub fn main() !u8 {
         return 1;
     }
     const extra_filename = cmd_args[0];
-    const win32json_path = cmd_args[1];
-    const pass1_json = cmd_args[2];
+    const text_path = cmd_args[1];
+    const version_string = cmd_args[2];
     const com_overloads_filename = cmd_args[3];
     const zigwin32_out_path = stripDotDir(cmd_args[4]);
 
-    const version = blk: {
-        var win32json_dir = try std.fs.cwd().openDir(win32json_path, .{});
-        defer win32json_dir.close();
-        const file = try win32json_dir.openFile("version.txt", .{});
-        defer file.close();
-        var buf: [100]u8 = undefined;
-        var reader = file.reader(&buf);
-        reader.interface.fillMore() catch |err| switch (err) {
-            error.EndOfStream => @panic("version too long"),
-            else => |e| return e,
-        };
-        break :blk std.SemanticVersion.parse(reader.interface.buffered()) catch fatal("invalid version '{s}'", .{reader.interface.buffered()});
-    };
+    const version = std.SemanticVersion.parse(version_string) catch fatal(
+        "invalid version '{s}'",
+        .{version_string},
+    );
 
-    const pass1_json_content = blk: {
-        var file = try std.fs.cwd().openFile(pass1_json, .{});
+    // The generator consumes the line-based text produced by dumpwinmd
+    // (winmd -> text). text must stay alive: the parsed model references slices
+    // into it.
+    const text = blk: {
+        var file = try std.fs.cwd().openFile(text_path, .{});
         defer file.close();
-        break :blk try file.readToEndAlloc(allocator, std.math.maxInt(usize));
+        const size = try file.getEndPos();
+        var reader = file.reader(&.{});
+        break :blk try reader.interface.readAlloc(allocator, @intCast(size));
     };
-    // no need to free pass1_json_content
-    global_pass1 = pass1data.parseRoot(allocator, pass1_json, pass1_json_content);
+    const parsed = textparse.parseAll(allocator, text);
+
     const api_list: []StringPool.Val = blk: {
         var api_list = std.array_list.Managed(StringPool.Val).init(allocator);
-        const api_path = try std.fs.path.join(allocator, &.{ win32json_path, "api" });
-        var api_dir = try std.fs.cwd().openDir(api_path, .{ .iterate = true });
-        defer api_dir.close();
-        var it = api_dir.iterate();
-        while (try it.next()) |entry| {
-            if (!std.mem.endsWith(u8, entry.name, ".json")) {
-                std.log.err("expected all files to end in '.json' but got '{s}'\n", .{entry.name});
-                return error.AlreadyReported;
-            }
-            const name_len = entry.name.len - ".json".len;
-            const api = try global_symbol_pool.add(entry.name[0..name_len]);
-            try api_list.append(api);
+        for (parsed) |named| {
+            try api_list.append(try global_symbol_pool.add(named.name));
         }
         break :blk try api_list.toOwnedSlice();
     };
-    // sort the list of APIs so our api order is not dependent on the file-system ordering
+    // sort the list of APIs so our api order is not dependent on parse ordering
     std.mem.sort(StringPool.Val, api_list, {}, StringPool.asciiLessThanIgnoreCase);
+
+    // Index parsed apis by name, then build the `apis` array in sorted order.
+    var api_by_name: std.StringHashMapUnmanaged(metadata.Api) = .{};
+    for (parsed) |named| {
+        try api_by_name.put(allocator, named.name, named.api);
+    }
+    const apis = try allocator.alloc(metadata.Api, api_list.len);
+    for (api_list, apis) |api_name, *api| {
+        api.* = api_by_name.get(api_name.slice).?;
+    }
+
+    // Build the pass1 index (per-type category + com interface chain) in memory,
+    // directly from the loaded models (replaces the old separate pass1 exe).
+    {
+        const names = try allocator.alloc([]const u8, api_list.len);
+        for (api_list, names) |a, *n| n.* = a.slice;
+        global_pass1 = pass1.buildIndex(allocator, names, apis);
+    }
 
     const api_set = blk: {
         var api_set: StringPool.HashMapUnmanaged(void) = .{};
@@ -292,27 +288,15 @@ pub fn main() !u8 {
     const root_module = try Module.alloc(null, try global_symbol_pool.add("win32"));
 
     {
-        const api_path = try std.fs.path.join(allocator, &.{ win32json_path, "api" });
-        var api_dir = try std.fs.cwd().openDir(api_path, .{ .iterate = true });
-        defer api_dir.close();
-
         std.debug.print("-----------------------------------------------------------------------\n", .{});
-        std.debug.print("loading {} api json files...\n", .{api_list.len});
+        std.debug.print("generating {} apis...\n", .{api_list.len});
 
         var out_win32_dir = try out_dir.openDir("win32", .{});
         defer out_win32_dir.close();
 
-        for (api_list, 0..) |api_name, api_index| {
-            const api_num = api_index + 1;
-            var basename_buf: [100]u8 = undefined;
-            const basename = std.fmt.bufPrint(&basename_buf, "{f}.json", .{api_name}) catch @panic("basename_buf not big enough");
-            std.debug.print("{}/{}: loading '{s}'\n", .{ api_num, api_list.len, basename });
-            //
-            // TODO: would things run faster if I just memory mapped the file?
-            //
-            var file = try api_dir.openFile(basename, .{});
-            defer file.close();
-            try readAndGenerateApiFile(root_module, out_win32_dir, api_path, basename, file);
+        for (api_list, apis, 0..) |api_name, api, api_index| {
+            std.debug.print("{}/{}: generating '{f}'\n", .{ api_index + 1, api_list.len, api_name });
+            try generateApiModule(root_module, out_win32_dir, api_name, api);
         }
         std.debug.assert(found_win32_error);
 
@@ -390,30 +374,6 @@ fn installStaticFile(out_dir: std.fs.Dir, comptime name: []const u8) !void {
     // NOTE: it's important that we use @embedFile here so that the genzig
     //       executable tracks changes to these files
     try writer.interface.writeAll(@embedFile("static/" ++ name));
-}
-
-fn readJson(comptime T: type, filename: []const u8, content: []const u8) T {
-    var diagnostics = std.json.Diagnostics{};
-    var scanner = std.json.Scanner.initCompleteInput(allocator, content);
-    defer scanner.deinit();
-    scanner.enableDiagnostics(&diagnostics);
-    return std.json.parseFromTokenSourceLeaky(
-        T,
-        allocator,
-        &scanner,
-        .{},
-    ) catch |err| {
-        std.log.err(
-            "{s}:{}:{}: {s}",
-            .{
-                filename,
-                diagnostics.getLine(),
-                diagnostics.getColumn(),
-                @errorName(err),
-            },
-        );
-        @panic("json error");
-    };
 }
 
 const ComSuffixMap = std.AutoHashMapUnmanaged(u16, []const u8);
@@ -668,31 +628,13 @@ fn generateContainerModules(dir: std.fs.Dir, module: *Module) anyerror!void {
     try writer.flush();
 }
 
-fn readAndGenerateApiFile(
+fn generateApiModule(
     root_module: *Module,
     out_dir: std.fs.Dir,
-    api_path: []const u8,
-    json_basename: []const u8,
-    file: std.fs.File,
+    api_name: StringPool.Val,
+    api_root: metadata.Api,
 ) !void {
-    var json_arena_instance = std.heap.ArenaAllocator.init(allocator);
-    defer json_arena_instance.deinit();
-    const json_arena = json_arena_instance.allocator();
-
-    const read_start_millis = std.time.milliTimestamp();
-    const content = try file.readToEndAlloc(json_arena, std.math.maxInt(usize));
-    // no need to free content, owned by json_arena
-    const read_end_millis = std.time.milliTimestamp();
-    global_times.read_time_millis += read_end_millis - read_start_millis;
-    std.debug.print("  read {} bytes\n", .{content.len});
-
-    const json_root = metadata.Api.parse(json_arena, api_path, json_basename, content);
-    // no need to free json_root, owned by json_arena
-    global_times.parse_time_millis += std.time.milliTimestamp() - read_end_millis;
-
-    const json_basename_copy = try allocator.dupe(u8, json_basename);
-    const json_name = try global_symbol_pool.add(json_basename_copy[0 .. json_basename_copy.len - ".json".len]);
-    const zig_name = try cameltosnake.camelToSnakeAlloc(allocator, json_name.slice);
+    const zig_name = try cameltosnake.camelToSnakeAlloc(allocator, api_name.slice);
     errdefer allocator.free(zig_name);
 
     var module_dir = out_dir;
@@ -727,19 +669,18 @@ fn readAndGenerateApiFile(
     }
 
     if (module.file) |_| {
-        jsonPanicMsg("qualified name '{s}' already has an sdk file?", .{zig_name});
+        failMsg("qualified name '{s}' already has an sdk file?", .{zig_name});
     }
 
     var extra_funcs: extra.Functions = .{};
     var extra_consts: extra.Constants = .{};
-    if (global_extra.get(json_name)) |api_obj| {
+    if (global_extra.get(api_name)) |api_obj| {
         extra_funcs = api_obj.functions;
         extra_consts = api_obj.constants;
     }
 
     module.file = SdkFile{
-        .json_basename = json_basename_copy,
-        .json_name = json_name,
+        .api_name = api_name,
         .zig_name = zig_name,
         .depth = depth,
         .const_exports = std.array_list.Managed(StringPool.Val).init(allocator),
@@ -748,27 +689,18 @@ fn readAndGenerateApiFile(
         .type_exports = StringPoolArrayHashMap(void).init(allocator),
         .func_exports = StringPoolArrayHashMap(void).init(allocator),
         .tmp_func_ptr_workaround_list = std.array_list.Managed(StringPool.Val).init(allocator),
-        .method_conflict_map = getMethodConflictMap(json_name.slice),
-        .param_conflict_map = getParamConflictMap(json_name.slice),
+        .method_conflict_map = getMethodConflictMap(api_name.slice),
+        .param_conflict_map = getParamConflictMap(api_name.slice),
         .extra_funcs = extra_funcs,
         .extra_funcs_applied = StringPool.HashMap(void).init(allocator),
         .extra_consts = extra_consts,
         .extra_consts_applied = StringPool.HashMap(void).init(allocator),
-        .com_type_overloads = global_com_overloads.get(json_name),
+        .com_type_overloads = global_com_overloads.get(api_name),
     };
 
     const generate_start_millis = std.time.milliTimestamp();
-    try generateFile(module_dir, module, json_root);
+    try generateFile(module_dir, module, api_root);
     global_times.generate_time_millis += std.time.milliTimestamp() - generate_start_millis;
-}
-
-pub fn EmptyStaticStringMap(comptime V: type) type {
-    return struct {
-        pub fn get(str: []const u8) ?V {
-            _ = str;
-            return null;
-        }
-    };
 }
 
 fn ArchSpecificMap(comptime T: type) type {
@@ -1013,7 +945,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, api: metadata.Api) !voi
         while (it.next()) |notnull_api| {
             const name = notnull_api.key_ptr.*;
             if (sdk_file.extra_funcs_applied.get(name)) |_| {} else {
-                std.log.err("extra.txt api '{f}' function '{f}' was not applied", .{ sdk_file.json_name, name });
+                std.log.err("extra.txt api '{f}' function '{f}' was not applied", .{ sdk_file.api_name, name });
                 error_count += 1;
             }
         }
@@ -1028,7 +960,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, api: metadata.Api) !voi
         while (it.next()) |up_api| {
             const pool_name = up_api.key_ptr.*;
             if (sdk_file.extra_consts_applied.get(pool_name)) |_| {} else {
-                std.log.err("extra.txt api '{f}' constant '{f}' was not applied", .{ sdk_file.json_name, pool_name });
+                std.log.err("extra.txt api '{f}' constant '{f}' was not applied", .{ sdk_file.api_name, pool_name });
                 error_count += 1;
             }
         }
@@ -1261,26 +1193,26 @@ fn generateTypeRefRec(
             const name = getApiRefSubstitute(api_ref.Name, api_ref.Parents) orelse api_ref.Name;
             if (isAnonymousTypeName(name)) {
                 const anon_types = self.options.anon_types orelse
-                    jsonPanicMsg("missing anonymous type '{s}' (this scope does not have any anonymous types)!", .{name});
+                    failMsg("missing anonymous type '{s}' (this scope does not have any anonymous types)!", .{name});
                 const name_pool = try global_symbol_pool.add(name);
                 const t = anon_types.types.get(name_pool) orelse
-                    jsonPanicMsg("missing anonymous type '{f}'!", .{name_pool});
+                    failMsg("missing anonymous type '{f}'!", .{name_pool});
                 switch (t.Kind) {
                     .Struct => try generateStructOrUnionDef(sdk_file, writer, t, self.nested_context),
                     .Union => try generateStructOrUnionDef(sdk_file, writer, t, self.nested_context),
-                    else => jsonPanic(),
+                    else => fail(),
                 }
                 try writer.write("}", .{ .nl = false });
                 return;
             }
 
             const type_kind_category: Pass1TypeCategory = blk: {
-                const pass1_api_map = global_pass1.get(api_ref.Api) orelse jsonPanicMsg("type '{s}' is from API '{s}' that is missing from pass1 data", .{ name, api_ref.Api });
+                const pass1_api_map = global_pass1.get(api_ref.Api) orelse failMsg("type '{s}' is from API '{s}' that is missing from pass1 data", .{ name, api_ref.Api });
 
                 const pass1_type: pass1data.Type = pass1_api_map.get(name) orelse {
                     if (api_ref.Parents.len == 0) {
                         const in_nested_context = if (self.nested_context) |c| c.contains(name) else false;
-                        if (!in_nested_context) jsonPanicMsg(
+                        if (!in_nested_context) failMsg(
                             "type '{s}' from API '{s}' is missing from pass1 data, has no parents and is not in the current nested context!",
                             .{ name, api_ref.Api },
                         );
@@ -1443,44 +1375,43 @@ fn isByteOrCharOrUInt16Type(type_ref: metadata.TypeRef) bool {
     };
 }
 
-fn fmtConstValue(value_type: metadata.ValueType, value: std.json.Value, sdk_file: *SdkFile) ConstValueFormatter {
+// Formats the numeric part of a value: integers as decimal, floats in scientific
+// form (matching what the old value formatter produced).
+fn fmtValue(value: metadata.Value) ValueFormatter {
+    return .{ .value = value };
+}
+const ValueFormatter = struct {
+    value: metadata.Value,
+    pub fn format(self: ValueFormatter, writer: *std.Io.Writer) !void {
+        switch (self.value) {
+            .integer => |i| try writer.print("{d}", .{i}),
+            .float => |f| try writer.printFloat(f, .{
+                // Needed for large integer float values that can't be converted in zig 0.15
+                .mode = .scientific,
+            }),
+            else => std.debug.panic("unexpected value '{t}' in numeric context", .{self.value}),
+        }
+    }
+};
+
+fn fmtConstValue(value_type: metadata.ValueType, value: metadata.Value, sdk_file: *SdkFile) ConstValueFormatter {
     return .{ .value_type = value_type, .value = value, .sdk_file = sdk_file };
 }
 const ConstValueFormatter = struct {
     value_type: metadata.ValueType,
-    value: std.json.Value,
+    value: metadata.Value,
     sdk_file: *SdkFile,
     pub fn format(self: @This(), writer: *std.Io.Writer) !void {
         if (self.value_type == .String) {
             switch (self.value) {
                 .null => try writer.writeAll("null"),
                 .string => |s| try writer.print("\"{f}\"", .{std.zig.fmtString(s)}),
-                else => std.debug.panic("unhandled type '{t}'", .{self.value}),
+                else => std.debug.panic("unhandled string value '{t}'", .{self.value}),
             }
             return;
         }
         const zig_type = zigTypeFromValueType(self.value_type);
-        if (self.value_type == .Single or self.value_type == .Double) {
-            switch (self.value) {
-                .string => |float_str| {
-                    if (std.mem.eql(u8, float_str, "inf")) {
-                        try writer.print("@import(\"std\").math.inf({s})", .{zig_type});
-                        return;
-                    } else if (std.mem.eql(u8, float_str, "-inf")) {
-                        try writer.print("-@import(\"std\").math.inf({s})", .{zig_type});
-                        return;
-                    } else if (std.mem.eql(u8, float_str, "nan")) {
-                        try writer.print("@import(\"std\").math.nan({s})", .{zig_type});
-                        return;
-                    } else {
-                        std.debug.panic("unexpected float string value '{s}'", .{float_str});
-                    }
-                    return;
-                },
-                else => {},
-            }
-        }
-        try writer.print("@as({s}, {f})", .{ zig_type, fmtJson(self.value) });
+        try writer.print("@as({s}, {f})", .{ zig_type, fmtValue(self.value) });
     }
 };
 
@@ -1516,7 +1447,7 @@ fn generateConstant(sdk_file: *SdkFile, writer: *CodeWriter, constant: metadata.
     const zig_type_formatter = try addTypeRefs(sdk_file, .{}, constant.Type, options, null);
 
     if (constant.Type == .Native) {
-        jsonEnforce(constant.ValueType != .PropertyKey);
+        enforce(constant.ValueType != .PropertyKey);
         if (constant.Type.Native.Name == .Guid) {
             try writer.linef("pub const {f} = Guid.initString({f});", .{
                 name_pool,
@@ -1530,13 +1461,12 @@ fn generateConstant(sdk_file: *SdkFile, writer: *CodeWriter, constant: metadata.
         }
     } else {
         if (constant.ValueType == .PropertyKey) {
-            const value_obj = switch (constant.Value) {
-                .object => |obj| obj,
-                else => jsonPanicMsg("expected PropertyKey to be an object but got: {f}", .{fmtJson(constant.Value)}),
+            const pk = switch (constant.Value) {
+                .property_key => |p| p,
+                else => std.debug.panic("expected PropertyKey value but got '{t}'", .{constant.Value}),
             };
-            try jsonObjEnforceKnownFieldsOnly(value_obj, &[_][]const u8{ "Fmtid", "Pid" }, sdk_file);
-            const fmtid = (try jsonObjGetRequired(value_obj, "Fmtid", sdk_file)).string;
-            const pid = (try jsonObjGetRequired(value_obj, "Pid", sdk_file)).integer;
+            const fmtid = pk.Fmtid;
+            const pid = pk.Pid;
             try writer.writef("pub const {f} = ", .{name_pool}, .{ .nl = false });
             try generateTypeRef(sdk_file, writer, zig_type_formatter);
             sdk_file.uses_guid = true;
@@ -1564,7 +1494,6 @@ const also_usable_type_api_map = std.StaticStringMap([]const u8).initComptime(.{
     .{ "BCRYPT_HANDLE", "Security.Cryptography" },
 });
 
-const Depth = u3;
 
 const CodeWriter = struct {
     writer: *std.Io.Writer,
@@ -1660,7 +1589,7 @@ fn generateType(
     switch (t.Kind) {
         .ComClassID => |class_id| {
             if (t.Architectures.filter != null)
-                jsonPanicMsg("not impl", .{});
+                failMsg("not impl", .{});
             const clsid_pool = try global_symbol_pool.addFormatted("CLSID_{s}", .{t.Name});
             sdk_file.uses_guid = true;
             try writer.linef("const {f}_Value = Guid.initString(\"{s}\");", .{ clsid_pool, class_id.Guid });
@@ -1729,14 +1658,14 @@ fn generateTypeDefinition(
                 //
                 const child_generic = switch (typedef.Def) {
                     .PointerTo => |to| to.Child,
-                    else => jsonPanicMsg(
+                    else => failMsg(
                         "definition of {s} has changed! (Def.Kind != PointerTo, it is {t})",
                         .{ t.Name, typedef.Def },
                     ),
                 };
                 const child_native = switch (child_generic.*) {
                     .Native => |*n| n,
-                    else => jsonPanicMsg(
+                    else => failMsg(
                         "definition of {f} has changed! (Def.Child.Kind != Native, it is {t})",
                         .{ pool_name, child_generic.* },
                     ),
@@ -1745,14 +1674,14 @@ fn generateTypeDefinition(
                 //       maybe I'll do something like @import("zig.zig").NotNullTerm(PSTR)
                 switch (child_native.Name) {
                     .Byte => {
-                        jsonEnforce(special == .pstr);
+                        enforce(special == .pstr);
                         try writer.linef("{s}[*:0]u8{s}", .{ def_prefix, def_suffix });
                     },
                     .Char => {
-                        jsonEnforce(special == .pwstr);
+                        enforce(special == .pwstr);
                         try writer.linef("{s}[*:0]u16{s}", .{ def_prefix, def_suffix });
                     },
-                    else => jsonPanic(),
+                    else => fail(),
                 }
                 return;
             }
@@ -1953,7 +1882,7 @@ fn generateStructOrUnionDef(
         const pool_name = try global_symbol_pool.add(nested_type.Name);
         if (isAnonymousTypeName(nested_type.Name)) {
             if (nested_type.Architectures.filter) |_| // we don't handle architectures in this case
-                jsonPanicMsg("not impl", .{});
+                failMsg("not impl", .{});
             try anon_types.types.put(pool_name, nested_type.*);
         } else {
             // TODO: I don't know why this isn't working!!!
@@ -1963,7 +1892,7 @@ fn generateStructOrUnionDef(
             switch (nested_type.Kind) {
                 .Union => try generateStructOrUnionDef(sdk_file, writer, nested_type.*, this_nested_context),
                 .Struct => try generateStructOrUnionDef(sdk_file, writer, nested_type.*, this_nested_context),
-                else => jsonPanicMsg("not impl", .{}),
+                else => failMsg("not impl", .{}),
             }
             try writer.line("};");
         }
@@ -2032,27 +1961,6 @@ const non_exhaustive_enums = std.StaticStringMap(void).initComptime(.{
     .{"SEND_FLAGS"},
     .{"WINDOW_LONG_PTR_INDEX"},
 });
-
-fn shortEnumValueName(enum_type_name: []const u8, full_value_name: []const u8) []const u8 {
-    if (full_value_name.len == 0) {
-        // NOTE: this is probably a bug in the win32metadata
-        return "_noname_";
-    }
-    const offset = init: {
-        if ((full_value_name.len <= enum_type_name.len + 1) or
-            (full_value_name[enum_type_name.len] != '_') or
-            !std.mem.startsWith(u8, full_value_name, enum_type_name))
-        {
-            break :init 0;
-        }
-        const first_c = full_value_name[enum_type_name.len + 1];
-        if (first_c <= '9' and first_c >= '0') {
-            break :init enum_type_name.len;
-        }
-        break :init enum_type_name.len + 1;
-    };
-    return full_value_name[offset..];
-}
 
 // TODO: this is a set of enums whose value symbols conflict with other symbols
 const suppress_enum_aliases = blk: {
@@ -2160,7 +2068,7 @@ const suppress_enum_aliases = blk: {
 const EnumValue = struct {
     pool_name: StringPool.Val,
     short_name: []const u8,
-    value: std.json.Value,
+    value: metadata.Value,
     no_alias: bool,
     conflict_index: ?usize,
     pub fn valueIsZero(self: EnumValue) bool {
@@ -2176,30 +2084,22 @@ const EnumValue = struct {
         mask: i64,
     };
     pub fn flagsValue(self: EnumValue) FlagsValue {
-        switch (self.value) {
-            .integer => |i| {
-                if (i == 0) return .zero;
-
-                var index: u6 = 0;
-                while (true) : (index += 1) {
-                    if ((@as(i64, 1) << index) == i) return .{ .flag = index };
-                    if (index == 63) break;
-                }
-
-                return .{ .mask = i };
-            },
-            .number_string => |s| {
-                if (std.mem.eql(u8, s, "9223372036854775808"))
-                    return .{ .flag = 63 }; // TODO: verify this is not off-by-one
-                std.debug.panic(
-                    "todo: handle enum flag value json number string '{s}' ('{f}' '{s}')",
-                    .{ s, self.pool_name, self.short_name },
-                );
-            },
-            else => {
-                std.debug.panic("todo: flagIndex for json value {t}", .{self.value});
-            },
+        const i = switch (self.value) {
+            .integer => |v| v,
+            else => std.debug.panic("todo: flagIndex for value {t}", .{self.value}),
+        };
+        if (i == 0) return .zero;
+        // 2^63 exceeds i64 (formerly a separate large-value case) -> flag 63.
+        if (i == 9223372036854775808) return .{ .flag = 63 }; // TODO: verify this is not off-by-one
+        // The remaining values fit i64 (matching the old integer path,
+        // including its i64 shift behavior).
+        const iv: i64 = @intCast(i);
+        var index: u6 = 0;
+        while (true) : (index += 1) {
+            if ((@as(i64, 1) << index) == iv) return .{ .flag = index };
+            if (index == 63) break;
         }
+        return .{ .mask = iv };
     }
 };
 fn matchLen(a: []const u8, b: []const u8) usize {
@@ -2273,7 +2173,7 @@ fn generateEnum(
     // find conflicts
     for (values, 0..) |val, i| {
         for (values[0..i], 0..) |other_val, j| {
-            if (jsonEql(val.value, other_val.value)) {
+            if (val.value.eql(other_val.value)) {
                 values[i].conflict_index = j;
                 break;
             }
@@ -2290,7 +2190,7 @@ fn generateEnum(
     } else if (!type_enum.Flags) {
         for (values) |val| {
             if (val.conflict_index == null) {
-                try writer.linef("    {f} = {f},", .{ fmtIdP(val.short_name), fmtJson(val.value) });
+                try writer.linef("    {f} = {f},", .{ fmtIdP(val.short_name), fmtValue(val.value) });
             }
         }
         if (non_exhaustive_enums.get(pool_name.slice)) |_| {
@@ -2383,7 +2283,7 @@ fn generateEnum(
         }
         for (flag_map[bit_count..]) |maybe_flag| {
             if (maybe_flag) |_|
-                jsonPanicMsg("enum value is out-of-range for this flag integer base type", .{});
+                failMsg("enum value is out-of-range for this flag integer base type", .{});
         }
 
         // print any flags (only 1-bit values) that had conflicts
@@ -2465,14 +2365,14 @@ fn generateEnum(
 }
 
 fn getComInterface(api: []const u8, name: []const u8) ?metadata.TypeRef {
-    const pass1_api_map = global_pass1.get(api) orelse jsonPanicMsg("com interface inside unknown api '{s}'", .{api});
-    const pass1_type = pass1_api_map.get(name) orelse jsonPanicMsg(
+    const pass1_api_map = global_pass1.get(api) orelse failMsg("com interface inside unknown api '{s}'", .{api});
+    const pass1_type = pass1_api_map.get(name) orelse failMsg(
         "com interface '{s}' does not exist in api '{s}'",
         .{ name, api },
     );
     return switch (pass1_type) {
         .Com => |com| com.Interface,
-        else => jsonPanic(),
+        else => fail(),
     };
 }
 
@@ -2531,7 +2431,7 @@ fn generateCom(
                 .unique => {
                     if (maybe_overload_suffixes) |_| fatal(
                         "api '{f}' COM type '{f}' method '{s}' has a unique name but also entries in ComOverloads.txt?",
-                        .{ sdk_file.json_name, com_pool_name, method.Name },
+                        .{ sdk_file.api_name, com_pool_name, method.Name },
                     );
                 },
                 .conflicts => {
@@ -2543,7 +2443,7 @@ fn generateCom(
                     };
                     if (!have_overload) {
                         try global_missing_com_overloads.append(allocator, .{
-                            .api = sdk_file.json_name,
+                            .api = sdk_file.api_name,
                             .com_type = com_pool_name.slice,
                             .method = try allocator.dupe(u8, method.Name),
                             .method_index = @intCast(method_index),
@@ -2814,7 +2714,6 @@ const dll_funcs_with_issues = std.StaticStringMap(void).initComptime(.{
     .{"PssDuplicateSnapshot"},
 });
 
-const ArchCaseContext = enum { outside_arch_case, inside_arch_case };
 
 const ConflictSuffix = struct {
     conflict_count: u8,
@@ -3142,9 +3041,6 @@ fn ArchSpecificObjects(comptime T: type) type {
     return struct {
         object_array: [ArchCount]ArchSpecificObject(T) = undefined,
         object_count: u8 = 0,
-        pub fn getItems(self: *@This()) []ArchSpecificObject(T) {
-            return self.object_array[0..self.object_count];
-        }
         pub fn getItemsConst(self: *const @This()) []const ArchSpecificObject(T) {
             return self.object_array[0..self.object_count];
         }
@@ -3156,66 +3052,17 @@ fn ArchSpecificObjects(comptime T: type) type {
     };
 }
 
-pub fn jsonObjEnforceKnownFieldsOnly(
-    map: std.json.ObjectMap,
-    known_fields: []const []const u8,
-    sdk_file: *const SdkFile,
-) !void {
-    var it = map.iterator();
-    fieldLoop: while (it.next()) |kv| {
-        for (known_fields) |known_field| {
-            if (std.mem.eql(u8, known_field, kv.key_ptr.*))
-                continue :fieldLoop;
-        }
-        std.log.err(
-            "{s}: JSON object has unknown field '{s}', expected one of: {f}\n",
-            .{ sdk_file.json_basename, kv.key_ptr.*, common.formatSliceT([]const u8, "s", known_fields) },
-        );
-        jsonPanic();
-    }
-}
-
-pub fn jsonObjGetRequired(
-    map: std.json.ObjectMap,
-    field: []const u8,
-    sdk_file: *const SdkFile,
-) !std.json.Value {
-    return map.get(field) orelse {
-        // TODO: print file location?
-        std.log.err(
-            "{s}: json object is missing '{s}' field: {f}\n",
-            .{ sdk_file.json_basename, field, fmtJson(map) },
-        );
-        jsonPanic();
-    };
-}
-
-// TODO: this should probably be in std.json
-pub fn jsonEql(a: std.json.Value, b: std.json.Value) bool {
-    switch (a) {
-        .integer => |a_val| switch (b) {
-            .integer => |b_val| return a_val == b_val,
-            else => return false,
-        },
-        .number_string => |a_val| switch (b) {
-            .number_string => |b_val| return std.mem.eql(u8, a_val, b_val),
-            else => return false,
-        },
-        else => @panic("not impl"),
-    }
-}
-
-fn getMethodConflictMap(json_name: []const u8) std.StaticStringMap(void) {
-    if (std.mem.eql(u8, json_name, "Media.MediaPlayer")) return std.StaticStringMap(void).initComptime(.{
+fn getMethodConflictMap(api_name: []const u8) std.StaticStringMap(void) {
+    if (std.mem.eql(u8, api_name, "Media.MediaPlayer")) return std.StaticStringMap(void).initComptime(.{
         .{"Guid"}, // conflicts with an imported type
     });
     return std.StaticStringMap(void).initComptime(.{});
 }
 
 // NOTE: this data could be generated automatically by doing a first pass
-fn getParamConflictMap(json_name: []const u8) std.StaticStringMap(void) {
+fn getParamConflictMap(api_name: []const u8) std.StaticStringMap(void) {
     @setEvalBranchQuota(9999);
-    if (std.mem.eql(u8, json_name, "System.Mmc")) return std.StaticStringMap(void).initComptime(.{
+    if (std.mem.eql(u8, api_name, "System.Mmc")) return std.StaticStringMap(void).initComptime(.{
         .{"Application"},
         .{"Node"},
         .{"Nodes"},
@@ -3241,12 +3088,12 @@ fn getParamConflictMap(json_name: []const u8) std.StaticStringMap(void) {
         .{"IsSortColumn"},
         .{"IsSelected"},
     });
-    if (std.mem.eql(u8, json_name, "System.SettingsManagementInfrastructure")) return std.StaticStringMap(void).initComptime(.{
+    if (std.mem.eql(u8, api_name, "System.SettingsManagementInfrastructure")) return std.StaticStringMap(void).initComptime(.{
         .{"Attributes"},
         .{"Children"},
         .{"Settings"},
     });
-    if (std.mem.eql(u8, json_name, "UI.TabletPC")) return std.StaticStringMap(void).initComptime(.{
+    if (std.mem.eql(u8, api_name, "UI.TabletPC")) return std.StaticStringMap(void).initComptime(.{
         .{"EventMask"},
         .{"InkDisplayMode"},
         .{"Guid"},
@@ -3266,10 +3113,10 @@ fn getParamConflictMap(json_name: []const u8) std.StaticStringMap(void) {
         .{"AlternatesWithConstantPropertyValues"},
         .{"RemoveWord"},
     });
-    if (std.mem.eql(u8, json_name, "UI.Shell")) return std.StaticStringMap(void).initComptime(.{
+    if (std.mem.eql(u8, api_name, "UI.Shell")) return std.StaticStringMap(void).initComptime(.{
         .{"Folder"},
     });
-    if (std.mem.eql(u8, json_name, "Media.DirectShow")) return std.StaticStringMap(void).initComptime(.{
+    if (std.mem.eql(u8, api_name, "Media.DirectShow")) return std.StaticStringMap(void).initComptime(.{
         .{"Quality"},
         .{"ScanModulationTypes"},
         .{"AnalogVideoStandard"},
@@ -3288,36 +3135,36 @@ fn getParamConflictMap(json_name: []const u8) std.StaticStringMap(void) {
         .{"Components"},
         .{"Locator"},
     });
-    if (std.mem.eql(u8, json_name, "Media.Speech")) return std.StaticStringMap(void).initComptime(.{
+    if (std.mem.eql(u8, api_name, "Media.Speech")) return std.StaticStringMap(void).initComptime(.{
         .{"Guid"},
         .{"Alternates"},
     });
-    if (std.mem.eql(u8, json_name, "Media.MediaFoundation")) return std.StaticStringMap(void).initComptime(.{
+    if (std.mem.eql(u8, api_name, "Media.MediaFoundation")) return std.StaticStringMap(void).initComptime(.{
         .{"Guid"},
     });
-    if (std.mem.eql(u8, json_name, "System.Diagnostics.Debug")) return std.StaticStringMap(void).initComptime(.{
+    if (std.mem.eql(u8, api_name, "System.Diagnostics.Debug")) return std.StaticStringMap(void).initComptime(.{
         .{"Guid"},
         .{"Symbol"},
         .{"Request"},
         .{"Exception"},
     });
-    if (std.mem.eql(u8, json_name, "System.RemoteDesktop")) return std.StaticStringMap(void).initComptime(.{
+    if (std.mem.eql(u8, api_name, "System.RemoteDesktop")) return std.StaticStringMap(void).initComptime(.{
         .{"DisplayIOCtl"},
     });
-    if (std.mem.eql(u8, json_name, "System.Performance")) return std.StaticStringMap(void).initComptime(.{
+    if (std.mem.eql(u8, api_name, "System.Performance")) return std.StaticStringMap(void).initComptime(.{
         .{"Stop"},
     });
-    if (std.mem.eql(u8, json_name, "Web.MsHtml")) return std.StaticStringMap(void).initComptime(.{
+    if (std.mem.eql(u8, api_name, "Web.MsHtml")) return std.StaticStringMap(void).initComptime(.{
         .{"item"},
         .{"Gravity"},
     });
-    if (std.mem.eql(u8, json_name, "Data.Xml.MsXml")) return std.StaticStringMap(void).initComptime(.{
+    if (std.mem.eql(u8, api_name, "Data.Xml.MsXml")) return std.StaticStringMap(void).initComptime(.{
         .{"hasFeature"},
     });
-    if (std.mem.eql(u8, json_name, "UI.Controls.RichEdit")) return std.StaticStringMap(void).initComptime(.{
+    if (std.mem.eql(u8, api_name, "UI.Controls.RichEdit")) return std.StaticStringMap(void).initComptime(.{
         .{"Notify"},
     });
-    if (std.mem.eql(u8, json_name, "Devices.ImageAcquisition")) return std.StaticStringMap(void).initComptime(.{
+    if (std.mem.eql(u8, api_name, "Devices.ImageAcquisition")) return std.StaticStringMap(void).initComptime(.{
         .{"hResult"},
     });
     return std.StaticStringMap(void).initComptime(.{});
@@ -3339,20 +3186,6 @@ pub const FmtId = struct {
         }
     }
 };
-
-fn FmtOptOrEmpty(comptime T: type) type {
-    return struct {
-        opt: T,
-        pub fn format(self: @This(), writer: *std.Io.Writer) !void {
-            if (self.opt) |v| {
-                try writer.print("{}", .{v});
-            }
-        }
-    };
-}
-pub fn fmtOptOrEmpty(opt: anytype) FmtOptOrEmpty(@TypeOf(opt)) {
-    return .{ .opt = opt };
-}
 
 pub fn fmtParamId(s: []const u8, avoid_map: std.StaticStringMap(void)) FmtId {
     return FmtId{ .s = s, .kind = .param, .avoid_map = avoid_map };

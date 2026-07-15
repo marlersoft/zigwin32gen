@@ -1,8 +1,6 @@
 const std = @import("std");
 const metadata = @import("metadata.zig");
 
-const path_sep = std.fs.path.sep_str;
-
 pub fn oom(e: error{OutOfMemory}) noreturn {
     @panic(@errorName(e));
 }
@@ -18,17 +16,6 @@ pub fn getcwd(a: std.mem.Allocator) ![]u8 {
     const path_allocated = try a.alloc(u8, path.len);
     @memcpy(path_allocated, path);
     return path_allocated;
-}
-
-pub fn readApiList(api_dir: std.fs.Dir, api_list: *std.array_list.Managed([]const u8)) !void {
-    var dir_it = api_dir.iterate();
-    while (try dir_it.next()) |entry| {
-        if (!std.mem.endsWith(u8, entry.name, ".json")) {
-            std.log.err("expected all files to end in '.json' but got '{s}'\n", .{entry.name});
-            return error.AlreadyReported;
-        }
-        try api_list.append(try api_list.allocator.dupe(u8, entry.name));
-    }
 }
 
 pub fn asciiLessThanIgnoreCase(_: void, lhs: []const u8, rhs: []const u8) bool {
@@ -59,48 +46,22 @@ pub fn formatSliceT(comptime T: type, comptime spec: []const u8, slice: []const 
 //    return .{ .slice = slice };
 //}
 
-pub fn jsonPanic() noreturn {
-    @panic("an assumption about the json format was violated");
+pub fn fail() noreturn {
+    @panic("an assumption about the metadata was violated");
 }
-pub fn jsonPanicMsg(comptime msg: []const u8, args: anytype) noreturn {
-    std.debug.panic("an assumption about the json format was violated: " ++ msg, args);
-}
-
-pub fn jsonEnforce(cond: bool) void {
-    if (!cond) {
-        jsonPanic();
-    }
-}
-pub fn jsonEnforceMsg(cond: bool, comptime msg: []const u8, args: anytype) void {
-    if (!cond) {
-        jsonPanicMsg(msg, args);
-    }
+pub fn failMsg(comptime msg: []const u8, args: anytype) noreturn {
+    std.debug.panic("an assumption about the metadata was violated: " ++ msg, args);
 }
 
-const JsonFormatter = struct {
-    value: std.json.Value,
-    pub fn format(self: JsonFormatter, writer: anytype) !void {
-        switch (self.value) {
-            .float => |v| try writer.printFloat(v, .{
-                // Needed for large integer float values that can't be converted in zig 0.15
-                .mode = .scientific,
-            }),
-            .number_string => |s| try writer.writeAll(s),
-            else => try writer.print("{f}", .{std.json.fmt(self.value, .{})}),
-        }
+pub fn enforce(cond: bool) void {
+    if (!cond) {
+        fail();
     }
-};
-pub fn fmtJson(value: anytype) JsonFormatter {
-    if (@TypeOf(value) == std.json.ObjectMap) {
-        return .{ .value = .{ .object = value } };
+}
+pub fn enforceMsg(cond: bool, comptime msg: []const u8, args: anytype) void {
+    if (!cond) {
+        failMsg(msg, args);
     }
-    if (@TypeOf(value) == std.json.Array) {
-        return .{ .value = .{ .array = value } };
-    }
-    if (@TypeOf(value) == []std.json.Value) {
-        return .{ .value = .{ .array = std.json.Array{ .items = value, .capacity = value.len, .allocator = undefined } } };
-    }
-    return .{ .value = value };
 }
 
 pub const ComInterface = struct {
@@ -117,10 +78,10 @@ pub const ComInterface = struct {
 pub fn getComInterface(type_ref: metadata.TypeRef) ComInterface {
     const api_ref = switch (type_ref) {
         .ApiRef => |r| r,
-        else => jsonPanic(),
+        else => fail(),
     };
-    jsonEnforce(api_ref.TargetKind == .Com);
-    jsonEnforce(api_ref.Parents.len == 0);
+    enforce(api_ref.TargetKind == .Com);
+    enforce(api_ref.Parents.len == 0);
     return .{
         .api = api_ref.Api,
         .name = api_ref.Name,

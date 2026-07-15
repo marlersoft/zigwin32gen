@@ -38,32 +38,53 @@ pub fn build(b: *Build) !void {
         release_step.dependOn(b.getInstallStep());
     }
 
-    const pass1_step = b.step(
-        "pass1",
-        "Only perform pass1 of zig binding generation.\n" ++ desc_line_prefix ++
-            "(generates pass1.json in .zig-cache)",
-    );
     const gen_step = b.step("gen", "Generate the bindings (in .zig-cache)");
     const optimize = b.standardOptimizeOption(.{});
 
-    const win32json_dep = b.dependency("win32json", .{});
+    const metadata_version = "31.0.4-preview";
 
-    const pass1_out_file = blk: {
-        const pass1_exe = b.addExecutable(.{
-            .name = "pass1",
+    // Produce the line-based text (winmd -> text) that the generator consumes.
+    const winmd_text = blk_winmd_text: {
+        const winmd = blk: {
+            const download = b.addSystemCommand(&.{
+                "curl",
+                "https://www.nuget.org/api/v2/package/Microsoft.Windows.SDK.Win32Metadata/" ++ metadata_version,
+                "--location",
+                "--output",
+            });
+            const nupkg = download.addOutputFileArg("win32metadata.nupkg");
+
+            const zipcmdline = b.dependency("zipcmdline", .{ .target = b.graph.host });
+            const unzip = b.addRunArtifact(zipcmdline.artifact("unzip"));
+            unzip.addFileArg(nupkg);
+            unzip.addArg("-d");
+            const nupkg_dir = unzip.addOutputDirectoryArg("nupkg");
+            break :blk nupkg_dir.path(b, "Windows.Win32.winmd");
+        };
+        const winmd_dep = b.dependency("winmd", .{});
+
+        const exe = b.addExecutable(.{
+            .name = "dumpwinmd",
             .root_module = b.createModule(.{
-                .root_source_file = b.path("src/pass1.zig"),
+                .root_source_file = b.path("dumpwinmd/main.zig"),
                 .optimize = optimize,
                 .target = b.graph.host,
+                .imports = &.{
+                    .{ .name = "winmd", .module = winmd_dep.module("winmd") },
+                },
             }),
         });
-
-        const run = b.addRunArtifact(pass1_exe);
-        run.addDirectoryArg(win32json_dep.path(""));
-        const out_file = run.addOutputFileArg("pass1.json");
-
-        pass1_step.dependOn(&run.step);
-        break :blk out_file;
+        {
+            const install = b.addInstallArtifact(exe, .{});
+            b.step("install-dumpwinmd", "").dependOn(&install.step);
+            const run = b.addRunArtifact(exe);
+            run.step.dependOn(&install.step);
+            if (b.args) |a| run.addArgs(a);
+            b.step("dumpwinmd", "").dependOn(&run.step);
+        }
+        const run = b.addRunArtifact(exe);
+        run.addFileArg(winmd);
+        break :blk_winmd_text run.captureStdOut();
     };
 
     const zigexports = blk: {
@@ -97,8 +118,8 @@ pub fn build(b: *Build) !void {
         );
         const run = b.addRunArtifact(exe);
         run.addFileArg(b.path("extra.txt"));
-        run.addDirectoryArg(win32json_dep.path(""));
-        run.addFileArg(pass1_out_file);
+        run.addFileArg(winmd_text);
+        run.addArg(metadata_version);
         run.addFileArg(b.path("ComOverloads.txt"));
         const out_dir = run.addOutputDirectoryArg(".");
         gen_step.dependOn(&run.step);
