@@ -9,7 +9,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, windows-11-arm, ubuntu-latest, macos-latest]
+        # Pin macOS to macos-15; macos-latest's Xcode 26.4 SDK doesn't link
+        # with Zig 0.15.2 (ziglang/zig#31658), fixed in later Zig versions.
+        os: [windows-latest, windows-11-arm, ubuntu-latest, macos-15]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
