@@ -131,6 +131,11 @@ pub fn build(b: *Build) !void {
         "Print the zigwin32 cache directory",
     ).dependOn(&PrintLazyPath.create(b, gen_out_dir).step);
 
+    b.step(
+        "show-dump-path",
+        "Print the cache path of the dumpwinmd text output",
+    ).dependOn(&PrintLazyPath.create(b, winmd_text).step);
+
     b.installDirectory(.{
         .source_dir = gen_out_dir,
         .install_dir = .prefix,
