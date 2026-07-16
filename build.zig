@@ -41,7 +41,7 @@ pub fn build(b: *Build) !void {
     const gen_step = b.step("gen", "Generate the bindings (in .zig-cache)");
     const optimize = b.standardOptimizeOption(.{});
 
-    const metadata_version = "31.0.4-preview";
+    const metadata_version = "32.0.17-preview";
 
     // Produce the line-based text (winmd -> text) that the generator consumes.
     const winmd_text = blk_winmd_text: {

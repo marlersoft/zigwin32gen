@@ -1007,7 +1007,7 @@ fn addTypeRefsNoFormatter(sdk_file: *SdkFile, arches: metadata.Architectures, ty
         .ApiRef => |api_ref| {
             const name = getApiRefSubstitute(api_ref.Name, api_ref.Parents) orelse api_ref.Name;
             const api = try global_symbol_pool.add(api_ref.Api);
-            try sdk_file.addApiImport(arches, name, api, api_ref.Parents);
+            try sdk_file.addApiImport(arches, renameType(name), api, api_ref.Parents);
         },
         .PointerTo => |to| try addTypeRefsNoFormatter(sdk_file, arches, to.Child.*),
         .Array => |a| try addTypeRefsNoFormatter(sdk_file, arches, a.Child.*),
@@ -1275,7 +1275,7 @@ fn generateTypeRefRec(
             //    try writer.writef("{s}", .{parent}, .{.start=.any,.nl=false});
             //    try writer.write(".", .{.start=.any,.nl=false});
             //}
-            try writer.writef("{s}", .{name}, .{ .start = .any, .nl = false });
+            try writer.writef("{s}", .{renameType(name)}, .{ .start = .any, .nl = false });
         },
         .PointerTo => |to| {
             var child_options = self.options.getChildOptions();
@@ -1613,7 +1613,7 @@ fn generateType(
         else => {},
     }
 
-    const pool_name = try global_symbol_pool.add(t.Name);
+    const pool_name = try global_symbol_pool.add(renameType(t.Name));
 
     // TODO: should I be adding this to type_exports if it's arch specific?
     //       type_exports may need to have an ArchFlags for each symbol
@@ -1634,7 +1634,7 @@ fn generateType(
     } else if (t.Architectures.filter) |filter| {
         try addArchSpecific(metadata.Type, arch_specific, pool_name, filter, t);
     } else {
-        const def_prefix = try std.fmt.allocPrint(allocator, "pub const {f} = ", .{fmtIdP(t.Name)});
+        const def_prefix = try std.fmt.allocPrint(allocator, "pub const {f} = ", .{fmtIdP(renameType(t.Name))});
         defer allocator.free(def_prefix);
         try generateTypeDefinition(sdk_file, writer, t, enum_alias_conflicts, pool_name, def_prefix, ";");
     }
@@ -1777,6 +1777,14 @@ const api_type_substitutes = std.StaticStringMap([]const u8).initComptime(.{
     // I can think of is to allow overloads, but we don't use overloading.
     .{ "D2D1_COLOR_F", "D2D_COLOR_F" },
 });
+
+const type_renames = std.StaticStringMap([]const u8).initComptime(.{
+    // struct 'VK_F' collides with the VK_F virtual-key alias (VIRTUAL_KEY.F)
+    .{ "VK_F", "VK_F_TABLE" },
+});
+fn renameType(name: []const u8) []const u8 {
+    return type_renames.get(name) orelse name;
+}
 fn getApiRefSubstitute(type_name: []const u8, parents: []const []const u8) ?[]const u8 {
     const replacement = api_type_substitutes.get(type_name) orelse return null;
     if (parents.len != 0) std.debug.panic(
