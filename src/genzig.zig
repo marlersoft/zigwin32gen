@@ -1508,7 +1508,6 @@ const also_usable_type_api_map = std.StaticStringMap([]const u8).initComptime(.{
     .{ "BCRYPT_HANDLE", "Security.Cryptography" },
 });
 
-
 const CodeWriter = struct {
     writer: *std.Io.Writer,
     depth: u4,
@@ -2727,7 +2726,6 @@ const dll_funcs_with_issues = std.StaticStringMap(void).initComptime(.{
     .{"SymLoadModuleExW"},
     .{"PssDuplicateSnapshot"},
 });
-
 
 const ConflictSuffix = struct {
     conflict_count: u8,

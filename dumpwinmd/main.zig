@@ -229,7 +229,6 @@ const EnumBase = enum {
     }
 };
 
-
 const TypeAttrs = struct {
     flags: winmd.TypeAttributes,
     guid: ?Guid = null,

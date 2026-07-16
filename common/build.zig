@@ -1,7 +1,7 @@
 const builtin = @import("builtin");
 const std = @import("std");
 
-pub fn build(_: *std.Build) void { }
+pub fn build(_: *std.Build) void {}
 
 pub const Autoexit = enum { no, yes };
 

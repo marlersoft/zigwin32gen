@@ -322,4 +322,3 @@ pub const TypeRef = union(enum) {
     LPArray: LPArray,
     MissingClrType: MissingClrType,
 };
-
