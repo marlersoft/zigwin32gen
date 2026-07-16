@@ -2665,7 +2665,7 @@ fn funcPtrHasDependencyLoop(name: []const u8) bool {
     if (func_ptr_dependency_loop_problems.get(name)) |_| return true;
     if (std.mem.startsWith(u8, name, "PFN_")) return std.mem.startsWith(u8, name, "PFN_CPD_") or std.mem.startsWith(u8, name, "PFN_PROVIDER_") or std.mem.startsWith(u8, name, "PFN_PROVUI_");
     if (std.mem.startsWith(u8, name, "PIBIO_")) return std.mem.startsWith(u8, name, "PIBIO_SENSOR_") or std.mem.startsWith(u8, name, "PIBIO_ENGINE_") or std.mem.startsWith(u8, name, "PIBIO_STORAGE_") or std.mem.startsWith(u8, name, "PIBIO_FRAMEWORK_");
-    if (std.mem.startsWith(u8, name, "LPDDHAL")) return std.mem.startsWith(u8, name, "LPDDHAL_") or std.mem.startsWith(u8, name, "LPDDHALSURFCB_") or std.mem.startsWith(u8, name, "LPDDHALPALCB_") or std.mem.startsWith(u8, name, "LPDDHALVPORTCB_") or std.mem.startsWith(u8, name, "LPDDHALCOLORCB_") or std.mem.startsWith(u8, name, "LPDDHALMOCOMPCB_");
+    if (std.mem.startsWith(u8, name, "LPDDHAL")) return std.mem.startsWith(u8, name, "LPDDHAL_") or std.mem.startsWith(u8, name, "LPDDHALSURFCB_") or std.mem.startsWith(u8, name, "LPDDHALPALCB_") or std.mem.startsWith(u8, name, "LPDDHALVPORTCB_") or std.mem.startsWith(u8, name, "LPDDHALCOLORCB_") or std.mem.startsWith(u8, name, "LPDDHALMOCOMPCB_") or std.mem.startsWith(u8, name, "LPDDHALEXEBUFCB_") or std.mem.startsWith(u8, name, "LPDDHALKERNELCB_");
     return std.mem.startsWith(u8, name, "UText") or std.mem.startsWith(u8, name, "UCharIterator");
 }
 const func_ptr_dependency_loop_problems = std.StaticStringMap(void).initComptime(.{

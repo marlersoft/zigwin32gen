@@ -1340,18 +1340,42 @@ fn emitApi(w: *std.Io.Writer, loader: *Loader, api_name: []const u8) error{Write
 
     try w.print("namespace {s}\n", .{api_name});
     try emitConstants(w, md, api_name, api);
-    for (api.type_defs.items) |type_def_index| {
+
+    // Top-level members are emitted sorted by name so output is independent of
+    // the winmd's declaration order.
+    const type_indices = arena.dupe(u32, api.type_defs.items) catch |e| oom(e);
+    std.mem.sort(u32, type_indices, md, lessTypeDefName);
+    for (type_indices) |type_def_index| {
         try emitType(w, md, api_name, type_def_index, 0);
     }
+
     const methods: winmd.RowRange = if (api.apis_type_def_index) |i| md.tables.typeDefRange(i, .methods) else .empty;
-    for (methods.start..methods.limit) |method_index| {
+    const method_indices = rangeToSortedByName(methods, md, lessMethodName);
+    for (method_indices) |method_index| {
         try emitMethod(w, md, api_name, method_index, 0, .func, null);
     }
 }
 
+fn lessTypeDefName(md: *const Metadata, a: u32, b: u32) bool {
+    return std.ascii.lessThanIgnoreCase(md.getString(md.tables.row(.TypeDef, a).name), md.getString(md.tables.row(.TypeDef, b).name));
+}
+fn lessFieldName(md: *const Metadata, a: u32, b: u32) bool {
+    return std.ascii.lessThanIgnoreCase(md.getString(md.tables.row(.Field, a).name), md.getString(md.tables.row(.Field, b).name));
+}
+fn lessMethodName(md: *const Metadata, a: u32, b: u32) bool {
+    return std.ascii.lessThanIgnoreCase(md.getString(md.tables.row(.MethodDef, a).name), md.getString(md.tables.row(.MethodDef, b).name));
+}
+fn rangeToSortedByName(range: winmd.RowRange, md: *const Metadata, comptime less: fn (*const Metadata, u32, u32) bool) []u32 {
+    const out = arena.alloc(u32, range.limit - range.start) catch |e| oom(e);
+    for (out, 0..) |*o, i| o.* = @intCast(range.start + i);
+    std.mem.sort(u32, out, md, less);
+    return out;
+}
+
 fn emitConstants(w: *std.Io.Writer, md: *const Metadata, api_name: []const u8, api: *const ApiTypeDefs) error{WriteFailed}!void {
     const fields: winmd.RowRange = if (api.apis_type_def_index) |i| md.tables.typeDefRange(i, .fields) else .empty;
-    for (fields.start..fields.limit) |field_index| {
+    const field_indices = rangeToSortedByName(fields, md, lessFieldName);
+    for (field_indices) |field_index| {
         const field = md.tables.row(.Field, field_index);
         const name = md.getString(field.name);
         var it = md.custom_attr_map.getIterator(.init(.Field, @intCast(field_index)));
@@ -1627,11 +1651,15 @@ fn emitStructOrUnion(w: *std.Io.Writer, md: *const Metadata, api_name: []const u
         try w.writeAll("\n");
     }
 
+    var nested_list: std.ArrayListUnmanaged(u32) = .empty;
     var iterator = md.nested_map.getIterator(type_def_index);
     while (iterator.next()) |nested_class_index| {
         const entry = md.tables.row(.NestedClass, nested_class_index);
         std.debug.assert(entry.enclosing.asIndex().? == type_def_index);
-        const nested_type_def_index = entry.nested.asIndex().?;
+        nested_list.append(arena, @intCast(entry.nested.asIndex().?)) catch |e| oom(e);
+    }
+    std.mem.sort(u32, nested_list.items, md, lessTypeDefName);
+    for (nested_list.items) |nested_type_def_index| {
         try emitType(w, md, api_name, nested_type_def_index, depth + 1);
     }
 }
