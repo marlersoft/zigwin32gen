@@ -2165,6 +2165,15 @@ fn setShortNames(values: []EnumValue) void {
     }
 }
 
+fn flagsBitCount(base: ?metadata.EnumIntegerBase) u7 {
+    return switch (base orelse .Int32) {
+        .Byte, .SByte => 8,
+        .UInt16 => 16,
+        .Int32, .UInt32 => 32,
+        .UInt64 => 64,
+    };
+}
+
 fn generateEnum(
     sdk_file: *SdkFile,
     writer: *CodeWriter,
@@ -2287,14 +2296,7 @@ fn generateEnum(
             }
         }
 
-        const bit_count: usize = blk: {
-            if (std.mem.eql(u8, integer_base, "u8")) break :blk 8;
-            if (std.mem.eql(u8, integer_base, "u16")) break :blk 16;
-            if (std.mem.eql(u8, integer_base, "i32")) break :blk 32;
-            if (std.mem.eql(u8, integer_base, "u32")) break :blk 32;
-            if (std.mem.eql(u8, integer_base, "u64")) break :blk 64;
-            std.debug.panic("todo: handle integer base '{s}'", .{integer_base});
-        };
+        const bit_count = flagsBitCount(type_enum.IntegerBase);
         for (flag_map[0..bit_count], 0..) |maybe_flag, i| {
             const flag = maybe_flag orelse {
                 try writer.linef("    _{}: u1 = 0,", .{i});
@@ -2362,10 +2364,10 @@ fn generateEnum(
             .flag => try writer.linef("pub const {f} = {f}{{ .{f} = 1 }};", .{ val.pool_name, pool_name, fmtIdP(target_short_name) }),
             .mask => |mask| {
                 try writer.linef("pub const {f} = {f}{{", .{ val.pool_name, pool_name });
-                var mask_left = mask;
-                var index: u6 = 0;
-                while (true) : (index += 1) {
-                    const next_flag_bit: i64 = (@as(i64, 1) << index);
+                const bit_count = flagsBitCount(type_enum.IntegerBase);
+                var index: u7 = 0;
+                while (index < bit_count) : (index += 1) {
+                    const next_flag_bit: i64 = (@as(i64, 1) << @intCast(index));
                     if (0 != (next_flag_bit & mask)) {
                         if (flag_map[index]) |flag| {
                             const flag_target_short_name = if (flag.conflict_index) |i| values[i].short_name else flag.short_name;
@@ -2373,9 +2375,7 @@ fn generateEnum(
                         } else {
                             try writer.linef("    ._{} = 1,", .{index});
                         }
-                        mask_left &= ~next_flag_bit;
                     }
-                    if (mask_left == 0) break;
                 }
                 try writer.line("};");
             },
