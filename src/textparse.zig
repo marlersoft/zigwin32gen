@@ -619,16 +619,9 @@ fn parseConstValue(arena: std.mem.Allocator, value_type: metadata.ValueType, tok
     return switch (value_type) {
         .String => if (eq(token, "null")) .null else .{ .string = unescapeString(arena, token) },
         .PropertyKey => .{ .property_key = parsePropertyKey(token) },
-        // A Single/Double whose text has no '.'/'e' (e.g. "1", "80") is an integer
-        // literal; otherwise it is a float rendered in scientific form.
-        .Single, .Double => if (isFloatForm(token)) .{ .float = parseF64(token) } else .{ .integer = parseI128(token) },
+        .Single, .Double => .{ .float = parseF64(token) },
         else => .{ .integer = parseI128(token) },
     };
-}
-
-fn isFloatForm(token: []const u8) bool {
-    for (token) |c| if (c == '.' or c == 'e' or c == 'E') return true;
-    return false;
 }
 
 fn parseI128(token: []const u8) i128 {

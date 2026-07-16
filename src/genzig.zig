@@ -1385,10 +1385,24 @@ const ValueFormatter = struct {
     pub fn format(self: ValueFormatter, writer: *std.Io.Writer) !void {
         switch (self.value) {
             .integer => |i| try writer.print("{d}", .{i}),
-            .float => |f| try writer.printFloat(f, .{
-                // Needed for large integer float values that can't be converted in zig 0.15
-                .mode = .scientific,
-            }),
+            // Prefer readable decimal notation; fall back to scientific for
+            // magnitudes whose decimal form would be excessively long (e.g. 3.4e38).
+            // Both are shortest-round-trippable, so either is exact.
+            .float => |f| {
+                var buf: [64]u8 = undefined;
+                var fw = std.Io.Writer.fixed(&buf);
+                if (fw.printFloat(f, .{ .mode = .decimal })) |_| {
+                    const dec = fw.buffered();
+                    if (dec.len <= 20) {
+                        try writer.writeAll(dec);
+                        // Force a float literal: a bare integer literal must be
+                        // exactly representable, which large floats (e.g. 2.1e9) are not.
+                        if (std.mem.indexOfScalar(u8, dec, '.') == null) try writer.writeAll(".0");
+                        return;
+                    }
+                } else |_| {}
+                try writer.printFloat(f, .{ .mode = .scientific });
+            },
             else => std.debug.panic("unexpected value '{t}' in numeric context", .{self.value}),
         }
     }
