@@ -213,6 +213,7 @@ const BuildFnAttrs = struct {
 const EnumBase = enum {
     SByte,
     Byte,
+    Int16,
     UInt16,
     Int32,
     UInt32,
@@ -221,6 +222,7 @@ const EnumBase = enum {
         return switch (self) {
             .SByte => i8,
             .Byte => u8,
+            .Int16 => i16,
             .UInt16 => u16,
             .Int32 => i32,
             .UInt32 => u32,
@@ -414,6 +416,8 @@ const CustomAttr = union(enum) {
     FreeWith: []const u8,
     MemorySize: i16,
     DoesNotReturn,
+    CanReturnMultipleSuccessValues,
+    CanReturnErrorsAsSuccess,
     ansi,
     pub fn decode(
         md: *const Metadata,
@@ -649,6 +653,18 @@ fn decodeCustomAttr(
         // NOTE: 0 fixed args, 0 named args
         std.debug.assert(std.mem.eql(u8, value, &[_]u8{ 0, 0 }));
         return .Agile;
+    }
+
+    if (name.eql("Windows.Win32.Interop", "CanReturnMultipleSuccessValuesAttribute")) {
+        // NOTE: 0 fixed args, 0 named args
+        std.debug.assert(std.mem.eql(u8, value, &[_]u8{ 0, 0 }));
+        return .CanReturnMultipleSuccessValues;
+    }
+
+    if (name.eql("Windows.Win32.Interop", "CanReturnErrorsAsSuccessAttribute")) {
+        // NOTE: 0 fixed args, 0 named args
+        std.debug.assert(std.mem.eql(u8, value, &[_]u8{ 0, 0 }));
+        return .CanReturnErrorsAsSuccess;
     }
 
     std.debug.panic(
@@ -1566,6 +1582,7 @@ fn emitEnum(w: *std.Io.Writer, md: *const Metadata, type_def_index: u32, attrs: 
         const base_type: EnumBase = switch (winmd.ElementType.decodeU32(constant.type) orelse @panic("invalid constant type")) {
             .i1 => .SByte,
             .u1 => .Byte,
+            .i2 => .Int16,
             .u2 => .UInt16,
             .i4 => .Int32,
             .u4 => .UInt32,
@@ -1783,6 +1800,8 @@ fn emitMethod(
     var platform_str: ?[]const u8 = null;
     var arches: ?ArchBits = null;
     var does_not_return = false;
+    var can_return_multiple_success = false;
+    var can_return_errors_as_success = false;
     var method_obsolete: ?ObsoleteAttr = null;
     {
         var it = md.custom_attr_map.getIterator(.init(.MethodDef, @intCast(method_index)));
@@ -1798,6 +1817,8 @@ fn emitMethod(
                     arches = a;
                 },
                 .DoesNotReturn => does_not_return = true,
+                .CanReturnMultipleSuccessValues => can_return_multiple_success = true,
+                .CanReturnErrorsAsSuccess => can_return_errors_as_success = true,
                 .Obsolete => |o| method_obsolete = o,
                 else => |c| std.debug.panic("unhandled function attribute '{s}'", .{@tagName(c)}),
             }
@@ -1840,6 +1861,8 @@ fn emitMethod(
     if (method.attributes.special_name) try w.writeAll(" specialname");
     if (method.impl_flags.preserve_sig) try w.writeAll(" preservesig");
     if (does_not_return) try w.writeAll(" doesnotreturn");
+    if (can_return_multiple_success) try w.writeAll(" canreturnmultiplesuccess");
+    if (can_return_errors_as_success) try w.writeAll(" canreturnerrorsassuccess");
     if (fn_cdecl) try w.writeAll(" cdecl");
     if (fn_obsolete) |o| try emitObsolete(w, o);
     try emitArchPlat(w, out_arches, out_platform);

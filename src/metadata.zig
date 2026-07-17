@@ -76,7 +76,7 @@ pub const ConstantAttrs = struct {
     ansi: bool = false,
 };
 
-pub const EnumIntegerBase = enum { Byte, SByte, UInt16, UInt32, Int32, UInt64 };
+pub const EnumIntegerBase = enum { Byte, SByte, Int16, UInt16, UInt32, Int32, UInt64 };
 
 pub const Type = struct {
     Name: []const u8,
@@ -251,6 +251,11 @@ pub const FunctionAttrs = struct {
     DoesNotReturn: bool = false,
     Obsolete: ?ObsoleteAttr = null,
     Cdecl: bool = false,
+    // These CanReturn* attributes are ignored: zigwin32 exposes the raw HRESULT
+    // return, so these success-code hints (which only matter to projections that
+    // wrap HRESULT into a Result/bool) have no effect on generated output.
+    CanReturnMultipleSuccessValues: bool = false,
+    CanReturnErrorsAsSuccess: bool = false,
 };
 
 pub const ObsoleteAttr = struct {

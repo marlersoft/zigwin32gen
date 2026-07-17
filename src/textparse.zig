@@ -62,92 +62,147 @@ pub fn parseAll(arena: std.mem.Allocator, text: []const u8) []const NamedApi {
         } else if (eq(kw, "typedef")) {
             attachType(arena, &stack, parseTypedef(arena, toks));
         } else if (eq(kw, "enum")) {
+            var e_flags = false;
+            var e_scoped = false;
+            var base_raw: ?[]const u8 = null;
+            var arch_raw: ?[]const u8 = null;
+            var plat_raw: ?[]const u8 = null;
+            for (toks[2..]) |t| {
+                if (matchFlag(t, "flags", &e_flags)) continue;
+                if (matchFlag(t, "scoped", &e_scoped)) continue;
+                if (matchVal(t, "base", &base_raw)) continue;
+                if (matchVal(t, "arch", &arch_raw)) continue;
+                if (matchVal(t, "platform", &plat_raw)) continue;
+                unknownAttr(t);
+            }
             const f = arena.create(Frame) catch |e| oom(e);
             f.* = .{ .depth = depth, .data = .{ .enum_ = .{
                 .name = toks[1],
-                .arches = parseArch(toks),
-                .platform = parsePlatform(toks),
-                .flags = has(toks, "flags"),
-                .scoped = has(toks, "scoped"),
-                .integer_base = if (optVal(toks, "base")) |b| stringToEnum(metadata.EnumIntegerBase, b) else null,
+                .arches = parseArchSlot(arch_raw),
+                .platform = parsePlatformSlot(plat_raw),
+                .flags = e_flags,
+                .scoped = e_scoped,
+                .integer_base = if (base_raw) |b| stringToEnum(metadata.EnumIntegerBase, b) else null,
             } } };
             stack.append(arena, f) catch |e| oom(e);
         } else if (eq(kw, "value")) {
+            if (toks.len > 3) unknownAttr(toks[3]);
             top(&stack).data.enum_.values.append(arena, .{
                 .Name = toks[1],
                 .Value = .{ .integer = parseI128(toks[2]) },
             }) catch |e| oom(e);
         } else if (eq(kw, "struct") or eq(kw, "union")) {
+            var pack_raw: ?[]const u8 = null;
+            var guid_raw: ?[]const u8 = null;
+            var arch_raw: ?[]const u8 = null;
+            var plat_raw: ?[]const u8 = null;
+            var obsolete: ?metadata.ObsoleteAttr = null;
+            for (toks[2..]) |t| {
+                if (matchVal(t, "pack", &pack_raw)) continue;
+                if (matchVal(t, "guid", &guid_raw)) continue;
+                if (matchVal(t, "arch", &arch_raw)) continue;
+                if (matchVal(t, "platform", &plat_raw)) continue;
+                if (matchObsolete(arena, t, &obsolete)) continue;
+                unknownAttr(t);
+            }
             const f = arena.create(Frame) catch |e| oom(e);
             f.* = .{ .depth = depth, .data = .{ .struct_ = .{
                 .is_union = eq(kw, "union"),
                 .name = toks[1],
-                .arches = parseArch(toks),
-                .platform = parsePlatform(toks),
-                .pack = @intCast(parseIntVal(toks, "pack") orelse 0),
-                .guid = optVal(toks, "guid"),
-                .obsolete = parseObsolete(arena, toks),
+                .arches = parseArchSlot(arch_raw),
+                .platform = parsePlatformSlot(plat_raw),
+                .pack = if (pack_raw) |p| @intCast(parseI64(p, "pack")) else 0,
+                .guid = guid_raw,
+                .obsolete = obsolete,
             } } };
             stack.append(arena, f) catch |e| oom(e);
         } else if (eq(kw, "field")) {
+            var f_const = false;
+            var f_notnull = false;
+            var f_nullnull = false;
+            var obsolete: ?metadata.ObsoleteAttr = null;
+            for (toks[3..]) |t| {
+                if (matchFlag(t, "const", &f_const)) continue;
+                if (matchFlag(t, "notnullterm", &f_notnull)) continue;
+                if (matchFlag(t, "nullnullterm", &f_nullnull)) continue;
+                if (matchObsolete(arena, t, &obsolete)) continue;
+                unknownAttr(t);
+            }
             top(&stack).data.struct_.fields.append(arena, .{
                 .Name = toks[1],
                 .Type = parseTypeRef(arena, toks[2]),
                 .Attrs = .{
-                    .Const = has(toks, "const"),
-                    .NotNullTerminated = has(toks, "notnullterm"),
-                    .NullNullTerminated = has(toks, "nullnullterm"),
-                    .Obsolete = parseObsolete(arena, toks),
+                    .Const = f_const,
+                    .NotNullTerminated = f_notnull,
+                    .NullNullTerminated = f_nullnull,
+                    .Obsolete = obsolete,
                 },
             }) catch |e| oom(e);
         } else if (eq(kw, "constfield")) {
+            if (toks.len > 3) unknownAttr(toks[3]);
             top(&stack).data.struct_.constfields.append(arena, .{
                 .name = toks[1],
                 .type_str = toks[2],
             }) catch |e| oom(e);
         } else if (eq(kw, "com")) {
+            var agile = false;
+            var guid_raw: ?[]const u8 = null;
+            var iface_raw: ?[]const u8 = null;
+            var arch_raw: ?[]const u8 = null;
+            var plat_raw: ?[]const u8 = null;
+            for (toks[2..]) |t| {
+                if (matchFlag(t, "agile", &agile)) continue;
+                if (matchVal(t, "guid", &guid_raw)) continue;
+                if (matchVal(t, "interface", &iface_raw)) continue;
+                if (matchVal(t, "arch", &arch_raw)) continue;
+                if (matchVal(t, "platform", &plat_raw)) continue;
+                unknownAttr(t);
+            }
             const f = arena.create(Frame) catch |e| oom(e);
             f.* = .{ .depth = depth, .data = .{ .com = .{
                 .name = toks[1],
-                .arches = parseArch(toks),
-                .platform = parsePlatform(toks),
-                .guid = optVal(toks, "guid"),
-                .agile = has(toks, "agile"),
-                .interface = if (optVal(toks, "interface")) |i| parseTypeRef(arena, i) else null,
+                .arches = parseArchSlot(arch_raw),
+                .platform = parsePlatformSlot(plat_raw),
+                .guid = guid_raw,
+                .agile = agile,
+                .interface = if (iface_raw) |i| parseTypeRef(arena, i) else null,
             } } };
             stack.append(arena, f) catch |e| oom(e);
         } else if (eq(kw, "method")) {
+            const fa = parseFnAttrs(arena, toks, 3);
             const f = arena.create(Frame) catch |e| oom(e);
             f.* = .{ .depth = depth, .data = .{ .method = .{
                 .name = toks[1],
-                .arches = parseArch(toks),
-                .platform = parsePlatform(toks),
+                .arches = fa.arches,
+                .platform = fa.platform,
                 .ret = parseTypeRef(arena, stripPrefix(toks[2], "ret=")),
-                .setlasterror = has(toks, "setlasterror"),
-                .attrs = parseFuncAttrs(arena, toks),
+                .setlasterror = fa.setlasterror,
+                .attrs = fa.attrs,
             } } };
             stack.append(arena, f) catch |e| oom(e);
         } else if (eq(kw, "func")) {
+            const fa = parseFnAttrs(arena, toks, 4);
             const f = arena.create(Frame) catch |e| oom(e);
             f.* = .{ .depth = depth, .data = .{ .func = .{
                 .name = toks[1],
                 .dll = stripPrefix(toks[2], "dll="),
-                .arches = parseArch(toks),
-                .platform = parsePlatform(toks),
+                .arches = fa.arches,
+                .platform = fa.platform,
                 .ret = parseTypeRef(arena, stripPrefix(toks[3], "ret=")),
-                .setlasterror = has(toks, "setlasterror"),
-                .attrs = parseFuncAttrs(arena, toks),
+                .setlasterror = fa.setlasterror,
+                .attrs = fa.attrs,
             } } };
             stack.append(arena, f) catch |e| oom(e);
         } else if (eq(kw, "funcptr")) {
+            const fa = parseFnAttrs(arena, toks, 3);
             const f = arena.create(Frame) catch |e| oom(e);
             f.* = .{ .depth = depth, .data = .{ .funcptr = .{
                 .name = toks[1],
-                .arches = parseArch(toks),
-                .platform = parsePlatform(toks),
+                .arches = fa.arches,
+                .platform = fa.platform,
                 .ret = parseTypeRef(arena, stripPrefix(toks[2], "ret=")),
-                .setlasterror = has(toks, "setlasterror"),
-                .attrs = parseFuncAttrs(arena, toks),
+                .setlasterror = fa.setlasterror,
+                .attrs = fa.attrs,
             } } };
             stack.append(arena, f) catch |e| oom(e);
         } else if (eq(kw, "param")) {
@@ -175,11 +230,9 @@ fn appendConstant(arena: std.mem.Allocator, stack: *std.ArrayListUnmanaged(*Fram
     // const <Name> <ValueType> <value> <typeref> [attrs...]
     const value_type = stringToEnum(metadata.ValueType, toks[2]);
     var attrs: metadata.ConstantAttrs = .{};
-    for (toks[5..]) |attr| {
-        if (eq(attr, "ansi")) {
-            if (attrs.ansi) std.debug.panic("duplicate 'ansi' constant attribute", .{});
-            attrs.ansi = true;
-        } else std.debug.panic("unknown constant attribute '{s}'", .{attr});
+    for (toks[5..]) |t| {
+        if (matchFlag(t, "ansi", &attrs.ansi)) continue;
+        unknownAttr(t);
     }
     top(stack).data.api.consts.append(arena, .{
         .Name = toks[1],
@@ -192,36 +245,76 @@ fn appendConstant(arena: std.mem.Allocator, stack: *std.ArrayListUnmanaged(*Fram
 
 fn parseTypedef(arena: std.mem.Allocator, toks: []const []const u8) metadata.Type {
     // typedef <Name> <typeref> [alsousablefor=X] [freefunc=X] [invalidhandle=N] [arch] [platform]
+    var also_raw: ?[]const u8 = null;
+    var freefunc_raw: ?[]const u8 = null;
+    var invalid_raw: ?[]const u8 = null;
+    var arch_raw: ?[]const u8 = null;
+    var plat_raw: ?[]const u8 = null;
+    for (toks[3..]) |t| {
+        if (matchVal(t, "alsousablefor", &also_raw)) continue;
+        if (matchVal(t, "freefunc", &freefunc_raw)) continue;
+        if (matchVal(t, "invalidhandle", &invalid_raw)) continue;
+        if (matchVal(t, "arch", &arch_raw)) continue;
+        if (matchVal(t, "platform", &plat_raw)) continue;
+        unknownAttr(t);
+    }
     return .{
         .Name = toks[1],
-        .Architectures = parseArch(toks),
-        .Platform = parsePlatform(toks),
+        .Architectures = parseArchSlot(arch_raw),
+        .Platform = parsePlatformSlot(plat_raw),
         .Kind = .{ .NativeTypedef = .{
             .Def = parseTypeRef(arena, toks[2]),
-            .AlsoUsableFor = optVal(toks, "alsousablefor"),
-            .FreeFunc = optVal(toks, "freefunc"),
-            .InvalidHandleValue = if (parseIntVal(toks, "invalidhandle")) |v| @intCast(v) else null,
+            .AlsoUsableFor = also_raw,
+            .FreeFunc = freefunc_raw,
+            .InvalidHandleValue = if (invalid_raw) |v| @intCast(parseI64(v, "invalidhandle")) else null,
         } },
     };
 }
 
 fn appendParam(arena: std.mem.Allocator, frame: *Frame, toks: []const []const u8) void {
+    var p_const = false;
+    var p_in = false;
+    var p_out = false;
+    var p_optional = false;
+    var p_notnull = false;
+    var p_nullnull = false;
+    var p_retval = false;
+    var p_comoutptr = false;
+    var p_donotrelease = false;
+    var p_reserved = false;
+    var mem_raw: ?[]const u8 = null;
+    var free_raw: ?[]const u8 = null;
+    for (toks[3..]) |t| {
+        if (matchFlag(t, "const", &p_const)) continue;
+        if (matchFlag(t, "in", &p_in)) continue;
+        if (matchFlag(t, "out", &p_out)) continue;
+        if (matchFlag(t, "optional", &p_optional)) continue;
+        if (matchFlag(t, "notnullterm", &p_notnull)) continue;
+        if (matchFlag(t, "nullnullterm", &p_nullnull)) continue;
+        if (matchFlag(t, "retval", &p_retval)) continue;
+        if (matchFlag(t, "comoutptr", &p_comoutptr)) continue;
+        if (matchFlag(t, "donotrelease", &p_donotrelease)) continue;
+        if (matchFlag(t, "reserved", &p_reserved)) continue;
+        if (matchVal(t, "memorysize", &mem_raw)) continue;
+        if (matchVal(t, "freewith", &free_raw)) continue;
+        unknownAttr(t);
+    }
     const p: metadata.Param = .{
         .Name = toks[1],
         .Type = parseTypeRef(arena, toks[2]),
         .Attrs = .{
-            .Const = has(toks, "const"),
-            .In = has(toks, "in"),
-            .Out = has(toks, "out"),
-            .Optional = has(toks, "optional"),
-            .NotNullTerminated = has(toks, "notnullterm"),
-            .NullNullTerminated = has(toks, "nullnullterm"),
-            .RetVal = has(toks, "retval"),
-            .ComOutPtr = has(toks, "comoutptr"),
-            .DoNotRelease = has(toks, "donotrelease"),
-            .Reserved = has(toks, "reserved"),
-            .MemorySize = if (parseIntVal(toks, "memorysize")) |v| .{ .BytesParamIndex = @intCast(v) } else null,
-            .FreeWith = if (optVal(toks, "freewith")) |fw| .{ .Func = fw } else null,
+            .Const = p_const,
+            .In = p_in,
+            .Out = p_out,
+            .Optional = p_optional,
+            .NotNullTerminated = p_notnull,
+            .NullNullTerminated = p_nullnull,
+            .RetVal = p_retval,
+            .ComOutPtr = p_comoutptr,
+            .DoNotRelease = p_donotrelease,
+            .Reserved = p_reserved,
+            .MemorySize = if (mem_raw) |v| .{ .BytesParamIndex = @intCast(parseI64(v, "memorysize")) } else null,
+            .FreeWith = if (free_raw) |fw| .{ .Func = fw } else null,
         },
     };
     switch (frame.data) {
@@ -558,33 +651,52 @@ fn eq(a: []const u8, b: []const u8) bool {
     return std.mem.eql(u8, a, b);
 }
 
-fn has(toks: []const []const u8, flag: []const u8) bool {
-    for (toks) |t| if (eq(t, flag)) return true;
-    return false;
-}
-
-// Returns the raw value (still quoted if it was quoted); callers unquote when needed.
-fn optVal(toks: []const []const u8, key: []const u8) ?[]const u8 {
-    for (toks) |t| {
-        if (t.len > key.len + 1 and std.mem.startsWith(u8, t, key) and t[key.len] == '=') {
-            return t[key.len + 1 ..];
-        }
-    }
-    return null;
-}
-
-fn parseIntVal(toks: []const []const u8, key: []const u8) ?i64 {
-    const v = optVal(toks, key) orelse return null;
-    return std.fmt.parseInt(i64, v, 10) catch std.debug.panic("bad int '{s}' for {s}", .{ v, key });
-}
-
 fn stripPrefix(s: []const u8, prefix: []const u8) []const u8 {
     std.debug.assert(std.mem.startsWith(u8, s, prefix));
     return s[prefix.len..];
 }
 
-fn parseArch(toks: []const []const u8) metadata.Architectures {
-    const v = optVal(toks, "arch") orelse return .{};
+fn dupAttr(name: []const u8) noreturn {
+    std.debug.panic("duplicate attribute '{s}'", .{name});
+}
+
+fn unknownAttr(tok: []const u8) noreturn {
+    std.debug.panic("unrecognized attribute '{s}'", .{tok});
+}
+
+// Matches a bare flag token, rejecting a duplicate. Returns true on a match.
+fn matchFlag(tok: []const u8, name: []const u8, slot: *bool) bool {
+    if (!eq(tok, name)) return false;
+    if (slot.*) dupAttr(name);
+    slot.* = true;
+    return true;
+}
+
+// Matches a `key=value` token, rejecting a duplicate. Stores the raw value (still
+// quoted if it was quoted); callers unquote/convert when needed. Returns true on a match.
+fn matchVal(tok: []const u8, key: []const u8, slot: *?[]const u8) bool {
+    if (!(tok.len > key.len + 1 and std.mem.startsWith(u8, tok, key) and tok[key.len] == '=')) return false;
+    if (slot.* != null) dupAttr(key);
+    slot.* = tok[key.len + 1 ..];
+    return true;
+}
+
+// Matches the `obsolete` flag or `obsolete=<message>` value, rejecting a duplicate.
+fn matchObsolete(arena: std.mem.Allocator, tok: []const u8, slot: *?metadata.ObsoleteAttr) bool {
+    if (eq(tok, "obsolete")) {
+        if (slot.* != null) dupAttr("obsolete");
+        slot.* = .{ .Message = null };
+        return true;
+    }
+    if (std.mem.startsWith(u8, tok, "obsolete=")) {
+        if (slot.* != null) dupAttr("obsolete");
+        slot.* = .{ .Message = unquote(arena, tok["obsolete=".len..]) };
+        return true;
+    }
+    return false;
+}
+
+fn parseArchValue(v: []const u8) metadata.Architectures {
     var f: metadata.Architectures.Filter = .{};
     var it = std.mem.splitScalar(u8, v, ',');
     while (it.next()) |name| {
@@ -593,26 +705,50 @@ fn parseArch(toks: []const []const u8) metadata.Architectures {
     return .{ .filter = f };
 }
 
-fn parsePlatform(toks: []const []const u8) ?metadata.Platform {
-    const v = optVal(toks, "platform") orelse return null;
-    return stringToEnum(metadata.Platform, v);
+fn parseArchSlot(slot: ?[]const u8) metadata.Architectures {
+    return if (slot) |v| parseArchValue(v) else .{};
 }
 
-fn parseObsolete(arena: std.mem.Allocator, toks: []const []const u8) ?metadata.ObsoleteAttr {
-    for (toks) |t| {
-        if (eq(t, "obsolete")) return .{ .Message = null };
-        if (std.mem.startsWith(u8, t, "obsolete=")) return .{ .Message = unquote(arena, t["obsolete=".len..]) };
+fn parsePlatformSlot(slot: ?[]const u8) ?metadata.Platform {
+    return if (slot) |v| stringToEnum(metadata.Platform, v) else null;
+}
+
+fn parseI64(v: []const u8, key: []const u8) i64 {
+    return std.fmt.parseInt(i64, v, 10) catch std.debug.panic("bad int '{s}' for {s}", .{ v, key });
+}
+
+const FnAttrs = struct {
+    arches: metadata.Architectures = .{},
+    platform: ?metadata.Platform = null,
+    setlasterror: bool = false,
+    attrs: metadata.FunctionAttrs = .{},
+};
+
+// Parses the trailing attribute tokens shared by func/method/funcptr lines,
+// starting at `leading`. Fails fast on any unrecognized or duplicate token.
+fn parseFnAttrs(arena: std.mem.Allocator, toks: []const []const u8, leading: usize) FnAttrs {
+    var setlasterror = false;
+    var a: metadata.FunctionAttrs = .{};
+    var arch_raw: ?[]const u8 = null;
+    var plat_raw: ?[]const u8 = null;
+    for (toks[leading..]) |t| {
+        if (matchFlag(t, "setlasterror", &setlasterror)) continue;
+        if (matchFlag(t, "specialname", &a.SpecialName)) continue;
+        if (matchFlag(t, "preservesig", &a.PreserveSig)) continue;
+        if (matchFlag(t, "doesnotreturn", &a.DoesNotReturn)) continue;
+        if (matchFlag(t, "cdecl", &a.Cdecl)) continue;
+        if (matchFlag(t, "canreturnmultiplesuccess", &a.CanReturnMultipleSuccessValues)) continue;
+        if (matchFlag(t, "canreturnerrorsassuccess", &a.CanReturnErrorsAsSuccess)) continue;
+        if (matchObsolete(arena, t, &a.Obsolete)) continue;
+        if (matchVal(t, "arch", &arch_raw)) continue;
+        if (matchVal(t, "platform", &plat_raw)) continue;
+        unknownAttr(t);
     }
-    return null;
-}
-
-fn parseFuncAttrs(arena: std.mem.Allocator, toks: []const []const u8) metadata.FunctionAttrs {
     return .{
-        .SpecialName = has(toks, "specialname"),
-        .PreserveSig = has(toks, "preservesig"),
-        .DoesNotReturn = has(toks, "doesnotreturn"),
-        .Cdecl = has(toks, "cdecl"),
-        .Obsolete = parseObsolete(arena, toks),
+        .arches = parseArchSlot(arch_raw),
+        .platform = parsePlatformSlot(plat_raw),
+        .setlasterror = setlasterror,
+        .attrs = a,
     };
 }
 

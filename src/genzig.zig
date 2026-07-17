@@ -45,6 +45,7 @@ fn zigTypeFromIntegerBase(maybe_explicit_base: ?metadata.EnumIntegerBase) []cons
     return if (maybe_explicit_base) |base| switch (base) {
         .Byte => "u8",
         .SByte => "i8",
+        .Int16 => "i16",
         .UInt16 => "u16",
         .UInt32 => "u32",
         .Int32 => "i32",
@@ -2168,7 +2169,7 @@ fn setShortNames(values: []EnumValue) void {
 fn flagsBitCount(base: ?metadata.EnumIntegerBase) u7 {
     return switch (base orelse .Int32) {
         .Byte, .SByte => 8,
-        .UInt16 => 16,
+        .Int16, .UInt16 => 16,
         .Int32, .UInt32 => 32,
         .UInt64 => 64,
     };
