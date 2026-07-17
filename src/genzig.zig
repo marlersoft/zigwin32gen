@@ -1507,6 +1507,7 @@ const also_usable_type_api_map = std.StaticStringMap([]const u8).initComptime(.{
     .{ "HANDLE", "System.SystemServices" },
     .{ "HeapHandle", "System.SystemServices" },
     .{ "BCRYPT_HANDLE", "Security.Cryptography" },
+    .{ "NCRYPT_HANDLE", "Security.Cryptography" },
 });
 
 const CodeWriter = struct {
