@@ -41,14 +41,18 @@ pub fn build(b: *Build) !void {
     const gen_step = b.step("gen", "Generate the bindings (in .zig-cache)");
     const optimize = b.standardOptimizeOption(.{});
 
-    const metadata_version = "37.0.34-preview";
+    const metadata_version = b.option(
+        []const u8,
+        "metadata",
+        "win32metadata version to generate bindings from",
+    ) orelse "37.0.34-preview";
 
     // Produce the line-based text (winmd -> text) that the generator consumes.
     const winmd_text = blk_winmd_text: {
         const winmd = blk: {
             const download = b.addSystemCommand(&.{
                 "curl",
-                "https://www.nuget.org/api/v2/package/Microsoft.Windows.SDK.Win32Metadata/" ++ metadata_version,
+                b.fmt("https://www.nuget.org/api/v2/package/Microsoft.Windows.SDK.Win32Metadata/{s}", .{metadata_version}),
                 "--location",
                 "--output",
             });
