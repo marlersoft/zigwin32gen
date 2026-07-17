@@ -248,7 +248,9 @@ const TypeAttrs = struct {
 const ConstantValue = union(enum) {
     guid: Guid,
     property_key: PropertyKey,
-    default: void,
+    default: struct {
+        ansi: bool,
+    },
 };
 fn analyzeConstValue(
     md: *const Metadata,
@@ -275,6 +277,7 @@ fn analyzeConstValue(
 
     var maybe_guid: ?Guid = null;
     var maybe_property_key: ?PropertyKey = null;
+    var ansi: bool = false;
 
     while (custom_attrs.next()) |custom_attr_index| {
         const custom_attr_row = md.tables.row(.CustomAttr, custom_attr_index);
@@ -288,6 +291,10 @@ fn analyzeConstValue(
                 if (maybe_property_key != null) @panic("multiple property keys");
                 maybe_property_key = key;
             },
+            .ansi => {
+                if (ansi) @panic("multiple ansi attributes");
+                ansi = true;
+            },
             else => |c| std.debug.panic("unexpected custom attribute '{s}'", .{@tagName(c)}),
         }
     }
@@ -295,13 +302,15 @@ fn analyzeConstValue(
     if (maybe_guid) |guid| {
         if (has_default_value) std.debug.panic("constant '{s}' has default value and guid", .{name});
         if (maybe_property_key != null) @panic("has guid and property key");
+        if (ansi) @panic("has guid and ansi");
         return .{ .guid = guid };
     } else if (maybe_property_key) |key| {
-        if (has_default_value) @panic("has default value and property  key");
+        if (has_default_value) @panic("has default value and property key");
+        if (ansi) @panic("has property key and ansi");
         return .{ .property_key = key };
     }
     if (!has_default_value) @panic("has no default value, guid nor property key");
-    return .default;
+    return .{ .default = .{ .ansi = ansi } };
 }
 
 fn withinFixedPointRange(comptime T: type, float: T) bool {
@@ -405,6 +414,7 @@ const CustomAttr = union(enum) {
     FreeWith: []const u8,
     MemorySize: i16,
     DoesNotReturn,
+    ansi,
     pub fn decode(
         md: *const Metadata,
         custom_attr: winmd.Row(.CustomAttr),
@@ -580,6 +590,17 @@ fn decodeCustomAttr(
         const string = decodeString(value);
         std.debug.assert(std.mem.eql(u8, value[string.end..], &[_]u8{ 0, 0 }));
         return .{ .AlsoUsableFor = string.bytes };
+    }
+
+    if (name.eql("Windows.Win32.Interop", "NativeEncodingAttribute")) {
+        // 1 fixed arg (string), 0 named args
+        const string = decodeString(value);
+        std.debug.assert(std.mem.eql(u8, value[string.end..], &[_]u8{ 0, 0 }));
+        if (!std.mem.eql(u8, string.bytes, "ansi")) std.debug.panic(
+            "unknown NativeEncoding '{s}'",
+            .{string.bytes},
+        );
+        return .ansi;
     }
 
     if (name.eql("Windows.Win32.Interop", "SupportedOSPlatformAttribute")) {
@@ -1385,6 +1406,7 @@ fn emitConstants(w: *std.Io.Writer, md: *const Metadata, api_name: []const u8, a
 
         try indent(w, 0);
         try w.print("const {s} ", .{name});
+        var ansi: bool = false;
         switch (value) {
             .guid => |guid| {
                 try w.writeAll("String ");
@@ -1393,7 +1415,8 @@ fn emitConstants(w: *std.Io.Writer, md: *const Metadata, api_name: []const u8, a
             .property_key => |key| {
                 try w.print("PropertyKey propkey({s},{d})", .{ guidStr(key.guid), key.pid });
             },
-            .default => {
+            .default => |d| {
+                ansi = d.ansi;
                 const coded_index: winmd.ConstantParent = .init(.Field, @intCast(field_index));
                 const constant_index = md.constant_map.get(coded_index) orelse std.debug.panic(
                     "constant '{s}' has default value but no entry in constant table",
@@ -1401,6 +1424,10 @@ fn emitConstants(w: *std.Io.Writer, md: *const Metadata, api_name: []const u8, a
                 );
                 const constant = md.tables.row(.Constant, constant_index);
                 const constant_type: u8 = @intCast(0xff & constant.type);
+                if (d.ansi and winmd.ElementType.decode(constant_type) != .string) std.debug.panic(
+                    "constant '{s}' has ansi encoding but is not a string (type 0x{x})",
+                    .{ name, constant_type },
+                );
                 const encoded_value = md.getBlob(constant.value);
                 try w.print("{s} ", .{constValueTypeName(constant_type)});
                 try writeConstDefaultValue(w, constant_type, encoded_value);
@@ -1409,6 +1436,7 @@ fn emitConstants(w: *std.Io.Writer, md: *const Metadata, api_name: []const u8, a
         try w.writeAll(" ");
         const consumed = try emitTypeRefSig(w, md, api_name, type_sig);
         std.debug.assert(consumed == type_sig.len);
+        if (ansi) try w.print(" ansi", .{});
         try w.writeAll("\n");
     }
 }

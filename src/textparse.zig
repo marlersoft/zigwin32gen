@@ -172,14 +172,21 @@ fn top(stack: *std.ArrayListUnmanaged(*Frame)) *Frame {
 }
 
 fn appendConstant(arena: std.mem.Allocator, stack: *std.ArrayListUnmanaged(*Frame), toks: []const []const u8) void {
-    // const <Name> <ValueType> <value> <typeref>
+    // const <Name> <ValueType> <value> <typeref> [attrs...]
     const value_type = stringToEnum(metadata.ValueType, toks[2]);
+    var attrs: metadata.ConstantAttrs = .{};
+    for (toks[5..]) |attr| {
+        if (eq(attr, "ansi")) {
+            if (attrs.ansi) std.debug.panic("duplicate 'ansi' constant attribute", .{});
+            attrs.ansi = true;
+        } else std.debug.panic("unknown constant attribute '{s}'", .{attr});
+    }
     top(stack).data.api.consts.append(arena, .{
         .Name = toks[1],
         .ValueType = value_type,
         .Value = parseConstValue(arena, value_type, toks[3]),
         .Type = parseTypeRef(arena, toks[4]),
-        .Attrs = .{},
+        .Attrs = attrs,
     }) catch |e| oom(e);
 }
 

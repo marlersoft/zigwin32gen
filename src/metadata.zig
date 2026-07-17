@@ -70,7 +70,11 @@ pub const Constant = struct {
     Value: Value,
     Attrs: ConstantAttrs,
 };
-pub const ConstantAttrs = struct {};
+pub const ConstantAttrs = struct {
+    // Currently ignored: we emit every string constant as a utf8 literal for now,
+    // so the narrow/wide distinction this marks has no effect on generated output.
+    ansi: bool = false,
+};
 
 pub const EnumIntegerBase = enum { Byte, SByte, UInt16, UInt32, Int32, UInt64 };
 
