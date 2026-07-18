@@ -3020,7 +3020,10 @@ fn generateParams(
         const param_options = TypeRefFormatter.Options.fromParamAttrs(param.Attrs, .var_decl, modifiers);
         const param_type_formatter = try addTypeRefs(sdk_file, arches, param.Type, param_options, null);
         if (param_options.optional_bytes_param_index) |bytes_param_index| {
-            try writer.linef("    // TODO: what to do with BytesParamIndex {}?", .{bytes_param_index});
+            try writer.linef(
+                "    /// parameter \"{s}\" is the size in bytes",
+                .{params[bytes_param_index].Name},
+            );
         }
         try writer.writef("    {f}: ", .{fmtIdP(param.Name)}, .{ .nl = false });
         try generateTypeRef(sdk_file, writer, param_type_formatter);
