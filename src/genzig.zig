@@ -49,6 +49,7 @@ fn zigTypeFromIntegerBase(maybe_explicit_base: ?metadata.EnumIntegerBase) []cons
         .UInt16 => "u16",
         .UInt32 => "u32",
         .Int32 => "i32",
+        .Int64 => "i64",
         .UInt64 => "u64",
     } else "i32";
 }
@@ -2173,7 +2174,7 @@ fn flagsBitCount(base: ?metadata.EnumIntegerBase) u7 {
         .Byte, .SByte => 8,
         .Int16, .UInt16 => 16,
         .Int32, .UInt32 => 32,
-        .UInt64 => 64,
+        .Int64, .UInt64 => 64,
     };
 }
 

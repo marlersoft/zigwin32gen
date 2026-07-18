@@ -77,7 +77,7 @@ pub const ConstantAttrs = struct {
     ansi: bool = false,
 };
 
-pub const EnumIntegerBase = enum { Byte, SByte, Int16, UInt16, UInt32, Int32, UInt64 };
+pub const EnumIntegerBase = enum { Byte, SByte, Int16, UInt16, UInt32, Int32, Int64, UInt64 };
 
 pub const Type = struct {
     Name: []const u8,
@@ -179,12 +179,12 @@ pub const Function = struct {
     Params: []const Param,
 };
 pub const Platform = enum {
-    windowsServer2000,
-    windowsServer2003,
-    windowsServer2008,
-    windowsServer2012,
-    windowsServer2016,
-    windowsServer2020,
+    windowsserver2000,
+    windowsserver2003,
+    windowsserver2008,
+    windowsserver2012,
+    windowsserver2016,
+    windowsserver2020,
     @"windows5.0",
     @"windows5.1.2600",
     @"windows6.0.6000",
@@ -200,6 +200,18 @@ pub const Platform = enum {
     @"windows10.0.17763",
     @"windows10.0.18362",
     @"windows10.0.19041",
+
+    const alt_casing_map = std.StaticStringMap(Platform).initComptime(.{
+        .{ "windowsServer2000", .windowsserver2000 },
+        .{ "windowsServer2003", .windowsserver2003 },
+        .{ "windowsServer2008", .windowsserver2008 },
+        .{ "windowsServer2012", .windowsserver2012 },
+        .{ "windowsServer2016", .windowsserver2016 },
+        .{ "windowsServer2020", .windowsserver2020 },
+    });
+    pub fn fromString(string: []const u8) ?Platform {
+        return std.meta.stringToEnum(Platform, string) orelse alt_casing_map.get(string);
+    }
 };
 
 pub const Architectures = struct {
@@ -332,3 +344,5 @@ pub const TypeRef = union(enum) {
     LPArray: LPArray,
     MissingClrType: MissingClrType,
 };
+
+const std = @import("std");

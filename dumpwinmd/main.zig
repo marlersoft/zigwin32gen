@@ -217,6 +217,7 @@ const EnumBase = enum {
     UInt16,
     Int32,
     UInt32,
+    Int64,
     UInt64,
     pub fn Type(self: EnumBase) type {
         return switch (self) {
@@ -226,6 +227,7 @@ const EnumBase = enum {
             .UInt16 => u16,
             .Int32 => i32,
             .UInt32 => u32,
+            .Int64 => i64,
             .UInt64 => u64,
         };
     }
@@ -245,11 +247,13 @@ const TypeAttrs = struct {
     is_agile: bool = false,
     Obsolete: ?ObsoleteAttr = null,
     calling_convention: ?CallingConvention = null,
+    struct_size_field: ?[]const u8 = null,
 };
 
 const ConstantValue = union(enum) {
     guid: Guid,
     property_key: PropertyKey,
+    initializer: []const u8,
     default: struct {
         ansi: bool,
     },
@@ -279,6 +283,7 @@ fn analyzeConstValue(
 
     var maybe_guid: ?Guid = null;
     var maybe_property_key: ?PropertyKey = null;
+    var maybe_initializer: ?[]const u8 = null;
     var ansi: bool = false;
 
     while (custom_attrs.next()) |custom_attr_index| {
@@ -293,6 +298,10 @@ fn analyzeConstValue(
                 if (maybe_property_key != null) @panic("multiple property keys");
                 maybe_property_key = key;
             },
+            .Constant => |init_str| {
+                if (maybe_initializer != null) @panic("multiple Constant attributes");
+                maybe_initializer = init_str;
+            },
             .ansi => {
                 if (ansi) @panic("multiple ansi attributes");
                 ansi = true;
@@ -304,14 +313,20 @@ fn analyzeConstValue(
     if (maybe_guid) |guid| {
         if (has_default_value) std.debug.panic("constant '{s}' has default value and guid", .{name});
         if (maybe_property_key != null) @panic("has guid and property key");
+        if (maybe_initializer != null) @panic("has guid and initializer");
         if (ansi) @panic("has guid and ansi");
         return .{ .guid = guid };
     } else if (maybe_property_key) |key| {
         if (has_default_value) @panic("has default value and property key");
+        if (maybe_initializer != null) @panic("has property key and initializer");
         if (ansi) @panic("has property key and ansi");
         return .{ .property_key = key };
+    } else if (maybe_initializer) |init_str| {
+        if (has_default_value) @panic("has default value and initializer");
+        if (ansi) @panic("has initializer and ansi");
+        return .{ .initializer = init_str };
     }
-    if (!has_default_value) @panic("has no default value, guid nor property key");
+    if (!has_default_value) @panic("has no default value, guid, property key nor initializer");
     return .{ .default = .{ .ansi = ansi } };
 }
 
@@ -377,6 +392,7 @@ const PropertyKey = struct {
 const NativeArray = struct {
     CountConst: i32,
     CountParamIndex: i16,
+    CountFieldName: ?[]const u8,
 };
 
 const ArchBits = packed struct(u32) {
@@ -407,6 +423,12 @@ const CustomAttr = union(enum) {
     InvalidHandleValue: u64,
     Agile,
     Const,
+    // A C# struct-initializer expression, e.g. "{0, 0, 0, 0, 0, 5}", for a constant
+    // whose value is a struct/array that can't live in the Constant table. Carried
+    // verbatim; projections coerce it per the constant's type (win32metadata #1337).
+    Constant: []const u8,
+    // Name of the struct field that holds the struct's own byte size (cbSize pattern).
+    StructSizeField: []const u8,
     NativeArray: NativeArray,
     Obsolete: ObsoleteAttr,
     NotNullTerminated,
@@ -510,6 +532,20 @@ fn decodeCustomAttr(
         return .{ .FreeWith = string.bytes };
     }
 
+    if (name.eql("Windows.Win32.Interop", "ConstantAttribute")) {
+        // 1 fixed arg (string), 0 named args
+        const string = decodeString(value);
+        std.debug.assert(std.mem.eql(u8, value[string.end..], &[_]u8{ 0, 0 }));
+        return .{ .Constant = string.bytes };
+    }
+
+    if (name.eql("Windows.Win32.Interop", "StructSizeFieldAttribute")) {
+        // 1 fixed arg (string), 0 named args
+        const string = decodeString(value);
+        std.debug.assert(std.mem.eql(u8, value[string.end..], &[_]u8{ 0, 0 }));
+        return .{ .StructSizeField = string.bytes };
+    }
+
     if (name.eql("Windows.Win32.Interop", "MemorySizeAttribute")) {
         // 0 fixed args, 1 named arg
         var it = NamedArgIterator.init(value);
@@ -549,30 +585,41 @@ fn decodeCustomAttr(
     }
 
     if (name.eql("Windows.Win32.Interop", "NativeArrayInfoAttribute")) {
-        // 0 fixed args, 2 named args
+        // 0 fixed args, up to 3 named args
         var it = NamedArgIterator.init(value);
         var count_const: ?i32 = null;
         var count_param_index: ?i16 = null;
+        var count_field_name: ?[]const u8 = null;
 
         while (it.next()) |arg| {
             if (std.mem.eql(u8, arg.name, "CountConst")) {
+                if (count_const != null) @panic("duplicate CountConst named argument");
                 if (arg.elem_type != @intFromEnum(winmd.ElementType.i4)) {
                     @panic("Expected CountConst to be of type i4");
                 }
                 count_const = it.readI32(arg.value_offset);
             } else if (std.mem.eql(u8, arg.name, "CountParamIndex")) {
+                if (count_param_index != null) @panic("duplicate CountParamIndex named argument");
                 if (arg.elem_type != @intFromEnum(winmd.ElementType.i2)) {
                     @panic("Expected CountParamIndex to be of type i2");
                 }
                 count_param_index = it.readI16(arg.value_offset);
-            } else {
-                @panic("Unexpected named argument for NativeArrayInfoAttribute");
-            }
+            } else if (std.mem.eql(u8, arg.name, "CountFieldName")) {
+                if (count_field_name != null) @panic("duplicate CountFieldName named argument");
+                if (arg.elem_type != @intFromEnum(winmd.ElementType.string)) {
+                    @panic("Expected CountFieldName to be of type string");
+                }
+                count_field_name = it.readString(arg.value_offset);
+            } else std.debug.panic(
+                "Unexpected named argument '{s}' (type 0x{x}) for NativeArrayInfoAttribute",
+                .{ arg.name, arg.elem_type },
+            );
         }
 
         return .{ .NativeArray = .{
             .CountConst = count_const orelse -1,
             .CountParamIndex = count_param_index orelse -1,
+            .CountFieldName = count_field_name,
         } };
     }
 
@@ -1057,6 +1104,11 @@ const NamedArgIterator = struct {
     pub fn readI32(self: *const NamedArgIterator, offset: usize) i32 {
         return std.mem.readInt(i32, self.value[offset..][0..4], .little);
     }
+
+    pub fn readString(self: *const NamedArgIterator, offset: usize) ?[]const u8 {
+        if (self.value[offset] == 0xFF) return null; // null string
+        return decodeString(self.value[offset..]).bytes;
+    }
 };
 
 const Context = struct {
@@ -1433,6 +1485,10 @@ fn emitConstants(w: *std.Io.Writer, md: *const Metadata, api_name: []const u8, a
             .property_key => |key| {
                 try w.print("PropertyKey propkey({s},{d})", .{ guidStr(key.guid), key.pid });
             },
+            .initializer => |init_str| {
+                try w.writeAll("initializer ");
+                try writeQuoted(w, init_str);
+            },
             .default => |d| {
                 ansi = d.ansi;
                 const coded_index: winmd.ConstantParent = .init(.Field, @intCast(field_index));
@@ -1519,6 +1575,10 @@ fn emitType(w: *std.Io.Writer, md: *const Metadata, api_name: []const u8, type_d
                     attrs.is_agile = true;
                 },
                 .Obsolete => |o| attrs.Obsolete = o,
+                .StructSizeField => |f| {
+                    std.debug.assert(attrs.struct_size_field == null);
+                    attrs.struct_size_field = f;
+                },
                 else => |c| std.debug.panic("unexpected custom attribute '{s}' on TypeDef", .{@tagName(c)}),
             }
         }
@@ -1588,6 +1648,7 @@ fn emitEnum(w: *std.Io.Writer, md: *const Metadata, type_def_index: u32, attrs: 
             .u2 => .UInt16,
             .i4 => .Int32,
             .u4 => .UInt32,
+            .i8 => .Int64,
             .u8 => .UInt64,
             else => |t| std.debug.panic("todo: support enum value type '{s}'", .{@tagName(t)}),
         };
@@ -1634,15 +1695,20 @@ fn emitStructOrUnion(w: *std.Io.Writer, md: *const Metadata, api_name: []const u
     try indent(w, depth);
     try w.print("{s} {s} pack={d}", .{ if (is_union) "union" else "struct", name, packing_size });
     if (attrs.guid) |g| try w.print(" guid={s}", .{guidStr(g)});
+    if (attrs.struct_size_field) |f| try w.print(" structsizefield={s}", .{f});
     if (attrs.Obsolete) |o| try emitObsolete(w, o);
     try emitArchPlat(w, attrs.arches, attrs.supported_os_platform);
     try w.writeAll("\n");
 
     const const_field_attrs: winmd.FieldAttributes = .{ .access = .public, .static = true, .literal = true, .has_default = true };
     const fields = md.tables.typeDefRange(type_def_index, .fields);
+    var found_size_field = false;
     for (fields.start..fields.limit) |field_index| {
         const field = md.tables.row(.Field, field_index);
         const fname = md.getString(field.name);
+        if (attrs.struct_size_field) |sf| {
+            if (std.mem.eql(u8, fname, sf)) found_size_field = true;
+        }
         const field_type = md.getBlob(field.signature);
         if (field_type.len == 0 or field_type[0] != 6) errExit("invalid field signature", .{});
         const type_sig = field_type[1..];
@@ -1683,7 +1749,9 @@ fn emitStructOrUnion(w: *std.Io.Writer, md: *const Metadata, api_name: []const u
         try w.print("field {s} ", .{fname});
         if (maybe_native_array) |na| {
             const child_sig = getChildSig(md, type_sig);
-            try w.print("[lparray,nullnull={},const={d},param={d}]", .{ false, na.CountConst, na.CountParamIndex });
+            try w.print("[lparray,nullnull={},const={d},param={d}", .{ false, na.CountConst, na.CountParamIndex });
+            if (na.CountFieldName) |field_name| try w.print(",field={s}", .{field_name});
+            try w.writeAll("]");
             const child_len = try emitTypeRefSig(w, md, api_name, child_sig);
             std.debug.assert(child_len == child_sig.len);
         } else {
@@ -1695,6 +1763,9 @@ fn emitStructOrUnion(w: *std.Io.Writer, md: *const Metadata, api_name: []const u
         if (fa_nullnull) try w.writeAll(" nullnullterm");
         if (fa_obsolete) |o| try emitObsolete(w, o);
         try w.writeAll("\n");
+    }
+    if (attrs.struct_size_field) |sf| {
+        if (!found_size_field) std.debug.panic("struct '{s}' StructSizeField names nonexistent field '{s}'", .{ name, sf });
     }
 
     var nested_list: std.ArrayListUnmanaged(u32) = .empty;
@@ -1921,7 +1992,9 @@ fn emitMethod(
         try w.print("param {s} ", .{param_name});
         if (maybe_native_array) |na| {
             const child_sig = getChildSig(md, param_type_sig);
-            try w.print("[lparray,nullnull={},const={d},param={d}]", .{ false, na.CountConst, na.CountParamIndex });
+            try w.print("[lparray,nullnull={},const={d},param={d}", .{ false, na.CountConst, na.CountParamIndex });
+            if (na.CountFieldName) |field_name| try w.print(",field={s}", .{field_name});
+            try w.writeAll("]");
             const child_len = try emitTypeRefSig(w, md, api_name, child_sig);
             std.debug.assert(child_len == child_sig.len);
         } else {

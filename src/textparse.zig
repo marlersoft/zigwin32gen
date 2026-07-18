@@ -101,15 +101,18 @@ pub fn parseAll(arena: std.mem.Allocator, text: []const u8) []const NamedApi {
             var guid_raw: ?[]const u8 = null;
             var arch_raw: ?[]const u8 = null;
             var plat_raw: ?[]const u8 = null;
+            var size_field_raw: ?[]const u8 = null;
             var obsolete: ?metadata.ObsoleteAttr = null;
             while (it.next()) |t| {
                 if (matchVal(t, "pack", &pack_raw)) continue;
                 if (matchVal(t, "guid", &guid_raw)) continue;
                 if (matchVal(t, "arch", &arch_raw)) continue;
                 if (matchVal(t, "platform", &plat_raw)) continue;
+                if (matchVal(t, "structsizefield", &size_field_raw)) continue;
                 if (matchObsolete(arena, t, &obsolete)) continue;
                 unknownAttr(t);
             }
+            if (size_field_raw != null) std.debug.panic("unimplemented: struct-size field on '{s}'", .{name});
             const f = arena.create(Frame) catch |e| oom(e);
             f.* = .{ .depth = depth, .data = .{ .struct_ = .{
                 .is_union = eq(kw, "union"),
@@ -245,7 +248,10 @@ fn top(stack: *std.ArrayListUnmanaged(*Frame)) *Frame {
 
 fn appendConstant(arena: std.mem.Allocator, stack: *std.ArrayListUnmanaged(*Frame), name: []const u8, it: *TokenIter) void {
     // const <Name> <ValueType> <value> <typeref> [attrs...]
-    const value_type = stringToEnum(metadata.ValueType, it.expect());
+    const value_type_tok = it.expect();
+    if (eq(value_type_tok, "initializer"))
+        std.debug.panic("unimplemented: struct-initializer constant '{s}'", .{name});
+    const value_type = stringToEnum(metadata.ValueType, value_type_tok);
     const value_tok = it.expect();
     const type_tok = it.expect();
     var attrs: metadata.ConstantAttrs = .{};
@@ -748,7 +754,8 @@ fn parseArchSlot(slot: ?[]const u8) metadata.Architectures {
 }
 
 fn parsePlatformSlot(slot: ?[]const u8) ?metadata.Platform {
-    return if (slot) |v| stringToEnum(metadata.Platform, v) else null;
+    const v = slot orelse return null;
+    return metadata.Platform.fromString(v) orelse std.debug.panic("bad platform '{s}'", .{v});
 }
 
 fn parseI64(v: []const u8, key: []const u8) i64 {
@@ -905,7 +912,7 @@ fn parseTypeRef(arena: std.mem.Allocator, s: []const u8) metadata.TypeRef {
                         count_const = std.fmt.parseInt(i32, kv["const=".len..], 10) catch unreachable;
                     } else if (std.mem.startsWith(u8, kv, "param=")) {
                         count_param = std.fmt.parseInt(i32, kv["param=".len..], 10) catch unreachable;
-                    }
+                    } else std.debug.panic("unimplemented: lparray attribute '{s}'", .{kv});
                 }
                 const child = box(arena, parseTypeRef(arena, s[close + 1 ..]));
                 return .{ .LPArray = .{ .NullNullTerm = nullnull, .CountConst = count_const, .CountParamIndex = count_param, .Child = child } };
