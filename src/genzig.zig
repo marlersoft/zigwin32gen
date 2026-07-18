@@ -1440,6 +1440,10 @@ const constants_to_skip = std.StaticStringMap(void).initComptime(.{
     .{"HWND_DESKTOP"},
     .{"HWND_TOP"},
 
+    // Like the HWND_ constants, these are 0-valued HANDLE (non-optional pointer) constants
+    .{"WTS_CURRENT_SERVER"},
+    .{"WTS_CURRENT_SERVER_HANDLE"},
+
     // This is both a constant and a type definition in Networking.HttpServer
     .{"HTTP_VERSION"},
 });
