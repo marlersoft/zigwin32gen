@@ -112,7 +112,6 @@ pub fn parseAll(arena: std.mem.Allocator, text: []const u8) []const NamedApi {
                 if (matchObsolete(arena, t, &obsolete)) continue;
                 unknownAttr(t);
             }
-            if (size_field_raw != null) std.debug.panic("unimplemented: struct-size field on '{s}'", .{name});
             const f = arena.create(Frame) catch |e| oom(e);
             f.* = .{ .depth = depth, .data = .{ .struct_ = .{
                 .is_union = eq(kw, "union"),
@@ -122,6 +121,7 @@ pub fn parseAll(arena: std.mem.Allocator, text: []const u8) []const NamedApi {
                 .pack = if (pack_raw) |p| @intCast(parseI64(p, "pack")) else 0,
                 .guid = guid_raw,
                 .obsolete = obsolete,
+                .struct_size_field = size_field_raw,
             } } };
             stack.append(arena, f) catch |e| oom(e);
         } else if (eq(kw, "field")) {
@@ -249,21 +249,26 @@ fn top(stack: *std.ArrayListUnmanaged(*Frame)) *Frame {
 fn appendConstant(arena: std.mem.Allocator, stack: *std.ArrayListUnmanaged(*Frame), name: []const u8, it: *TokenIter) void {
     // const <Name> <ValueType> <value> <typeref> [attrs...]
     const value_type_tok = it.expect();
-    if (eq(value_type_tok, "initializer"))
-        std.debug.panic("unimplemented: struct-initializer constant '{s}'", .{name});
-    const value_type = stringToEnum(metadata.ValueType, value_type_tok);
     const value_tok = it.expect();
-    const type_tok = it.expect();
+    const type_ref = parseTypeRef(arena, it.expect());
     var attrs: metadata.ConstantAttrs = .{};
     while (it.next()) |t| {
         if (matchFlag(t, "ansi", &attrs.ansi)) continue;
         unknownAttr(t);
     }
+    const value_type: metadata.ValueType, const value: metadata.Value =
+        if (eq(value_type_tok, "initializer"))
+            // .String is a placeholder; the value kind is .initializer.
+            .{ .String, .{ .initializer = unescapeString(arena, value_tok) } }
+        else blk: {
+            const vt = stringToEnum(metadata.ValueType, value_type_tok);
+            break :blk .{ vt, parseConstValue(arena, vt, value_tok) };
+        };
     top(stack).data.api.consts.append(arena, .{
         .Name = name,
         .ValueType = value_type,
-        .Value = parseConstValue(arena, value_type, value_tok),
-        .Type = parseTypeRef(arena, type_tok),
+        .Value = value,
+        .Type = type_ref,
         .Attrs = attrs,
     }) catch |e| oom(e);
 }
@@ -417,7 +422,7 @@ fn finalize(
             const su: metadata.StructOrUnion = .{
                 .Size = 0,
                 .PackingSize = s.pack,
-                .Attrs = .{ .Obsolete = s.obsolete },
+                .Attrs = .{ .Obsolete = s.obsolete, .StructSizeField = s.struct_size_field },
                 .Fields = s.fields.items,
                 .NestedTypes = s.nested.items,
                 .Comment = deriveComment(arena, s.constfields.items),
@@ -508,6 +513,7 @@ const Frame = struct {
             pack: u32,
             guid: ?[]const u8,
             obsolete: ?metadata.ObsoleteAttr,
+            struct_size_field: ?[]const u8,
             fields: std.ArrayListUnmanaged(metadata.StructOrUnionField) = .empty,
             constfields: std.ArrayListUnmanaged(ConstField) = .empty,
             nested: std.ArrayListUnmanaged(metadata.Type) = .empty,
@@ -903,6 +909,7 @@ fn parseTypeRef(arena: std.mem.Allocator, s: []const u8) metadata.TypeRef {
                 var nullnull = false;
                 var count_const: i32 = 0;
                 var count_param: i32 = 0;
+                var count_field: ?[]const u8 = null;
                 var it = std.mem.splitScalar(u8, body, ',');
                 _ = it.next(); // "lparray"
                 while (it.next()) |kv| {
@@ -912,10 +919,18 @@ fn parseTypeRef(arena: std.mem.Allocator, s: []const u8) metadata.TypeRef {
                         count_const = std.fmt.parseInt(i32, kv["const=".len..], 10) catch unreachable;
                     } else if (std.mem.startsWith(u8, kv, "param=")) {
                         count_param = std.fmt.parseInt(i32, kv["param=".len..], 10) catch unreachable;
+                    } else if (std.mem.startsWith(u8, kv, "field=")) {
+                        count_field = kv["field=".len..];
                     } else std.debug.panic("unimplemented: lparray attribute '{s}'", .{kv});
                 }
                 const child = box(arena, parseTypeRef(arena, s[close + 1 ..]));
-                return .{ .LPArray = .{ .NullNullTerm = nullnull, .CountConst = count_const, .CountParamIndex = count_param, .Child = child } };
+                return .{ .LPArray = .{
+                    .NullNullTerm = nullnull,
+                    .CountConst = count_const,
+                    .CountParamIndex = count_param,
+                    .CountFieldName = count_field,
+                    .Child = child,
+                } };
             }
             const close = std.mem.indexOfScalar(u8, s, ']').?;
             const size_str = s[1..close];

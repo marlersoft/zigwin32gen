@@ -31,6 +31,24 @@ var global_symbol_None: StringPool.Val = undefined;
 
 var global_pass1: pass1data.Root = undefined;
 var global_extra: extra.Root = undefined;
+// Resolves a type by its (api, name) reference in O(1); needed to expand struct
+// initializer constants against their target type's fields (win32metadata #1337).
+const TypeKey = struct {
+    api: []const u8,
+    name: []const u8,
+    const Context = struct {
+        pub fn hash(_: Context, k: TypeKey) u64 {
+            var h = std.hash.Wyhash.init(0);
+            h.update(k.api);
+            h.update(k.name);
+            return h.final();
+        }
+        pub fn eql(_: Context, a: TypeKey, b: TypeKey) bool {
+            return std.mem.eql(u8, a.api, b.api) and std.mem.eql(u8, a.name, b.name);
+        }
+    };
+};
+var global_type_index: std.HashMapUnmanaged(TypeKey, *const metadata.Type, TypeKey.Context, std.hash_map.default_max_load_percentage) = .{};
 var global_com_overloads: StringPool.HashMapUnmanaged(ComTypeMap) = .{};
 var found_win32_error = false;
 const MissingOverload = struct {
@@ -231,6 +249,9 @@ pub fn main() !u8 {
     var api_by_name: std.StringHashMapUnmanaged(metadata.Api) = .{};
     for (parsed) |named| {
         try api_by_name.put(allocator, named.name, named.api);
+        for (named.api.Types) |*t| {
+            try global_type_index.put(allocator, .{ .api = named.name, .name = t.Name }, t);
+        }
     }
     const apis = try allocator.alloc(metadata.Api, api_list.len);
     for (api_list, apis) |api_name, *api| {
@@ -1144,6 +1165,7 @@ const TypeRefFormatter = struct {
             } else null;
 
             child_options.extra_mod.null_modifier = self.extra_mod.null_modifier >> 1;
+            child_options.extra_mod.array_pointer = false;
             return child_options;
         }
         pub fn allowOptionalPtr(
@@ -1285,7 +1307,11 @@ fn generateTypeRefRec(
             if (self.options.reason == .var_decl and self.options.allowOptionalPtr()) {
                 try writer.write("?", .{ .start = .any, .nl = false });
             }
-            try writer.write("*", .{ .start = .any, .nl = false });
+            try writer.writef(
+                "{s}",
+                .{if (self.options.extra_mod.array_pointer) "[*]" else "*"},
+                .{ .start = .any, .nl = false },
+            );
             if (self.options.extra_mod.union_pointer) {
                 try writer.write("align(1) ", .{ .start = .any, .nl = false });
             }
@@ -1447,6 +1473,70 @@ const constants_to_skip = std.StaticStringMap(void).initComptime(.{
     // This is both a constant and a type definition in Networking.HttpServer
     .{"HTTP_VERSION"},
 });
+// Iterates the integers in a struct-initializer expression like "{0, 0, 5}, 4",
+// ignoring braces/commas so they can be consumed type-directed (win32metadata #1337).
+const InitNumbers = struct {
+    it: std.mem.TokenIterator(u8, .any),
+    fn init(s: []const u8) InitNumbers {
+        return .{ .it = std.mem.tokenizeAny(u8, s, "{}, ") };
+    }
+    fn next(self: *InitNumbers) []const u8 {
+        return self.it.next() orelse @panic("struct initializer ran out of values");
+    }
+    fn atEnd(self: *InitNumbers) bool {
+        var copy = self.it;
+        return copy.next() == null;
+    }
+};
+
+fn resolveInitStruct(api: []const u8, name: []const u8) *const metadata.StructOrUnion {
+    const t = global_type_index.get(.{ .api = api, .name = name }) orelse
+        std.debug.panic("not implemented: initializer type '{s}:{s}' not found", .{ api, name });
+    return switch (t.Kind) {
+        .Struct => |*s| s,
+        else => std.debug.panic("not implemented: initializer for non-struct type '{s}'", .{name}),
+    };
+}
+
+// Emits a value coerced from the flat initializer numbers against `type_ref`.
+fn emitInitValue(writer: *CodeWriter, type_ref: metadata.TypeRef, nums: *InitNumbers) !void {
+    switch (type_ref) {
+        .Native => |nat| switch (nat.Name) {
+            // Guid = { Data1: u32, Data2: u16, Data3: u16, Data4: [8]u8 } -> 11 numbers.
+            .Guid => {
+                try writer.writef(".{{ .Data1 = {s}, .Data2 = {s}, .Data3 = {s}, .Data4 = .{{ ", .{ nums.next(), nums.next(), nums.next() }, .{ .start = .mid, .nl = false });
+                for (0..8) |i| {
+                    if (i > 0) try writer.write(", ", .{ .start = .mid, .nl = false });
+                    try writer.writef("{s}", .{nums.next()}, .{ .start = .mid, .nl = false });
+                }
+                try writer.write(" } }", .{ .start = .mid, .nl = false });
+            },
+            .Byte, .SByte, .Int16, .UInt16, .Int32, .UInt32, .Int64, .UInt64 => try writer.writef("{s}", .{nums.next()}, .{ .start = .mid, .nl = false }),
+            else => |n| std.debug.panic("not implemented: initializer value for native type '{t}'", .{n}),
+        },
+        .Array => |arr| {
+            const size = (arr.Shape orelse @panic("initializer array without a size")).Size;
+            try writer.write(".{ ", .{ .start = .mid, .nl = false });
+            for (0..size) |i| {
+                if (i > 0) try writer.write(", ", .{ .start = .mid, .nl = false });
+                try emitInitValue(writer, arr.Child.*, nums);
+            }
+            try writer.write(" }", .{ .start = .mid, .nl = false });
+        },
+        else => std.debug.panic("not implemented: initializer value for typeref '{t}'", .{type_ref}),
+    }
+}
+
+fn emitInitStructBody(writer: *CodeWriter, su: *const metadata.StructOrUnion, nums: *InitNumbers) !void {
+    try writer.write("{ ", .{ .start = .mid, .nl = false });
+    for (su.Fields, 0..) |field, i| {
+        if (i > 0) try writer.write(", ", .{ .start = .mid, .nl = false });
+        try writer.writef(".{f} = ", .{fmtIdP(field.Name)}, .{ .start = .mid, .nl = false });
+        try emitInitValue(writer, field.Type, nums);
+    }
+    try writer.write(" }", .{ .start = .mid, .nl = false });
+}
+
 fn generateConstant(sdk_file: *SdkFile, writer: *CodeWriter, constant: metadata.Constant) !void {
     const name_pool = try global_symbol_pool.add(constant.Name);
     try sdk_file.const_exports.append(name_pool);
@@ -1466,6 +1556,24 @@ fn generateConstant(sdk_file: *SdkFile, writer: *CodeWriter, constant: metadata.
     }
 
     const zig_type_formatter = try addTypeRefs(sdk_file, .{}, constant.Type, options, null);
+
+    switch (constant.Value) {
+        .initializer => |init_str| {
+            const api_ref = switch (constant.Type) {
+                .ApiRef => |r| r,
+                else => std.debug.panic("not implemented: initializer const '{s}' with non-ApiRef type", .{constant.Name}),
+            };
+            const su = resolveInitStruct(api_ref.Api, api_ref.Name);
+            var nums = InitNumbers.init(init_str);
+            try writer.writef("pub const {f} = ", .{name_pool}, .{ .nl = false });
+            try generateTypeRef(sdk_file, writer, zig_type_formatter);
+            try emitInitStructBody(writer, su, &nums);
+            try writer.write(";", .{ .start = .mid });
+            if (!nums.atEnd()) std.debug.panic("initializer for '{s}' has leftover values", .{constant.Name});
+            return;
+        },
+        else => {},
+    }
 
     if (constant.Type == .Native) {
         enforce(constant.ValueType != .PropertyKey);
@@ -1954,6 +2062,10 @@ fn generateStructOrUnionDef(
             try generateTypeRef(sdk_file, writer, field_type_formatter);
             if (container.PackingSize >= 1) {
                 try writer.writef(" align({})", .{container.PackingSize}, .{ .start = .mid, .nl = false });
+            }
+            if (container.Attrs.StructSizeField) |size_field| {
+                if (std.mem.eql(u8, field.Name, size_field))
+                    try writer.write(" = @sizeOf(@This())", .{ .start = .mid, .nl = false });
             }
             try writer.write(",", .{ .start = .mid });
         }

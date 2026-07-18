@@ -28,6 +28,10 @@ pub const Value = union(enum) {
     integer: i128,
     float: f64,
     property_key: PropertyKey,
+    // A struct/array initializer expression (win32metadata #1337), e.g.
+    // "{0, 0, 0, 0, 0, 5}". genzig flattens the numbers and coerces them against
+    // the constant's resolved type.
+    initializer: []const u8,
 
     pub fn eql(a: Value, b: Value) bool {
         return switch (a) {
@@ -277,6 +281,9 @@ pub const ObsoleteAttr = struct {
 
 pub const StructOrUnionAttrs = struct {
     Obsolete: ?ObsoleteAttr = null,
+    // Names the field holding the struct's own byte size (cbSize pattern); genzig
+    // gives that field a default value of @sizeOf(@This()).
+    StructSizeField: ?[]const u8 = null,
 };
 
 pub const ParamAttrs = struct {
@@ -329,6 +336,9 @@ const LPArray = struct {
     NullNullTerm: bool,
     CountConst: i32,
     CountParamIndex: i32,
+    // Name of the struct field giving the array length; informational (the emitted
+    // type is an unsized [*]T pointer regardless), carried like CountParamIndex.
+    CountFieldName: ?[]const u8,
     Child: *const TypeRef,
 };
 const MissingClrType = struct {

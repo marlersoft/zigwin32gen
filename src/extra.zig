@@ -13,6 +13,7 @@ pub const Api = struct {
 pub const NullModifier = u3;
 pub const TypeModifier = struct {
     union_pointer: bool = false,
+    array_pointer: bool = false,
     null_modifier: NullModifier = 0,
 };
 const Function = struct {
@@ -174,6 +175,9 @@ fn parseModifier(filename: []const u8, lineno: u32, line: []const u8, start: usi
             modifier.null_modifier = flags;
         } else if (std.mem.eql(u8, id, "UnionPointer")) {
             modifier.union_pointer = true;
+            next_index = id_end;
+        } else if (std.mem.eql(u8, id, "ArrayPointer")) {
+            modifier.array_pointer = true;
             next_index = id_end;
         } else parseError(filename, lineno, "unknown type modifier '{s}'", .{id});
     }

@@ -45,7 +45,7 @@ pub fn build(b: *Build) !void {
         []const u8,
         "metadata",
         "win32metadata version to generate bindings from",
-    ) orelse "41.0.25-preview";
+    ) orelse "42.0.39-preview";
 
     // Produce the line-based text (winmd -> text) that the generator consumes.
     const winmd_text = blk_winmd_text: {

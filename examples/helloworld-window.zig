@@ -48,7 +48,7 @@ pub export fn wWinMain(
         null, // Additional application data
     ) orelse win32.panicWin32("CreateWindow", win32.GetLastError());
 
-    _ = win32.ShowWindow(hwnd, .{ .SHOWNORMAL = 1 });
+    _ = win32.ShowWindow(hwnd, .SHOWNORMAL);
 
     var msg: win32.MSG = undefined;
     while (win32.GetMessageW(&msg, null, 0, 0) != 0) {

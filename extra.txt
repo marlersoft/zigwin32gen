@@ -19,6 +19,7 @@ Networking.WinSock Function WSASocketW return(NotNull=1)
 
 Storage.FileSystem Function CreateFileA return(NotNull=1)
 Storage.FileSystem Function CreateFileW return(NotNull=1)
+Storage.FileSystem Function WriteFile lpBuffer(ArrayPointer)
 
 System.Com Function CoCreateInstance riid(NotNull=1)
 System.Com Function IUnknown.QueryInterface riid(NotNull=1)

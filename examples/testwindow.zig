@@ -71,7 +71,7 @@ pub export fn wWinMain(
         .{ .NOMOVE = 1 },
     )) std.debug.panic("SetWindowPos failed, error={f}", .{win32.GetLastError()});
 
-    _ = win32.ShowWindow(hwnd, .{ .SHOWNORMAL = 1 });
+    _ = win32.ShowWindow(hwnd, .SHOWNORMAL);
 
     var msg: win32.MSG = undefined;
     while (win32.GetMessageW(&msg, null, 0, 0) != 0) {

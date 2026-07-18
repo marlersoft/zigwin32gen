@@ -151,7 +151,7 @@ pub export fn wWinMain(_: HINSTANCE, __: ?HINSTANCE, lpCmdLine: [*:0]u16, nCmdSh
         return 0;
     }
 
-    _ = win32.ShowWindow(win.base.Window(), @bitCast(nCmdShow));
+    _ = win32.ShowWindow(win.base.Window(), @enumFromInt(nCmdShow));
 
     // Run the message loop.
 
