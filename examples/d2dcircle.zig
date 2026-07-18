@@ -10,9 +10,6 @@ const HRESULT = win32.HRESULT;
 const HINSTANCE = win32.HINSTANCE;
 const HWND = win32.HWND;
 const MSG = win32.MSG;
-const WPARAM = win32.WPARAM;
-const LPARAM = win32.LPARAM;
-const LRESULT = win32.LRESULT;
 const RECT = win32.RECT;
 const D2D_SIZE_U = win32.D2D_SIZE_U;
 const D2D_SIZE_F = win32.D2D_SIZE_F;
@@ -55,7 +52,7 @@ const MainWindow = struct {
         return L("Circle Window Class");
     }
 
-    pub fn HandleMessage(self: *MainWindow, uMsg: u32, wParam: WPARAM, lParam: LPARAM) LRESULT {
+    pub fn HandleMessage(self: *MainWindow, uMsg: u32, wParam: usize, lParam: isize) isize {
         return MainWindowHandleMessage(self, uMsg, wParam, lParam);
     }
 };
@@ -164,7 +161,7 @@ pub export fn wWinMain(_: HINSTANCE, __: ?HINSTANCE, lpCmdLine: [*:0]u16, nCmdSh
     return 0;
 }
 
-fn MainWindowHandleMessage(self: *MainWindow, uMsg: u32, wParam: WPARAM, lParam: LPARAM) LRESULT {
+fn MainWindowHandleMessage(self: *MainWindow, uMsg: u32, wParam: usize, lParam: isize) isize {
     switch (uMsg) {
         win32.WM_CREATE => {
             // TODO: Should I need to case &self.pFactory to **anyopaque? Maybe

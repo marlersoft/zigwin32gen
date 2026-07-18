@@ -81,13 +81,8 @@ pub export fn wWinMain(
     return @intCast(msg.wParam);
 }
 
-fn WindowProc(
-    hwnd: HWND,
-    uMsg: u32,
-    wParam: win32.WPARAM,
-    lParam: win32.LPARAM,
-) callconv(.winapi) win32.LRESULT {
-    switch (uMsg) {
+fn WindowProc(hwnd: HWND, wnd_msg: u32, wparam: usize, lparam: isize) callconv(.winapi) isize {
+    switch (wnd_msg) {
         win32.WM_CREATE => {
             if (win32.has_window_longptr) {
                 std.debug.assert(0 == win32.setWindowLongPtrW(hwnd, 0, 0x1234));
@@ -107,7 +102,7 @@ fn WindowProc(
         win32.WM_PAINT => {
             // some of these methods aren't really doing anything, just
             // testing various apis.
-            _ = win32.pointFromLparam(lParam);
+            _ = win32.pointFromLparam(lparam);
 
             const client_size = win32.getClientSize(hwnd);
             _ = client_size;
@@ -155,7 +150,7 @@ fn WindowProc(
         },
         else => {},
     }
-    return win32.DefWindowProcW(hwnd, uMsg, wParam, lParam);
+    return win32.DefWindowProcW(hwnd, wnd_msg, wparam, lparam);
 }
 
 const autoexit = struct {

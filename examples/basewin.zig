@@ -13,7 +13,7 @@ const mnr = @import("win32").ui.menus_and_resources;
 
 pub fn BaseWindow(comptime DERIVED_TYPE: type) type {
     return struct {
-        fn WindowProc(hwnd: HWND, uMsg: u32, wParam: win32.WPARAM, lParam: win32.LPARAM) callconv(.winapi) win32.LRESULT {
+        fn WindowProc(hwnd: HWND, uMsg: u32, wParam: usize, lParam: isize) callconv(.winapi) isize {
             var pThis: ?*DERIVED_TYPE = null;
             if (uMsg == win32.WM_NCCREATE) {
                 const pCreate: *win32.CREATESTRUCTW = @ptrFromInt(@as(usize, @bitCast(lParam)));

@@ -89,18 +89,13 @@ pub export fn wWinMain(
     return 0;
 }
 
-fn WindowProc(
-    hwnd: HWND,
-    uMsg: u32,
-    wParam: win32.WPARAM,
-    lParam: win32.LPARAM,
-) callconv(.winapi) win32.LRESULT {
-    switch (uMsg) {
+fn WindowProc(hwnd: HWND, msg: u32, wparam: usize, lparam: isize) callconv(.winapi) isize {
+    switch (msg) {
         win32.WM_DESTROY => {
             win32.PostQuitMessage(0);
             return 0;
         },
         else => {},
     }
-    return win32.DefWindowProcW(hwnd, uMsg, wParam, lParam);
+    return win32.DefWindowProcW(hwnd, msg, wparam, lparam);
 }

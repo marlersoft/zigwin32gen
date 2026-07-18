@@ -1279,6 +1279,10 @@ fn generateTypeRefRec(
                     );
                     return;
                 },
+                .native => |native_type| {
+                    try writer.writef("{s}", .{native_type}, .{ .start = .any, .nl = false });
+                    return;
+                },
             };
 
             // for now, all nested type references MUST be in the same scope so this
@@ -1847,10 +1851,15 @@ const InlineType = union(enum) {
     // null-terminated pointer to elem type; const/sentinel/alignment applied
     // per-usage (e.g. PSTR -> [*:0]u8).
     string: []const u8,
+    native: []const u8,
 };
 const inline_types = std.StaticStringMap(InlineType).initComptime(.{
     .{ "PSTR", InlineType{ .string = "u8" } },
     .{ "PWSTR", InlineType{ .string = "u16" } },
+    .{ "CHAR", InlineType{ .native = "u8" } },
+    .{ "LPARAM", InlineType{ .native = "isize" } },
+    .{ "WPARAM", InlineType{ .native = "usize" } },
+    .{ "LRESULT", InlineType{ .native = "isize" } },
 });
 
 const type_renames = std.StaticStringMap([]const u8).initComptime(.{
