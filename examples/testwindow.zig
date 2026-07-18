@@ -81,7 +81,12 @@ pub export fn wWinMain(
     return @intCast(msg.wParam);
 }
 
-fn WindowProc(hwnd: HWND, wnd_msg: u32, wparam: usize, lparam: isize) callconv(.winapi) isize {
+fn WindowProc(
+    hwnd: HWND,
+    wnd_msg: u32,
+    wparam: win32.WPARAM,
+    lparam: win32.LPARAM,
+) callconv(.winapi) win32.LRESULT {
     switch (wnd_msg) {
         win32.WM_CREATE => {
             if (win32.has_window_longptr) {
