@@ -1885,6 +1885,7 @@ const redirects = std.StaticStringMap(Redirect).initComptime(.{
     .{ "BSTR", Redirect{ .native = "*u16" } },
     .{ "HRESULT", Redirect{ .import = "zig" } },
     .{ "COLORREF", Redirect{ .import = "zig" } },
+    .{ "NTSTATUS", Redirect{ .native = "@import(\"std\").os.windows.NTSTATUS" } },
 });
 
 const type_renames = std.StaticStringMap([]const u8).initComptime(.{
