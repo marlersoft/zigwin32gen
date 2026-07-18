@@ -7,6 +7,7 @@ pub const Api = struct {
 
 pub const ValueType = enum {
     Byte,
+    Int16,
     UInt16,
     Int32,
     UInt32,

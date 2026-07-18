@@ -1114,6 +1114,7 @@ pub fn oom(e: error{OutOfMemory}) noreturn {
 fn writeConstDefaultValue(writer: *std.Io.Writer, constant_type: u8, encoded_value: []const u8) error{WriteFailed}!void {
     switch (winmd.ElementType.decode(constant_type) orelse @panic("invalid type byte")) {
         .u1 => try writeConstValue(writer, u8, encoded_value),
+        .i2 => try writeConstValue(writer, i16, encoded_value),
         .u2 => try writeConstValue(writer, u16, encoded_value),
         .i4 => try writeConstValue(writer, i32, encoded_value),
         .u4 => try writeConstValue(writer, u32, encoded_value),
@@ -1166,6 +1167,7 @@ fn guidStr(guid: Guid) []const u8 {
 fn constValueTypeName(constant_type: u8) []const u8 {
     return switch (winmd.ElementType.decode(constant_type) orelse @panic("invalid type byte")) {
         .u1 => "Byte",
+        .i2 => "Int16",
         .u2 => "UInt16",
         .i4 => "Int32",
         .u4 => "UInt32",

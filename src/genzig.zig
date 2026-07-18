@@ -55,6 +55,7 @@ fn zigTypeFromIntegerBase(maybe_explicit_base: ?metadata.EnumIntegerBase) []cons
 fn zigTypeFromValueType(t: metadata.ValueType) []const u8 {
     return switch (t) {
         .Byte => return "u8",
+        .Int16 => return "i16",
         .UInt16 => return "u16",
         .Int32 => return "i32",
         .UInt32 => return "u32",
