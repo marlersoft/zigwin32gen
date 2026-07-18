@@ -121,7 +121,7 @@ fn WindowProc(
             }
 
             {
-                const brush = win32.createSolidBrush(0xff00ffff);
+                const brush = win32.createSolidBrush(.yellow);
                 defer win32.deleteObject(brush);
                 win32.fillRect(hdc, ps.rcPaint, brush);
             }
