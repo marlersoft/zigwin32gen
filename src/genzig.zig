@@ -156,9 +156,13 @@ const SdkFile = struct {
     extra_consts: extra.Constants,
     extra_consts_applied: StringPool.HashMap(void),
     com_type_overloads: ?std.StringHashMapUnmanaged(ComMethodMap),
+    // dll modules live in the top-level dll/ dir (sibling to win32/), so their
+    // imports of win32 types use a "../win32/" prefix rather than the
+    // depth-based one used by namespace modules.
+    win32_import_prefix: ?[]const u8 = null,
 
     pub fn getWin32DirImportPrefix(self: SdkFile) []const u8 {
-        return import_prefix_table[self.depth];
+        return self.win32_import_prefix orelse import_prefix_table[self.depth];
     }
 
     pub fn addApiImport(
@@ -310,6 +314,7 @@ pub fn main() !u8 {
     }
 
     const root_module = try Module.alloc(null, try global_symbol_pool.add("win32"));
+    g_root_module = root_module;
 
     {
         std.debug.print("-----------------------------------------------------------------------\n", .{});
@@ -353,6 +358,8 @@ pub fn main() !u8 {
             try root_module.children.put(submodule, try Module.alloc(root_module, submodule));
         }
 
+        try writeDllModules(out_dir);
+
         try generateContainerModules(out_dir, root_module);
         try generateEverythingModule(out_win32_dir, root_module);
     }
@@ -374,6 +381,7 @@ pub fn main() !u8 {
             try w.print("        \"{s}\",\n", .{name});
         }
         try w.writeAll("        \"build.zig.zon\",\n");
+        try w.writeAll("        \"dll\",\n");
         try w.writeAll("        \"win32\",\n");
         try w.writeAll("        \"win32.zig\",\n");
         try w.writeAll("    },\n");
@@ -629,15 +637,42 @@ fn generateContainerModules(dir: std.fs.Dir, module: *Module) anyerror!void {
     defer allocator.free(children);
 
     std.mem.sort(*Module, children, {}, moduleLessThan);
+    // Only the root win32.zig has per-dll modules mixed among the namespace
+    // modules; those are emitted in a separate section from the namespaces.
+    var dll_count: usize = 0;
+    for (children) |child| {
+        if (isDllModule(child)) dll_count += 1;
+    }
+
     if (module.file) |_| {
         try writer.print("//--------------------------------------------------------------------------------\n", .{});
         try writer.print("// Section: SubModules ({})\n", .{children.len});
         try writer.print("//--------------------------------------------------------------------------------\n", .{});
+        for (children) |child| {
+            try writer.print("pub const {f} = @import(\"{s}/{0f}.zig\");\n", .{ child.name, module.name.slice });
+        }
     } else {
         try writer.writeAll(autogen_header);
-    }
-    for (children) |child| {
-        try writer.print("pub const {f} = @import(\"{s}/{0f}.zig\");\n", .{ child.name, module.name.slice });
+        if (dll_count == 0) {
+            for (children) |child| {
+                try writer.print("pub const {f} = @import(\"{s}/{0f}.zig\");\n", .{ child.name, module.name.slice });
+            }
+        } else {
+            try writer.print("//--------------------------------------------------------------------------------\n", .{});
+            try writer.print("// Section: Namespaces ({})\n", .{children.len - dll_count});
+            try writer.print("//--------------------------------------------------------------------------------\n", .{});
+            for (children) |child| {
+                if (!isDllModule(child))
+                    try writer.print("pub const {f} = @import(\"{s}/{0f}.zig\");\n", .{ child.name, module.name.slice });
+            }
+            try writer.print("//--------------------------------------------------------------------------------\n", .{});
+            try writer.print("// Section: DLLs ({})\n", .{dll_count});
+            try writer.print("//--------------------------------------------------------------------------------\n", .{});
+            for (children) |child| {
+                if (isDllModule(child))
+                    try writer.print("pub const {f} = @import(\"dll/{0f}.zig\");\n", .{child.name});
+            }
+        }
     }
 
     if (module.file) |_| {} else {
@@ -738,139 +773,116 @@ fn ArchSpecificMap(comptime T: type) type {
     return StringPoolArrayHashMap(ArchSpecificObjects(T));
 }
 
-fn generateFile(module_dir: std.fs.Dir, module: *Module, api: metadata.Api) !void {
-    const sdk_file = &module.file.?;
+// ----------------------------------------------------------------------------
+// Per-DLL function modules.  DLL functions are emitted into top-level
+// win32/<dll>.zig modules instead of their namespace module.  Each function's
+// text is buffered into its DLL module while its type imports / func_exports
+// accumulate on the DLL module's SdkFile; the files are written in phase 2.
+// ----------------------------------------------------------------------------
+const DllFuncText = struct { name: StringPool.Val, text: []const u8 };
+const DllModule = struct {
+    module: *Module,
+    // each entry is one already-generated function (arch-agnostic decl or the
+    // whole arch `switch` group); emitted sorted by name in phase 2.
+    funcs: std.ArrayListUnmanaged(DllFuncText) = .{},
+};
+var dll_modules: StringPool.HashMapUnmanaged(*DllModule) = .{};
+var g_root_module: *Module = undefined;
 
-    var out_file = try module_dir.createFile(module.zig_basename, .{});
-    defer out_file.close();
-    var buffer: [4096]u8 = undefined;
-    var file_writer = out_file.writer(&buffer);
-    var code_writer = CodeWriter{ .writer = &file_writer.interface, .depth = 0, .midline = false };
-    // need to specify type explicitly because of https://github.com/ziglang/zig/issues/12795
-    const writer: *CodeWriter = &code_writer;
+fn dllFuncLessThan(_: void, a: DllFuncText, b: DllFuncText) bool {
+    return StringPool.asciiLessThanIgnoreCase({}, a.name, b.name);
+}
 
-    try writer.writeBlock(autogen_header);
-    try writer.line("//--------------------------------------------------------------------------------");
-    try writer.linef("// Section: Constants ({})", .{api.Constants.len});
-    try writer.line("//--------------------------------------------------------------------------------");
-    for (api.Constants) |constant| {
-        try generateConstant(sdk_file, writer, constant);
+// True only if `module` IS a per-dll module (not merely a namespace that shares
+// a name with a dll, e.g. the Graphics.DXCore namespace vs the dxcore dll).
+fn isDllModule(module: *Module) bool {
+    return if (dll_modules.get(module.name)) |dm| dm.module == module else false;
+}
+
+// Canonical top-level module name for a DLL: lowercased, with non-identifier
+// chars -> '_'.  Lowercasing merges DLLs that appear in mixed case in the
+// metadata (e.g. OLE32.dll / ole32.dll) into a single module.
+fn dllModuleName(dll_import: []const u8) []const u8 {
+    const base = externFromDllImport(dll_import);
+    const out = allocator.alloc(u8, base.len) catch |e| oom(e);
+    for (base, out) |c, *o| {
+        o.* = switch (c) {
+            'A'...'Z' => c + ('a' - 'A'),
+            'a'...'z', '0'...'9', '_' => c,
+            else => '_',
+        };
     }
-    std.debug.assert(api.Constants.len == sdk_file.const_exports.items.len);
-    try writer.line("");
-    try writer.line("//--------------------------------------------------------------------------------");
-    try writer.linef("// Section: Types ({})", .{api.Types.len});
-    try writer.line("//--------------------------------------------------------------------------------");
-    {
-        var arch_specific_types = ArchSpecificMap(metadata.Type).init(allocator);
-        defer arch_specific_types.deinit();
-        var enum_alias_conflicts = StringPool.HashMap(StringPool.Val).init(allocator);
-        defer enum_alias_conflicts.deinit();
-        for (api.Types) |t| {
-            try generateType(sdk_file, writer, &arch_specific_types, t, &enum_alias_conflicts);
-            try writer.line("");
-        }
-        var it = arch_specific_types.iterator();
-        while (it.next()) |entry| {
-            const name_pool = entry.key_ptr.*;
-            try writer.linef(
-                "pub const {f} = switch(@import(\"{s}zig.zig\").arch) {{",
-                .{ name_pool, import_prefix_table[sdk_file.depth] },
-            );
-            var combined_arches: metadata.Architectures = .{ .filter = .{} };
-            for (entry.value_ptr.getItemsConst()) |object| {
-                combined_arches = combined_arches.unionWith(.{ .filter = object.filter });
-                var buf: [40]u8 = undefined;
-                const def_prefix = buf[0..try formatArchesCase(object.filter, &buf)];
-                writer.depth += 1;
-                defer writer.depth -= 1;
-                // Enforce the type arches match the arches we filtered the type on.
-                // If it doesn't we might need to update generateTypeDefinition to take an extra
-                // arches parameter.
-                std.debug.assert(object.obj.Architectures.eql(.{ .filter = object.filter }));
-                try generateTypeDefinition(sdk_file, writer, object.obj, &enum_alias_conflicts, name_pool, def_prefix, ",");
-            }
-            if (combined_arches.filter != null) {
-                //try writer.line("    else => @compileError(\"unsupported on this arch\"),");
-                try writer.line("    else => usize, // NOTE: this should be a @compileError but can't because of https://github.com/ziglang/zig/issues/9682");
-            }
-            try writer.line("};");
-        }
-    }
-    try writer.line("");
-    try writer.line("//--------------------------------------------------------------------------------");
-    try writer.linef("// Section: Functions ({})", .{api.Functions.len});
-    try writer.line("//--------------------------------------------------------------------------------");
+    return out;
+}
 
-    const FuncNodeIndex = enum(usize) { _ };
-    const ArchFunction = struct {
-        root_node_index: FuncNodeIndex,
-        generated: bool = false,
+fn getDllModule(dll_import: []const u8) *DllModule {
+    const canon = dllModuleName(dll_import);
+    const canon_pool = global_symbol_pool.add(canon) catch |e| oom(e);
+    if (dll_modules.get(canon_pool)) |dm| return dm;
+    if (g_root_module.children.get(canon_pool)) |_| std.debug.panic(
+        "dll module '{s}' collides with an existing top-level module",
+        .{canon},
+    );
+    const module = Module.alloc(g_root_module, canon_pool) catch |e| oom(e);
+    module.file = SdkFile{
+        .api_name = canon_pool,
+        .zig_name = canon,
+        .depth = 0,
+        .const_exports = std.array_list.Managed(StringPool.Val).init(allocator),
+        .uses_guid = false,
+        .top_level_api_imports = StringPool.HashMap(ApiImport).init(allocator),
+        .type_exports = StringPoolArrayHashMap(void).init(allocator),
+        .func_exports = StringPoolArrayHashMap(void).init(allocator),
+        .tmp_func_ptr_workaround_list = std.array_list.Managed(StringPool.Val).init(allocator),
+        .method_conflict_map = getMethodConflictMap(canon),
+        .param_conflict_map = getParamConflictMap(canon),
+        .extra_funcs = .{},
+        .extra_funcs_applied = StringPool.HashMap(void).init(allocator),
+        .extra_consts = .{},
+        .extra_consts_applied = StringPool.HashMap(void).init(allocator),
+        .com_type_overloads = null,
+        .win32_import_prefix = "../win32/",
     };
-    const FuncNode = struct {
-        func: *const metadata.Function,
-        next: ?FuncNodeIndex = null,
+    g_root_module.children.put(canon_pool, module) catch |e| oom(e);
+    const dm = allocator.create(DllModule) catch |e| oom(e);
+    dm.* = .{ .module = module };
+    dll_modules.put(allocator, canon_pool, dm) catch |e| oom(e);
+    return dm;
+}
+
+fn writeDllModules(out_dir: std.fs.Dir) !void {
+    if (dll_modules.count() == 0) return;
+    out_dir.makeDir("dll") catch |e| switch (e) {
+        error.PathAlreadyExists => {},
+        else => return e,
     };
-    var arch_func_nodes: std.ArrayListUnmanaged(FuncNode) = .{};
-    var arch_func_map: StringPool.HashMapUnmanaged(ArchFunction) = .{};
-    for (api.Functions) |*function| {
-        if (function.Architectures.filter != null) {
-            const name_pool = try global_symbol_pool.add(function.Name);
-            const entry = arch_func_map.getOrPut(allocator, name_pool) catch |e| oom(e);
-            const new_func_node_index: FuncNodeIndex = @enumFromInt(arch_func_nodes.items.len);
-            arch_func_nodes.append(allocator, .{
-                .func = function,
-                .next = if (entry.found_existing) entry.value_ptr.root_node_index else null,
-            }) catch |e| oom(e);
-            entry.value_ptr.* = .{
-                .root_node_index = new_func_node_index,
-            };
-        }
-    }
-
-    for (api.Functions) |function| {
-        if (function.Architectures.filter == null) {
-            try generateFunction(sdk_file, writer, .{ .dll = function });
-        } else {
-            const name_pool = try global_symbol_pool.add(function.Name);
-            const entry = arch_func_map.getEntry(name_pool) orelse unreachable;
-            if (entry.value_ptr.generated)
-                continue;
-
-            try writer.linef("pub const {f} = switch (@import(\"{s}zig.zig\").arch) {{", .{ name_pool, import_prefix_table[sdk_file.depth] });
-
-            var arches_handled: metadata.Architectures = .{ .filter = .{} };
-
-            var node_index = entry.value_ptr.root_node_index;
-            while (true) {
-                const node = arch_func_nodes.items[@intFromEnum(node_index)];
-
-                arches_handled = arches_handled.unionWith(node.func.Architectures);
-                var buf: [40]u8 = undefined;
-                const case_prefix = buf[0..try formatArchesCase(node.func.Architectures.filter.?, &buf)];
-                try writer.linef("{s}(struct {{", .{case_prefix});
-                try writer.line("");
-                try generateFunction(sdk_file, writer, .{ .dll = node.func.* });
-                try writer.line("");
-                try writer.linef("}}).{f},", .{name_pool});
-
-                node_index = node.next orelse break;
-            }
-            if (arches_handled.filter != null) {
-                try writer.linef(
-                    "    else => |a| if (@import(\"builtin\").is_test) void else @compileError(\"function '{f}' is not supported on architecture \" ++ @tagName(a)),",
-                    .{name_pool},
-                );
-            }
-
-            try writer.line("};");
-
-            entry.value_ptr.generated = true;
-        }
+    var dll_dir = try out_dir.openDir("dll", .{});
+    defer dll_dir.close();
+    var it = dll_modules.iterator();
+    while (it.next()) |entry| {
+        const dm = entry.value_ptr.*;
+        const sdk_file = &dm.module.file.?;
+        var out_file = try dll_dir.createFile(dm.module.zig_basename, .{});
+        defer out_file.close();
+        var buffer: [4096]u8 = undefined;
+        var file_writer = out_file.writer(&buffer);
+        var code_writer = CodeWriter{ .writer = &file_writer.interface, .depth = 0, .midline = false };
+        const writer: *CodeWriter = &code_writer;
+        try writer.writeBlock(autogen_header);
+        try writer.line("//--------------------------------------------------------------------------------");
+        try writer.linef("// Section: Functions ({})", .{sdk_file.func_exports.count()});
+        try writer.line("//--------------------------------------------------------------------------------");
+        std.mem.sort(DllFuncText, dm.funcs.items, {}, dllFuncLessThan);
+        for (dm.funcs.items) |f| try writer.writer.writeAll(f.text);
+        code_writer.midline = false;
         try writer.line("");
+        try writeImportsSection(sdk_file, writer);
+        try writeTestBlock(sdk_file, writer);
+        try code_writer.writer.flush();
     }
-    std.debug.assert(api.Functions.len >= sdk_file.func_exports.count());
-    try writer.line("");
+}
+
+fn writeImportsSection(sdk_file: *SdkFile, writer: *CodeWriter) !void {
     const import_total = @intFromBool(sdk_file.uses_guid) + sdk_file.top_level_api_imports.count();
     try writer.line("//--------------------------------------------------------------------------------");
     try writer.linef("// Section: Imports ({})", .{import_total});
@@ -921,7 +933,7 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, api: metadata.Api) !voi
             var arch_imports_it = arch_specific_imports.iterator();
             while (arch_imports_it.next()) |arch_import_node| {
                 const name = arch_import_node.key_ptr.*;
-                try writer.linef("const {f} = switch(@import(\"{s}zig.zig\").arch) {{", .{ name, import_prefix_table[sdk_file.depth] });
+                try writer.linef("const {f} = switch(@import(\"{s}zig.zig\").arch) {{", .{ name, sdk_file.getWin32DirImportPrefix() });
                 var combined_arches: metadata.Architectures = .{ .filter = .{} };
                 for (arch_import_node.value_ptr.getItemsConst()) |object| {
                     combined_arches = combined_arches.unionWith(.{ .filter = object.filter });
@@ -941,7 +953,9 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, api: metadata.Api) !voi
             }
         }
     }
+}
 
+fn writeTestBlock(sdk_file: *SdkFile, writer: *CodeWriter) !void {
     try writer.writeBlock(&comptime removeCr(
         \\
         \\test {
@@ -967,6 +981,156 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, api: metadata.Api) !voi
         \\}
         \\
     ));
+}
+
+fn generateFile(module_dir: std.fs.Dir, module: *Module, api: metadata.Api) !void {
+    const sdk_file = &module.file.?;
+
+    var out_file = try module_dir.createFile(module.zig_basename, .{});
+    defer out_file.close();
+    var buffer: [4096]u8 = undefined;
+    var file_writer = out_file.writer(&buffer);
+    var code_writer = CodeWriter{ .writer = &file_writer.interface, .depth = 0, .midline = false };
+    // need to specify type explicitly because of https://github.com/ziglang/zig/issues/12795
+    const writer: *CodeWriter = &code_writer;
+
+    try writer.writeBlock(autogen_header);
+    try writer.line("//--------------------------------------------------------------------------------");
+    try writer.linef("// Section: Constants ({})", .{api.Constants.len});
+    try writer.line("//--------------------------------------------------------------------------------");
+    for (api.Constants) |constant| {
+        try generateConstant(sdk_file, writer, constant);
+    }
+    std.debug.assert(api.Constants.len == sdk_file.const_exports.items.len);
+    try writer.line("");
+    try writer.line("//--------------------------------------------------------------------------------");
+    try writer.linef("// Section: Types ({})", .{api.Types.len});
+    try writer.line("//--------------------------------------------------------------------------------");
+    {
+        var arch_specific_types = ArchSpecificMap(metadata.Type).init(allocator);
+        defer arch_specific_types.deinit();
+        var enum_alias_conflicts = StringPool.HashMap(StringPool.Val).init(allocator);
+        defer enum_alias_conflicts.deinit();
+        for (api.Types) |t| {
+            try generateType(sdk_file, writer, &arch_specific_types, t, &enum_alias_conflicts);
+            try writer.line("");
+        }
+        var it = arch_specific_types.iterator();
+        while (it.next()) |entry| {
+            const name_pool = entry.key_ptr.*;
+            try writer.linef(
+                "pub const {f} = switch(@import(\"{s}zig.zig\").arch) {{",
+                .{ name_pool, sdk_file.getWin32DirImportPrefix() },
+            );
+            var combined_arches: metadata.Architectures = .{ .filter = .{} };
+            for (entry.value_ptr.getItemsConst()) |object| {
+                combined_arches = combined_arches.unionWith(.{ .filter = object.filter });
+                var buf: [40]u8 = undefined;
+                const def_prefix = buf[0..try formatArchesCase(object.filter, &buf)];
+                writer.depth += 1;
+                defer writer.depth -= 1;
+                // Enforce the type arches match the arches we filtered the type on.
+                // If it doesn't we might need to update generateTypeDefinition to take an extra
+                // arches parameter.
+                std.debug.assert(object.obj.Architectures.eql(.{ .filter = object.filter }));
+                try generateTypeDefinition(sdk_file, writer, object.obj, &enum_alias_conflicts, name_pool, def_prefix, ",");
+            }
+            if (combined_arches.filter != null) {
+                //try writer.line("    else => @compileError(\"unsupported on this arch\"),");
+                try writer.line("    else => usize, // NOTE: this should be a @compileError but can't because of https://github.com/ziglang/zig/issues/9682");
+            }
+            try writer.line("};");
+        }
+    }
+    const FuncNodeIndex = enum(usize) { _ };
+    const ArchFunction = struct {
+        root_node_index: FuncNodeIndex,
+        generated: bool = false,
+    };
+    const FuncNode = struct {
+        func: *const metadata.Function,
+        next: ?FuncNodeIndex = null,
+    };
+    var arch_func_nodes: std.ArrayListUnmanaged(FuncNode) = .{};
+    var arch_func_map: StringPool.HashMapUnmanaged(ArchFunction) = .{};
+    for (api.Functions) |*function| {
+        if (function.Architectures.filter != null) {
+            const name_pool = try global_symbol_pool.add(function.Name);
+            const entry = arch_func_map.getOrPut(allocator, name_pool) catch |e| oom(e);
+            const new_func_node_index: FuncNodeIndex = @enumFromInt(arch_func_nodes.items.len);
+            arch_func_nodes.append(allocator, .{
+                .func = function,
+                .next = if (entry.found_existing) entry.value_ptr.root_node_index else null,
+            }) catch |e| oom(e);
+            entry.value_ptr.* = .{
+                .root_node_index = new_func_node_index,
+            };
+        }
+    }
+
+    for (api.Functions) |function| {
+        // DLL functions are emitted into their per-dll module, not this
+        // namespace module. Type imports / func_exports accumulate on the dll
+        // module's SdkFile (dsf); extra.txt modifiers are still looked up on
+        // this namespace's sdk_file so its reconciliation check stays valid.
+        const dm = getDllModule(function.DllImport);
+        const dsf = &dm.module.file.?;
+        const name_pool = try global_symbol_pool.add(function.Name);
+
+        // arch variants of a name collapse into one switch group, generated
+        // only on the first occurrence.
+        if (function.Architectures.filter != null) {
+            if (arch_func_map.getEntry(name_pool).?.value_ptr.generated) continue;
+        }
+
+        // Generate this function's text into its own buffer so phase 2 can emit
+        // the dll module's functions sorted by name.
+        var aw = std.Io.Writer.Allocating.init(allocator);
+        var cw = CodeWriter{ .writer = &aw.writer, .depth = 0, .midline = false };
+        const dw = &cw;
+
+        if (function.Architectures.filter == null) {
+            try generateFunction(dsf, sdk_file, dw, .{ .dll = function });
+        } else {
+            const entry = arch_func_map.getEntry(name_pool) orelse unreachable;
+
+            try dw.linef("pub const {f} = switch (@import(\"{s}zig.zig\").arch) {{", .{ name_pool, dsf.getWin32DirImportPrefix() });
+
+            var arches_handled: metadata.Architectures = .{ .filter = .{} };
+
+            var node_index = entry.value_ptr.root_node_index;
+            while (true) {
+                const node = arch_func_nodes.items[@intFromEnum(node_index)];
+
+                arches_handled = arches_handled.unionWith(node.func.Architectures);
+                var buf: [40]u8 = undefined;
+                const case_prefix = buf[0..try formatArchesCase(node.func.Architectures.filter.?, &buf)];
+                try dw.linef("{s}(struct {{", .{case_prefix});
+                try dw.line("");
+                try generateFunction(dsf, sdk_file, dw, .{ .dll = node.func.* });
+                try dw.line("");
+                try dw.linef("}}).{f},", .{name_pool});
+
+                node_index = node.next orelse break;
+            }
+            if (arches_handled.filter != null) {
+                try dw.linef(
+                    "    else => |a| if (@import(\"builtin\").is_test) void else @compileError(\"function '{f}' is not supported on architecture \" ++ @tagName(a)),",
+                    .{name_pool},
+                );
+            }
+
+            try dw.line("};");
+
+            entry.value_ptr.generated = true;
+        }
+        try dw.line("");
+        dm.funcs.append(allocator, .{ .name = name_pool, .text = allocator.dupe(u8, aw.written()) catch |e| oom(e) }) catch |e| oom(e);
+    }
+    std.debug.assert(sdk_file.func_exports.count() == 0);
+    try writer.line("");
+    try writeImportsSection(sdk_file, writer);
+    try writeTestBlock(sdk_file, writer);
 
     // check that all extra stuff was applied
     {
@@ -1835,7 +1999,7 @@ fn generateTypeDefinition(
                 );
                 return;
             }
-            try generateFunction(sdk_file, writer, .{ .ptr = .{
+            try generateFunction(sdk_file, sdk_file, writer, .{ .ptr = .{
                 .t = t,
                 .func = func,
                 .def_prefix = def_prefix,
@@ -2618,7 +2782,7 @@ fn generateCom(
                 .{ method.Name, suffix },
             );
 
-            try generateFunction(sdk_file, writer, .{ .com = .{
+            try generateFunction(sdk_file, sdk_file, writer, .{ .com = .{
                 .method = method,
                 .type_name = com_pool_name.slice,
                 .zig_name = zig_name,
@@ -3017,6 +3181,7 @@ fn comMethodReturnsStructByValue(return_type: metadata.TypeRef) bool {
 
 fn generateFunction(
     sdk_file: *SdkFile,
+    modifier_sdk_file: *SdkFile,
     writer: *CodeWriter,
     func: Function,
 ) !void {
@@ -3032,7 +3197,7 @@ fn generateFunction(
         .ptr => {},
     }
 
-    const modifier_set = getFuncModifiers(sdk_file, func.ConfigName(), params);
+    const modifier_set = getFuncModifiers(modifier_sdk_file, func.ConfigName(), params);
 
     // For COM methods returning structs/unions by value, the MSVC ABI uses a
     // hidden return pointer parameter after 'this'. We need to transform the
