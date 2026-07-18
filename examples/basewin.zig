@@ -18,11 +18,11 @@ pub fn BaseWindow(comptime DERIVED_TYPE: type) type {
             if (uMsg == win32.WM_NCCREATE) {
                 const pCreate: *win32.CREATESTRUCTW = @ptrFromInt(@as(usize, @bitCast(lParam)));
                 pThis = @ptrCast(@alignCast(pCreate.lpCreateParams));
-                _ = windowlongptr.SetWindowLongPtr(hwnd, win32.GWL_USERDATA, @bitCast(@intFromPtr(pThis)));
+                _ = windowlongptr.SetWindowLongPtrW(hwnd, win32.GWL_USERDATA, @bitCast(@intFromPtr(pThis)));
                 pThis.?.base.m_hwnd = hwnd;
             } else {
                 //pThis = @intToPtr(?*DERIVED_TYPE, @bitCast(usize, windowlongptr.GetWindowLongPtr(hwnd, win32.GWL_USERDATA)));
-                pThis = @ptrFromInt(@as(usize, @bitCast(windowlongptr.GetWindowLongPtr(hwnd, win32.GWL_USERDATA))));
+                pThis = @ptrFromInt(@as(usize, @bitCast(windowlongptr.GetWindowLongPtrW(hwnd, win32.GWL_USERDATA))));
             }
             if (pThis) |this| {
                 return this.HandleMessage(uMsg, wParam, lParam);

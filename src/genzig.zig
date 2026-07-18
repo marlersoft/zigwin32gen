@@ -871,10 +871,6 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, api: metadata.Api) !voi
     }
     std.debug.assert(api.Functions.len >= sdk_file.func_exports.count());
     try writer.line("");
-    try writer.line("//--------------------------------------------------------------------------------");
-    try writer.linef("// Section: Unicode Aliases ({})", .{api.UnicodeAliases.len});
-    try writer.line("//--------------------------------------------------------------------------------");
-    try generateUnicodeAliases(sdk_file, writer, api.UnicodeAliases);
     const import_total = @intFromBool(sdk_file.uses_guid) + sdk_file.top_level_api_imports.count();
     try writer.line("//--------------------------------------------------------------------------------");
     try writer.linef("// Section: Imports ({})", .{import_total});
@@ -3134,21 +3130,6 @@ fn generateParams(
         try writer.writef("    {f}: ", .{fmtIdP(param.Name)}, .{ .nl = false });
         try generateTypeRef(sdk_file, writer, param_type_formatter);
         try writer.write(",", .{ .start = .mid });
-    }
-}
-
-fn generateUnicodeAliases(sdk_file: *SdkFile, writer: *CodeWriter, unicode_aliases: []const []const u8) !void {
-    for (unicode_aliases) |alias| {
-        try writer.linef(
-            "pub const {s} = switch (@import(\"{s}zig.zig\").unicode_mode) {{",
-            .{ alias, sdk_file.getWin32DirImportPrefix() },
-        );
-        try writer.linef("    .ansi => @This().{s}A,", .{alias});
-        try writer.linef("    .wide => @This().{s}W,", .{alias});
-        try writer.line("    .unspecified => if (@import(\"builtin\").is_test) void else @compileError(");
-        try writer.linef("        \"'{0s}' requires that UNICODE be set to true or false in the root module\",", .{alias});
-        try writer.line("    ),");
-        try writer.line("};");
     }
 }
 

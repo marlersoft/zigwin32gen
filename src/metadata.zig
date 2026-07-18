@@ -2,7 +2,6 @@ pub const Api = struct {
     Constants: []const Constant,
     Types: []const Type,
     Functions: []const Function,
-    UnicodeAliases: []const []const u8,
 };
 
 pub const ValueType = enum {

@@ -2,9 +2,6 @@ const std = @import("std");
 const win32_stub = @import("win32_stub");
 const zig = win32_stub.zig;
 
-// make win32/zig.zig happy
-pub const UNICODE = true;
-
 pub fn main() !void {
     var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     const arena = arena_instance.allocator();

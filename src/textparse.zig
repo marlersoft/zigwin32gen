@@ -2,7 +2,7 @@
 //! see dumpwinmd-grammar.md) and rebuilds `metadata.Api`, applying the win32
 //! corrections that dumpwinmd deliberately leaves out — patches, the
 //! MediaFoundation constant filter, ComClassID/not_com derivation, MissingClrType
-//! classification, UnicodeAliases, and the platform string->enum mapping.
+//! classification, and the platform string->enum mapping.
 //! This is the generator's input path: winmd -> text (dumpwinmd) -> model (here)
 //! -> bindings. It reads text only; it does not depend on `winmd`.
 
@@ -387,12 +387,10 @@ fn finalize(
 ) void {
     switch (frame.data) {
         .api => |*a| {
-            const aliases = deriveAliases(arena, a.types.items, a.funcs.items);
             result.append(arena, .{ .name = a.name, .api = .{
                 .Constants = a.consts.items,
                 .Types = a.types.items,
                 .Functions = a.funcs.items,
-                .UnicodeAliases = aliases,
             } }) catch |e| oom(e);
         },
         .enum_ => |*e| attachType(arena, stack, .{
@@ -561,57 +559,6 @@ fn deriveComment(arena: std.mem.Allocator, constfields: []const ConstField) ?[]c
     }
     return aw.written();
 }
-
-// Derives UnicodeAliases from the type and function names (base names that have
-// both an "A" and a "W" variant). Types are visited
-// before functions, in declaration order.
-fn deriveAliases(arena: std.mem.Allocator, types: []const metadata.Type, funcs: []const metadata.Function) []const []const u8 {
-    var ua: UnicodeAliases = .{};
-    for (types) |t| ua.add(arena, t.Name);
-    for (funcs) |f| ua.add(arena, f.Name);
-    var aliases: std.ArrayListUnmanaged([]const u8) = .empty;
-    var it = ua.map.iterator();
-    while (it.next()) |entry| switch (entry.value_ptr.*) {
-        .base_exists, .a_only, .w_only => {},
-        .both => aliases.append(arena, entry.key_ptr.*) catch |e| oom(e),
-    };
-    return aliases.items;
-}
-
-const UnicodeAliases = struct {
-    map: std.StringArrayHashMapUnmanaged(State) = .{},
-    const State = enum { base_exists, a_only, w_only, both };
-    pub fn add(aliases: *UnicodeAliases, allocator: std.mem.Allocator, name: []const u8) void {
-        if (name.len <= 1) return;
-        const kind: enum { a, w, base }, const key = blk: {
-            if (std.mem.endsWith(u8, name, "A")) break :blk .{ .a, name[0 .. name.len - 1] };
-            if (std.mem.endsWith(u8, name, "W")) break :blk .{ .w, name[0 .. name.len - 1] };
-            break :blk .{ .base, name };
-        };
-        const entry = aliases.map.getOrPut(allocator, key) catch |e| oom(e);
-        const sub_kind: enum { a, w } = switch (kind) {
-            .a => .a,
-            .w => .w,
-            .base => {
-                entry.value_ptr.* = .base_exists;
-                return;
-            },
-        };
-        if (entry.found_existing) switch (entry.value_ptr.*) {
-            .base_exists => return,
-            .a_only => if (sub_kind == .w) {
-                entry.value_ptr.* = .both;
-            },
-            .w_only => if (sub_kind == .a) {
-                entry.value_ptr.* = .both;
-            },
-            .both => {},
-        } else entry.value_ptr.* = switch (sub_kind) {
-            .a => .a_only,
-            .w => .w_only,
-        };
-    }
-};
 
 // Windows.* CLR types that are referenced but not defined in this winmd (dumpwinmd
 // emits them as `extref`); the reference generator classified these as MissingClrType.
