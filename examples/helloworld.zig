@@ -6,7 +6,7 @@ pub export fn WinMainCRTStartup() callconv(.winapi) noreturn {
         //std.debug.warn("Error: GetStdHandle failed with {}\n", .{GetLastError()});
         win32.ExitProcess(255);
     }
-    writeAll(hStdOut, "Hello, World!") catch win32.ExitProcess(255); // fail
+    writeAll(hStdOut, "Hello, World!\n") catch win32.ExitProcess(255); // fail
     win32.ExitProcess(0);
 }
 
