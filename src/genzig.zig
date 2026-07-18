@@ -1030,6 +1030,7 @@ fn addTypeRefsNoFormatter(sdk_file: *SdkFile, arches: metadata.Architectures, ty
         },
         .ApiRef => |api_ref| {
             const name = getApiRefSubstitute(api_ref.Name, api_ref.Parents) orelse api_ref.Name;
+            if (inline_types.has(name)) return;
             const api = try global_symbol_pool.add(api_ref.Api);
             try sdk_file.addApiImport(arches, renameType(name), api, api_ref.Parents);
         },
@@ -1265,34 +1266,20 @@ fn generateTypeRefRec(
                 }
             }
 
-            // special handling for PSTR and PWSTR for now.  This is because those types
-            // have hardcoded non-const and null-terminated, so we can't reference them if our usage
-            // doesn't match.
-            // If there are more cases that behave like this, I will likely need to implement a 2-pass
-            // system where the first pass I gather all the type definitions so that on the second pass
-            // I'll know whether each type is a pointer like this and can fix things like this.
-            const special: enum { pstr, pwstr, other } = blk: {
-                if (std.mem.eql(u8, name, "PSTR")) break :blk .pstr;
-                if (std.mem.eql(u8, name, "PWSTR")) break :blk .pwstr;
-                break :blk .other;
-            };
-            if (special == .pstr or special == .pwstr) {
-                // if we deviated from the options we set for PSTR/PWSTR, then generate the native zig
-                // type directly instead of referencing the PSTR/PWSTR type
-                if (self.options.is_const or self.options.not_null_term) {
+            if (inline_types.get(name)) |inline_type| switch (inline_type) {
+                .string => |elem_type| {
                     // can't put these expressions in the print argument tuple because of https://github.com/ziglang/zig/issues/8036
-                    const base_type = if (special == .pstr) "u8" else "u16";
                     const sentinel_suffix = if (self.options.not_null_term) "" else ":0";
                     const align_str = if (self.options.extra_mod.union_pointer) "align(1) " else "";
                     const const_str = if (self.options.is_const) "const " else "";
                     try writer.writef(
                         "[*{s}]{s}{s}{s}",
-                        .{ sentinel_suffix, align_str, const_str, base_type },
+                        .{ sentinel_suffix, align_str, const_str, elem_type },
                         .{ .start = .any, .nl = false },
                     );
                     return;
-                }
-            }
+                },
+            };
 
             // for now, all nested type references MUST be in the same scope so this
             // just causes issues
@@ -1713,6 +1700,8 @@ fn generateType(
         return;
     }
 
+    if (inline_types.has(t.Name)) return;
+
     try generatePlatformComment(writer, t.Platform);
 
     switch (t.Kind) {
@@ -1772,47 +1761,6 @@ fn generateTypeDefinition(
             }
             if (typedef.InvalidHandleValue) |v| {
                 try writer.linef("// TODO: this type has an InvalidHandleValue of '{}', what can Zig do with this information?", .{v});
-            }
-
-            // HANDLE PSTR and PWSTR specially because win32metadata is not properly declaring them as arrays, only pointers
-            // not sure if this is a real issue with the metadata or intentional
-            const special: enum { pstr, pwstr, other } = blk: {
-                if (std.mem.eql(u8, pool_name.slice, "PSTR")) break :blk .pstr;
-                if (std.mem.eql(u8, pool_name.slice, "PWSTR")) break :blk .pwstr;
-                break :blk .other;
-            };
-            if (special == .pstr or special == .pwstr) {
-                //
-                // verify the definition is what we expect, if not, we might be able to remove out workaround
-                //
-                const child_generic = switch (typedef.Def) {
-                    .PointerTo => |to| to.Child,
-                    else => failMsg(
-                        "definition of {s} has changed! (Def.Kind != PointerTo, it is {t})",
-                        .{ t.Name, typedef.Def },
-                    ),
-                };
-                const child_native = switch (child_generic.*) {
-                    .Native => |*n| n,
-                    else => failMsg(
-                        "definition of {f} has changed! (Def.Child.Kind != Native, it is {t})",
-                        .{ pool_name, child_generic.* },
-                    ),
-                };
-                // TODO: is something is referencing PSTR or PWSTR and is NotNullTerm, then
-                //       maybe I'll do something like @import("zig.zig").NotNullTerm(PSTR)
-                switch (child_native.Name) {
-                    .Byte => {
-                        enforce(special == .pstr);
-                        try writer.linef("{s}[*:0]u8{s}", .{ def_prefix, def_suffix });
-                    },
-                    .Char => {
-                        enforce(special == .pwstr);
-                        try writer.linef("{s}[*:0]u16{s}", .{ def_prefix, def_suffix });
-                    },
-                    else => fail(),
-                }
-                return;
             }
 
             if (typedef.AlsoUsableFor) |also_usable_for| {
@@ -1892,6 +1840,17 @@ const api_type_substitutes = std.StaticStringMap([]const u8).initComptime(.{
     // a distinct type, we can remove it, the only purpose of having it separate
     // I can think of is to allow overloads, but we don't use overloading.
     .{ "D2D1_COLOR_F", "D2D_COLOR_F" },
+});
+
+// Metadata types that we don't generate and render as native Zig types intead.
+const InlineType = union(enum) {
+    // null-terminated pointer to elem type; const/sentinel/alignment applied
+    // per-usage (e.g. PSTR -> [*:0]u8).
+    string: []const u8,
+};
+const inline_types = std.StaticStringMap(InlineType).initComptime(.{
+    .{ "PSTR", InlineType{ .string = "u8" } },
+    .{ "PWSTR", InlineType{ .string = "u16" } },
 });
 
 const type_renames = std.StaticStringMap([]const u8).initComptime(.{

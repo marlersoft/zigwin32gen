@@ -39,11 +39,6 @@ fn classifyType(t: metadata.Type) ?pass1data.Type {
 }
 
 fn classifyNativeTypedef(t: metadata.Type, native_typedef: metadata.NativeTypedef) pass1data.Type {
-    // HANDLE PSTR and PWSTR specially because win32metadata is not properly declaring them as arrays, only pointers
-    if (std.mem.eql(u8, t.Name, "PSTR") or std.mem.eql(u8, t.Name, "PWSTR")) {
-        return .{ .Pointer = .{} };
-    }
-
     // NOTE: for now, I'm just hardcoding a few types to redirect to the ones defined in 'std'
     //       this allows apps to use values of these types interchangeably with bindings in std
     if (handletypes.std_handle_types.get(t.Name)) |_| return .{ .Pointer = .{} };
