@@ -18,8 +18,8 @@ pub fn getDefaultDevice(autoexit: bool) !void {
             win32.IID_IMMDeviceEnumerator,
             @ptrCast(&enumerator),
         );
-        if (win32.FAILED(status)) {
-            log("CoCreateInstance FAILED: {d}", .{status});
+        if (status.failed) {
+            log("CoCreateInstance FAILED: {f}", .{status});
             return error.Fail;
         }
     }
@@ -40,8 +40,8 @@ pub fn getDefaultDevice(autoexit: bool) !void {
             win32.ERole.eCommunications,
             &device,
         );
-        if (win32.FAILED(status)) {
-            log("DEVICE STATUS: {d}", .{status});
+        if (status.failed) {
+            log("DEVICE STATUS: {f}", .{status});
             return error.Fail;
         }
     }
@@ -50,8 +50,8 @@ pub fn getDefaultDevice(autoexit: bool) !void {
     var properties: ?*win32.IPropertyStore = undefined;
     {
         const status = device.?.OpenPropertyStore(win32.STGM_READ, &properties);
-        if (win32.FAILED(status)) {
-            log("DEVICE PROPS: {d}", .{status});
+        if (status.failed) {
+            log("DEVICE PROPS: {f}", .{status});
             return error.Fail;
         }
     }
@@ -59,8 +59,8 @@ pub fn getDefaultDevice(autoexit: bool) !void {
     var count: u32 = 0;
     {
         const status = properties.?.GetCount(&count);
-        if (win32.FAILED(status)) {
-            log("GetCount failed: {d}", .{status});
+        if (status.failed) {
+            log("GetCount failed: {f}", .{status});
             return error.Fail;
         }
     }
@@ -72,8 +72,8 @@ pub fn getDefaultDevice(autoexit: bool) !void {
         log("index: {d}", .{index});
         {
             const status = properties.?.GetAt(index, &propKey);
-            if (win32.FAILED(status)) {
-                log("Failed to getAt {x}", .{status});
+            if (status.failed) {
+                log("Failed to getAt {f}", .{status});
                 return error.Fail;
             }
         }
@@ -113,8 +113,8 @@ pub fn main() !u8 {
     {
         _ = config_value;
         const status = win32.CoInitialize(null); // CoInitializeEx(null, @intToEnum(COINIT, config_value));
-        if (win32.FAILED(status)) {
-            log("CoInitialize FAILED: {d}", .{status});
+        if (status.failed) {
+            log("CoInitialize FAILED: {f}", .{status});
             return error.Fail;
         }
     }

@@ -4,8 +4,6 @@ pub const UNICODE = true;
 const std = @import("std");
 const win32 = @import("win32").everything;
 const L = win32.L;
-const FAILED = win32.FAILED;
-const SUCCEEDED = win32.SUCCEEDED;
 const HRESULT = win32.HRESULT;
 const HINSTANCE = win32.HINSTANCE;
 const HWND = win32.HWND;
@@ -84,13 +82,13 @@ fn MainWindowCreateGraphicsResources(self: *MainWindow) HRESULT {
             &target,
         );
 
-        if (SUCCEEDED(hr)) {
+        if (!hr.failed) {
             self.pRenderTarget = target;
             const color = D2D1.ColorF(.{ .r = 1, .g = 1, .b = 0 });
             var brush: *win32.ID2D1SolidColorBrush = undefined;
             hr = self.pRenderTarget.?.ID2D1RenderTarget.CreateSolidColorBrush(&color, null, &brush);
 
-            if (SUCCEEDED(hr)) {
+            if (!hr.failed) {
                 self.pBrush = brush;
                 self.CalculateLayout();
             }
@@ -106,7 +104,7 @@ fn MainWindowDiscardGraphicsResources(self: *MainWindow) void {
 
 fn MainWindowOnPaint(self: *MainWindow) void {
     var hr = self.CreateGraphicsResources();
-    if (SUCCEEDED(hr)) {
+    if (!hr.failed) {
         var ps: win32.PAINTSTRUCT = undefined;
         _ = win32.BeginPaint(self.base.m_hwnd.?, &ps);
 
@@ -118,7 +116,7 @@ fn MainWindowOnPaint(self: *MainWindow) void {
         self.pRenderTarget.?.ID2D1RenderTarget.FillEllipse(&self.ellipse, &self.pBrush.?.ID2D1Brush);
 
         hr = self.pRenderTarget.?.ID2D1RenderTarget.EndDraw(null, null);
-        if (FAILED(hr) or hr == win32.D2DERR_RECREATE_TARGET) {
+        if (hr.failed or hr == win32.D2DERR_RECREATE_TARGET) {
             self.DiscardGraphicsResources();
         }
         _ = win32.EndPaint(self.base.m_hwnd.?, &ps);
@@ -166,14 +164,13 @@ fn MainWindowHandleMessage(self: *MainWindow, uMsg: u32, wParam: usize, lParam: 
         win32.WM_CREATE => {
             // TODO: Should I need to case &self.pFactory to **anyopaque? Maybe
             //       D2D2CreateFactory probably doesn't have the correct type yet?
-            if (FAILED(win32.D2D1CreateFactory(
+            const hr = win32.D2D1CreateFactory(
                 win32.D2D1_FACTORY_TYPE_SINGLE_THREADED,
                 win32.IID_ID2D1Factory,
                 null,
                 @ptrCast(&self.pFactory),
-            ))) {
-                return -1; // Fail CreateWindowEx.
-            }
+            );
+            if (hr.failed) win32.panicHresult("D2D1CreateFactory", hr);
             autoexit.noteMsg(.create);
             return 0;
         },

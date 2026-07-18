@@ -24,8 +24,8 @@ fn testD3d12ComStructReturns() void {
             win32.IID_ID3D12Device,
             @ptrCast(&device),
         );
-        if (hr < 0) {
-            std.debug.print("D3D12CreateDevice failed (no D3D12 GPU?), skipping COM struct return tests\n", .{});
+        if (hr.failed) {
+            std.debug.print("D3D12CreateDevice failed, hresult={f}, skipping COM struct return tests\n", .{hr});
             return;
         }
     }
@@ -40,7 +40,7 @@ fn testD3d12ComStructReturns() void {
             .Flags = .{},
             .NodeMask = 0,
         }, win32.IID_ID3D12DescriptorHeap, @ptrCast(&rtv_heap));
-        if (hr < 0) @panic("CreateDescriptorHeap failed");
+        if (hr.failed) std.debug.panic("CreateDescriptorHeap failed, hresult={f}", .{hr});
     }
     defer _ = rtv_heap.IUnknown.Release();
 
@@ -61,7 +61,7 @@ fn testD3d12ComStructReturns() void {
             .Flags = .{ .SHADER_VISIBLE = 1 },
             .NodeMask = 0,
         }, win32.IID_ID3D12DescriptorHeap, @ptrCast(&srv_heap));
-        if (hr < 0) @panic("CreateDescriptorHeap (SRV) failed");
+        if (hr.failed) std.debug.panic("CreateDescriptorHeap (SRV) failed, hresult={f}", .{hr});
     }
     defer _ = srv_heap.IUnknown.Release();
 
@@ -91,7 +91,7 @@ fn testD3d12ComStructReturns() void {
             win32.IID_ID3D12Resource,
             @ptrCast(&resource),
         );
-        if (hr < 0) @panic("CreateCommittedResource failed");
+        if (hr.failed) std.debug.panic("CreateCommittedResource failed, hresult={f}", .{hr});
     }
     defer _ = resource.IUnknown.Release();
 

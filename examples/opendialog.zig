@@ -16,7 +16,7 @@ pub export fn wWinMain(__: win32.HINSTANCE, _: ?win32.HINSTANCE, cmdline: [*:0]u
             .APARTMENTTHREADED = 1,
             .DISABLE_OLE1DDE = 1,
         });
-        if (win32.FAILED(hr)) win32.panicHresult("CoInitiailizeEx", hr);
+        if (hr.failed) win32.panicHresult("CoInitiailizeEx", hr);
     }
     defer win32.CoUninitialize();
 
@@ -29,7 +29,7 @@ pub export fn wWinMain(__: win32.HINSTANCE, _: ?win32.HINSTANCE, cmdline: [*:0]u
             win32.IID_IFileOpenDialog,
             @ptrCast(&dialog),
         );
-        if (win32.FAILED(hr)) win32.panicHresult("create FileOpenDialog", hr);
+        if (hr.failed) win32.panicHresult("create FileOpenDialog", hr);
         break :blk dialog.?;
     };
     defer _ = dialog.IUnknown.Release();
@@ -39,20 +39,20 @@ pub export fn wWinMain(__: win32.HINSTANCE, _: ?win32.HINSTANCE, cmdline: [*:0]u
 
     {
         const hr = dialog.IModalWindow.Show(null);
-        if (win32.FAILED(hr)) win32.panicHresult("show dialog", hr);
+        if (hr.failed) win32.panicHresult("show dialog", hr);
     }
 
     var pItem: ?*win32.IShellItem = undefined;
     {
         const hr = dialog.IFileDialog.GetResult(&pItem);
-        if (win32.FAILED(hr)) win32.panicHresult("get dialog result", hr);
+        if (hr.failed) win32.panicHresult("get dialog result", hr);
     }
     defer _ = pItem.?.IUnknown.Release();
 
     const file_path = blk: {
         var file_path: ?[*:0]u16 = undefined;
         const hr = pItem.?.GetDisplayName(win32.SIGDN_FILESYSPATH, &file_path);
-        if (win32.FAILED(hr)) win32.panicHresult("GetDisplayName", hr);
+        if (hr.failed) win32.panicHresult("GetDisplayName", hr);
         break :blk file_path.?;
     };
     defer win32.CoTaskMemFree(file_path);

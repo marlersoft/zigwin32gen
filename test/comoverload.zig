@@ -13,7 +13,7 @@ fn GetAttributeValueString(
     _ = @"type";
     _ = value;
     _ = valueCount;
-    return 0;
+    return .S_OK;
 }
 
 pub fn main() void {
@@ -24,10 +24,11 @@ pub fn main() void {
     };
     const element = &element_instance;
     var value_buf: [10:0]u16 = undefined;
-    std.debug.assert(0 == element.GetAttributeValueString(
+    const hr = element.GetAttributeValueString(
         win32.L("Hello"),
         .SVG,
         &value_buf,
         value_buf.len,
-    ));
+    );
+    if (hr.failed) win32.panicHresult("GetAttributeValueString", hr);
 }

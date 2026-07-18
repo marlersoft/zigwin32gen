@@ -168,7 +168,7 @@ const SdkFile = struct {
         api: StringPool.Val,
         parents: []const []const u8,
     ) !void {
-        if (self.api_name.eql(api) and !native_aliases.has(name))
+        if (self.api_name.eql(api) and !redirects.has(name))
             return;
 
         const top_level_symbol = try global_symbol_pool.add(if (parents.len == 0) name else parents[0]);
@@ -504,9 +504,10 @@ fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !vo
         \\
     ));
 
-    for (native_aliases.keys(), native_aliases.values()) |name, def| {
-        try writer.print("pub const {s} = {s};\n", .{ name, def });
-    }
+    for (redirects.keys(), redirects.values()) |name, target| switch (target) {
+        .native => |def| try writer.print("pub const {s} = {s};\n", .{ name, def }),
+        .import => |file| try writer.print("pub const {s} = @import(\"{s}.zig\").{0s};\n", .{ name, file }),
+    };
 
     var sdk_files = std.array_list.Managed(*SdkFile).init(allocator);
     defer sdk_files.deinit();
@@ -588,6 +589,8 @@ fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !vo
 
 fn addZigExports(writer: *std.Io.Writer, exports: *StringPool.HashMap(Export)) !void {
     inline for (zigexports.declarations) |decl| {
+        // redirected types are emitted by the redirects loop above
+        if (comptime redirects.has(decl.name)) continue;
         const name = try global_symbol_pool.add(decl.name);
         const result = try exports.getOrPut(name);
         if (result.found_existing) std.debug.panic(
@@ -905,9 +908,9 @@ fn generateFile(module_dir: std.fs.Dir, module: *Module, api: metadata.Api) !voi
             const api_upper = import.import.api;
             const arches = import.import.arches;
 
-            if (native_aliases.get(import.name.slice)) |def| {
-                // define locally rather than importing (arch-independent)
-                try writer.linef("const {f} = {s};", .{ import.name, def });
+            if (redirects.get(import.name.slice)) |target| switch (target) {
+                .native => |def| try writer.linef("const {f} = {s};", .{ import.name, def }),
+                .import => |file| try writer.linef("const {f} = @import(\"{s}{s}.zig\").{0f};", .{ import.name, sdk_file.getWin32DirImportPrefix(), file }),
             } else if (arches.filter) |filter| {
                 try addArchSpecific(StringPool.Val, &arch_specific_imports, import.name, filter, api_upper);
             } else {
@@ -1712,7 +1715,7 @@ fn generateType(
     }
 
     if (inline_types.has(t.Name)) return;
-    if (native_aliases.has(t.Name)) return;
+    if (redirects.has(t.Name)) return;
 
     try generatePlatformComment(writer, t.Platform);
 
@@ -1867,18 +1870,20 @@ const inline_types = std.StaticStringMap(InlineType).initComptime(.{
     .{ "CHAR", InlineType{ .native = "u8" } },
 });
 
-// A "native alias" is an alias to a native Zig type. It's purpose is to
-// help document the meaning of the type, i.e. BOOL is an alias for i32
-// but indicates extra semantics (i.e. truthiness).
-// Native aliases are always defined within the file they are referenced.
-const native_aliases = std.StaticStringMap([]const u8).initComptime(.{
-    .{ "LPARAM", "isize" },
-    .{ "WPARAM", "usize" },
-    .{ "LRESULT", "isize" },
-    .{ "BOOL", "i32" },
-    .{ "BOOLEAN", "u8" },
-    .{ "VARIANT_BOOL", "i16" },
-    .{ "BSTR", "*u16" },
+const Redirect = union(enum) {
+    native: [:0]const u8,
+    import: [:0]const u8,
+};
+
+const redirects = std.StaticStringMap(Redirect).initComptime(.{
+    .{ "LPARAM", Redirect{ .native = "isize" } },
+    .{ "WPARAM", Redirect{ .native = "usize" } },
+    .{ "LRESULT", Redirect{ .native = "isize" } },
+    .{ "BOOL", Redirect{ .native = "i32" } },
+    .{ "BOOLEAN", Redirect{ .native = "u8" } },
+    .{ "VARIANT_BOOL", Redirect{ .native = "i16" } },
+    .{ "BSTR", Redirect{ .native = "*u16" } },
+    .{ "HRESULT", Redirect{ .import = "zig" } },
 });
 
 const type_renames = std.StaticStringMap([]const u8).initComptime(.{
