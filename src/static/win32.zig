@@ -17,9 +17,7 @@ pub const foundation = struct {
 pub const graphics = struct {
     pub const gdi = struct {
         pub const HDC = *opaque {};
-        pub const HGDIOBJ = *opaque {};
-        pub const HBRUSH = HGDIOBJ;
-        pub const PAINTSTRUCT = struct {};
+        pub const HBRUSH = gdi32.HGDIOBJ;
     };
 };
 pub const ui = struct {
@@ -28,4 +26,12 @@ pub const ui = struct {
             ICONASTERISK: u1 = 0,
         };
     };
+};
+
+pub const gdi32 = struct {
+    pub const HGDIOBJ = *opaque {};
+};
+
+pub const user32 = struct {
+    pub const PAINTSTRUCT = struct {};
 };

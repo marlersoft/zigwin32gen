@@ -213,6 +213,19 @@ pub fn build(b: *Build) !void {
         test_step.dependOn(&api_access_test.step);
     }
 
+    // Verify the api-set ("virtual" dll) symbol access patterns. The checks are
+    // comptime, so compiling the test is enough to verify them.
+    {
+        const apiset_test = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("test/apiset_access.zig"),
+                .target = b.graph.host,
+            }),
+        });
+        apiset_test.root_module.addImport("win32", win32);
+        test_step.dependOn(&apiset_test.step);
+    }
+
     // Exercise the Zig compiler's COM overload handling against the generated
     // Windows bindings for each arch. Run the exe when the target matches
     // the host; otherwise just compile-check.

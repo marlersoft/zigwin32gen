@@ -3,11 +3,11 @@
 #         api <API>                 -> keeps the plain name
 #         api <API> suffix <SUFFIX> -> exposed as <SYMBOL><SUFFIX>
 RESTRICTIONS
-    api UI.Shell
+    api shell32
     api NetworkManagement.NetworkPolicyServer suffix _Nps
 ObjectContext
     api System.ComponentServices
-    api System.Diagnostics.Debug suffix _Debug
+    api dbgmodel suffix _Debug
 Process
     api System.ComponentServices
     api inkobjcore suffix _InkObjCore
@@ -39,7 +39,7 @@ IDENTITY_TYPE
     api Security.Authentication.Identity.Provider
     api NetworkManagement.NetworkPolicyServer suffix _Nps
 POLICY_ELEMENT
-    api Security.Cryptography
+    api infocardapi
     api NetworkManagement.QoS suffix _QoS
 GetDeviceID
     api dsound
