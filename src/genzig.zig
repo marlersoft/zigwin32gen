@@ -640,6 +640,9 @@ fn generateEverythingModule(gen: *const Gen, out_win32_dir: std.fs.Dir) !void {
     defer sdk_files.deinit();
 
     try gatherSdkFiles(&sdk_files, gen.root_module);
+    const virtual_dll_modules = collectVirtualDllModules(global.arena, &gen.mut.dll_modules);
+    defer global.arena.free(virtual_dll_modules);
+    for (virtual_dll_modules) |dm| try sdk_files.append(&dm.module.file.?);
 
     var emitted = StringPool.HashMap([]const u8).init(global.arena);
     defer emitted.deinit();
@@ -737,13 +740,16 @@ fn generateContainerModules(
                 if (!isDllModule(dll_modules, child))
                     try writer.print("pub const {f} = @import(\"{s}/{0f}.zig\");\n", .{ child.name, module.name.slice });
             }
+            const has_virtual_dlls = hasAnyVirtualDll(dll_modules);
             try writer.print("//--------------------------------------------------------------------------------\n", .{});
-            try writer.print("// Section: DLLs ({})\n", .{dll_count});
+            try writer.print("// Section: DLLs ({})\n", .{dll_count + @intFromBool(has_virtual_dlls)});
             try writer.print("//--------------------------------------------------------------------------------\n", .{});
             for (children) |child| {
                 if (isDllModule(dll_modules, child))
                     try writer.print("pub const {f} = @import(\"dll/{0f}.zig\");\n", .{child.name});
             }
+            if (has_virtual_dlls)
+                try writer.print("pub const {t} = @import(\"dll/{0t}.zig\");\n", .{VirtualDllNamespace.api_ms_win});
         }
     }
 
@@ -851,13 +857,33 @@ fn ArchSpecificMap(comptime T: type) type {
 // text is buffered into its DLL module while its type imports / func_exports
 // accumulate on the DLL module's SdkFile; the files are written in phase 2.
 // ----------------------------------------------------------------------------
+const VirtualDllNamespace = enum { api_ms_win };
 const DllFuncText = struct { name: StringPool.Val, text: []const u8 };
 const DllModule = struct {
     module: *Module,
     // each entry is one already-generated function (arch-agnostic decl or the
     // whole arch `switch` group); emitted sorted by name in phase 2.
     funcs: std.ArrayListUnmanaged(DllFuncText) = .{},
+    virtual_namespace: ?VirtualDllNamespace = null,
 };
+
+fn collectVirtualDllModules(alloc: std.mem.Allocator, dll_modules: *const StringPool.HashMapUnmanaged(*DllModule)) []*DllModule {
+    var list = std.array_list.Managed(*DllModule).init(alloc);
+    var it = dll_modules.iterator();
+    while (it.next()) |e| {
+        if (e.value_ptr.*.virtual_namespace != null) list.append(e.value_ptr.*) catch |err| oom(err);
+    }
+    std.mem.sort(*DllModule, list.items, {}, virtualDllModuleLessThan);
+    return list.toOwnedSlice() catch |err| oom(err);
+}
+
+fn hasAnyVirtualDll(dll_modules: *const StringPool.HashMapUnmanaged(*DllModule)) bool {
+    var it = dll_modules.iterator();
+    while (it.next()) |e| {
+        if (e.value_ptr.*.virtual_namespace != null) return true;
+    }
+    return false;
+}
 
 fn dllFuncLessThan(_: void, a: DllFuncText, b: DllFuncText) bool {
     return StringPool.asciiLessThanIgnoreCase({}, a.name, b.name);
@@ -869,34 +895,94 @@ fn isDllModule(dll_modules: *const StringPool.HashMapUnmanaged(*DllModule), modu
     return if (dll_modules.get(module.name)) |dm| dm.module == module else false;
 }
 
+fn sanitizeDllNameInto(buf: []u8, raw: []const u8) void {
+    std.debug.assert(buf.len == raw.len);
+    for (raw, buf) |c, *o| {
+        o.* = switch (c) {
+            'A'...'Z' => c + ('a' - 'A'),
+            '0'...'9', 'a'...'z', '_' => c,
+            '-', '.' => '_',
+            else => std.debug.panic("dll name '{s}' has unexpected character 0x{x}", .{ raw, c }),
+        };
+    }
+}
+
+// Longest dll module name is ~31 chars; 64 leaves comfortable headroom.
+const max_dll_module_name = 64;
+
 // Canonical top-level module name for a DLL: lowercased, with non-identifier
 // chars -> '_'.  Lowercasing merges DLLs that appear in mixed case in the
 // metadata (e.g. OLE32.dll / ole32.dll) into a single module.
-fn dllModuleName(dll_import: []const u8) []const u8 {
-    const base = externFromDllImport(dll_import);
-    const out = global.arena.alloc(u8, base.len) catch |e| oom(e);
-    for (base, out) |c, *o| {
-        o.* = switch (c) {
-            'A'...'Z' => c + ('a' - 'A'),
-            'a'...'z', '0'...'9', '_' => c,
-            else => '_',
-        };
+fn dllModuleName(buf: *[max_dll_module_name]u8, dll_import: []const u8) []const u8 {
+    const raw = if (parseVirtualDll(dll_import)) |a| a.name_unsanitized else externFromDllImport(dll_import);
+    sanitizeDllNameInto(buf[0..raw.len], raw);
+    return buf[0..raw.len];
+}
+
+// Virtual dll names (api-ms-*, ext-ms-*) encode their grouping
+// namespace, component name, and version in the string itself; the metadata has
+// no flag for them. The "api-ms-"/"ext-ms-" prefix is the definitive marker;
+// once matched, anything that doesn't parse is a fatal error (not a real dll).
+// Fields are raw slices into the import string (name/version are not yet
+// sanitized to a valid identifier).
+const VirtualDll = struct {
+    namespace: VirtualDllNamespace,
+    name_unsanitized: []const u8,
+};
+fn isVirtualDll(name: []const u8) bool {
+    return std.ascii.startsWithIgnoreCase(name, "api-") or std.ascii.startsWithIgnoreCase(name, "ext-");
+}
+fn versionSuffixDashPos(raw: []const u8, start: usize) ?usize {
+    var i = raw.len;
+    while (i > start + 1) : (i -= 1) {
+        if (raw[i - 2] == '-' and (raw[i - 1] == 'l' or raw[i - 1] == 'L')) return i - 2;
     }
-    return out;
+    return null;
+}
+fn parseVirtualDll(dll_import: []const u8) ?VirtualDll {
+    const raw = externFromDllImport(dll_import);
+    if (!isVirtualDll(raw)) return null;
+
+    const known = [_]struct { prefix: []const u8, namespace: VirtualDllNamespace }{
+        .{ .prefix = "api-ms-win-", .namespace = .api_ms_win },
+    };
+    const ns = for (known) |k| {
+        if (std.ascii.startsWithIgnoreCase(raw, k.prefix)) break k;
+    } else std.debug.panic("virtual dll '{s}' has an unrecognized namespace prefix", .{raw});
+
+    const l = versionSuffixDashPos(raw, ns.prefix.len) orelse
+        std.debug.panic("virtual dll '{s}' has no '-l<version>' suffix", .{raw});
+    const version = raw[l + 2 ..];
+    var dashes: usize = 0;
+    for (version) |c| switch (c) {
+        '0'...'9' => {},
+        '-' => dashes += 1,
+        else => std.debug.panic("virtual dll '{s}' has a malformed version '{s}'", .{ raw, version }),
+    };
+    if (dashes != 2) std.debug.panic("virtual dll '{s}' version '{s}' does not have 3 parts", .{ raw, version });
+
+    return .{
+        .namespace = ns.namespace,
+        .name_unsanitized = raw[ns.prefix.len..l],
+    };
 }
 
 fn getDllModule(gen: *const Gen, dll_import: []const u8) *DllModule {
-    const canon = dllModuleName(dll_import);
-    const canon_pool = global.symbol_pool.add(canon) catch |e| oom(e);
+    var name_buf: [max_dll_module_name]u8 = undefined;
+    const canon_pool = global.symbol_pool.add(dllModuleName(&name_buf, dll_import)) catch |e| oom(e);
     if (gen.mut.dll_modules.get(canon_pool)) |dm| return dm;
-    if (gen.root_module.children.get(canon_pool)) |_| std.debug.panic(
-        "dll module '{s}' collides with an existing top-level module",
-        .{canon},
-    );
+    const canon = canon_pool.slice;
+    const maybe_virtual_dll = parseVirtualDll(dll_import);
+    if (maybe_virtual_dll == null) {
+        if (gen.root_module.children.get(canon_pool)) |_| std.debug.panic(
+            "dll module '{s}' collides with an existing top-level module",
+            .{canon},
+        );
+    }
     const module = Module.alloc(gen.root_module, canon_pool) catch |e| oom(e);
     module.file = SdkFile{
         .api_name = canon_pool,
-        .zig_name = canon,
+        .zig_name = if (maybe_virtual_dll) |v| (std.fmt.allocPrint(global.arena, "{t}.{s}", .{ v.namespace, canon }) catch |e| oom(e)) else canon,
         .depth = 0,
         .const_exports = std.array_list.Managed(StringPool.Val).init(global.arena),
         .uses_guid = false,
@@ -911,12 +997,14 @@ fn getDllModule(gen: *const Gen, dll_import: []const u8) *DllModule {
         .extra_consts = .{},
         .extra_consts_applied = StringPool.HashMap(void).init(global.arena),
         .com_type_overloads = null,
-        .win32_import_prefix = "../win32/",
+        .win32_import_prefix = if (maybe_virtual_dll != null) "../../win32/" else "../win32/",
     };
-    gen.root_module.children.put(canon_pool, module) catch |e| oom(e);
     const dm = global.arena.create(DllModule) catch |e| oom(e);
-    dm.* = .{ .module = module };
+    dm.* = .{ .module = module, .virtual_namespace = if (maybe_virtual_dll) |v| v.namespace else null };
     gen.mut.dll_modules.put(global.arena, canon_pool, dm) catch |e| oom(e);
+    if (maybe_virtual_dll == null) {
+        gen.root_module.children.put(canon_pool, module) catch |e| oom(e);
+    }
     return dm;
 }
 
@@ -927,28 +1015,76 @@ fn writeDllModules(dll_modules: *const StringPool.HashMapUnmanaged(*DllModule), 
     };
     var dll_dir = try out_dir.openDir("dll", .{});
     defer dll_dir.close();
+
+    const virtual_dll_modules = collectVirtualDllModules(global.arena, dll_modules);
+    defer global.arena.free(virtual_dll_modules);
+
+    var virtual_dll_dir: ?std.fs.Dir = null;
+    defer if (virtual_dll_dir) |*d| d.close();
+    if (virtual_dll_modules.len > 0) {
+        const subdir = @tagName(virtual_dll_modules[0].virtual_namespace.?);
+        dll_dir.makeDir(subdir) catch |e| switch (e) {
+            error.PathAlreadyExists => {},
+            else => return e,
+        };
+        virtual_dll_dir = try dll_dir.openDir(subdir, .{});
+    }
+
     var it = dll_modules.iterator();
     while (it.next()) |entry| {
         const dm = entry.value_ptr.*;
-        const sdk_file = &dm.module.file.?;
-        var out_file = try dll_dir.createFile(dm.module.zig_basename, .{});
-        defer out_file.close();
-        var buffer: [4096]u8 = undefined;
-        var file_writer = out_file.writer(&buffer);
-        var code_writer = CodeWriter{ .writer = &file_writer.interface, .depth = 0, .midline = false };
-        const writer: *CodeWriter = &code_writer;
-        try writer.writeBlock(autogen_header);
-        try writer.line("//--------------------------------------------------------------------------------");
-        try writer.linef("// Section: Functions ({})", .{sdk_file.func_exports.count()});
-        try writer.line("//--------------------------------------------------------------------------------");
-        std.mem.sort(DllFuncText, dm.funcs.items, {}, dllFuncLessThan);
-        for (dm.funcs.items) |f| try writer.writer.writeAll(f.text);
-        code_writer.midline = false;
-        try writer.line("");
-        try writeImportsSection(sdk_file, writer);
-        try writeTestBlock(sdk_file, writer);
-        try code_writer.writer.flush();
+        const dir = if (dm.virtual_namespace != null) virtual_dll_dir.? else dll_dir;
+        try writeDllModuleFile(dir, dm);
     }
+
+    if (virtual_dll_modules.len > 0) try writeVirtualDllContainer(dll_dir, virtual_dll_modules);
+}
+
+fn writeDllModuleFile(dir: std.fs.Dir, dm: *DllModule) !void {
+    const sdk_file = &dm.module.file.?;
+    var out_file = try dir.createFile(dm.module.zig_basename, .{});
+    defer out_file.close();
+    var buffer: [4096]u8 = undefined;
+    var file_writer = out_file.writer(&buffer);
+    var code_writer = CodeWriter{ .writer = &file_writer.interface, .depth = 0, .midline = false };
+    const writer: *CodeWriter = &code_writer;
+    try writer.writeBlock(autogen_header);
+    try writer.line("//--------------------------------------------------------------------------------");
+    try writer.linef("// Section: Functions ({})", .{sdk_file.func_exports.count()});
+    try writer.line("//--------------------------------------------------------------------------------");
+    std.mem.sort(DllFuncText, dm.funcs.items, {}, dllFuncLessThan);
+    for (dm.funcs.items) |f| try writer.writer.writeAll(f.text);
+    code_writer.midline = false;
+    try writer.line("");
+    try writeImportsSection(sdk_file, writer);
+    try writeTestBlock(sdk_file, writer);
+    try code_writer.writer.flush();
+}
+
+fn virtualDllModuleLessThan(_: void, a: *DllModule, b: *DllModule) bool {
+    return std.mem.lessThan(u8, a.module.name.slice, b.module.name.slice);
+}
+
+fn writeVirtualDllContainer(dll_dir: std.fs.Dir, virtual_dll_modules: []const *DllModule) !void {
+    const ns = virtual_dll_modules[0].virtual_namespace.?;
+    var name_buf: [max_dll_module_name]u8 = undefined;
+    const file_name = std.fmt.bufPrint(&name_buf, "{t}.zig", .{ns}) catch unreachable;
+    var out_file = try dll_dir.createFile(file_name, .{});
+    defer out_file.close();
+    var buffer: [4096]u8 = undefined;
+    var file_writer = out_file.writer(&buffer);
+    const writer = &file_writer.interface;
+    try writer.writeAll(&comptime removeCr(autogen_header));
+    for (virtual_dll_modules) |dm| {
+        try writer.print("pub const {f} = @import(\"{t}/{0f}.zig\");\n", .{ dm.module.name, ns });
+    }
+    try writer.writeAll(&comptime removeCr(
+        \\test {
+        \\    @import("std").testing.refAllDecls(@This());
+        \\}
+        \\
+    ));
+    try file_writer.interface.flush();
 }
 
 fn writeImportsSection(sdk_file: *SdkFile, writer: *CodeWriter) !void {
