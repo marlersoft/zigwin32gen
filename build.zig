@@ -200,6 +200,18 @@ pub fn build(b: *Build) !void {
 
     buildcommon.addExamples(b, optimize, win32, b.path("examples"), if (autoexit) .yes else .no);
 
+    {
+        const api_access_test = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("test/api_access.zig"),
+                .target = b.graph.host,
+            }),
+        });
+        api_access_test.root_module.addImport("win32", win32);
+        // no need to run, compilation is sufficient
+        test_step.dependOn(&api_access_test.step);
+    }
+
     // Exercise the Zig compiler's COM overload handling against the generated
     // Windows bindings for each arch. Run the exe when the target matches
     // the host; otherwise just compile-check.

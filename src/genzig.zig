@@ -511,6 +511,19 @@ fn generateEverythingModule(out_win32_dir: std.fs.Dir, root_module: *Module) !vo
         \\pub const zig = @import("zig.zig");
         \\
     ));
+    {
+        var dll_names = std.array_list.Managed(StringPool.Val).init(allocator);
+        defer dll_names.deinit();
+        var it = dll_modules.keyIterator();
+        while (it.next()) |name| try dll_names.append(name.*);
+        std.mem.sort(StringPool.Val, dll_names.items, {}, StringPool.asciiLessThanIgnoreCase);
+        try writer.print("\n// {} dll modules:\n", .{dll_names.items.len});
+        for (dll_names.items) |name| {
+            const dm = dll_modules.get(name).?;
+            try writer.print("pub const {f} = @import(\"../win32.zig\").{s};\n", .{ name, dm.module.file.?.zig_name });
+        }
+    }
+    try writer.writeAll("// end of dll modules\n\n");
 
     for (redirects.keys(), redirects.values()) |name, target| switch (target) {
         .native => |def| try writer.print("pub const {s} = {s};\n", .{ name, def }),
