@@ -125,6 +125,7 @@ pub fn build(b: *Build) !void {
         run.addFileArg(winmd_text);
         run.addArg(metadata_version);
         run.addFileArg(b.path("ComOverloads.txt"));
+        run.addFileArg(b.path("everything-conflicts.txt"));
         const out_dir = run.addOutputDirectoryArg(".");
         gen_step.dependOn(&run.step);
         break :blk out_dir;

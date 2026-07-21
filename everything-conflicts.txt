@@ -1,0 +1,46 @@
+# Resolves everything.zig symbol collisions: one block per colliding symbol.
+#     <SYMBOL>
+#         api <API>                 -> keeps the plain name
+#         api <API> suffix <SUFFIX> -> exposed as <SYMBOL><SUFFIX>
+RESTRICTIONS
+    api UI.Shell
+    api NetworkManagement.NetworkPolicyServer suffix _Nps
+ObjectContext
+    api System.ComponentServices
+    api System.Diagnostics.Debug suffix _Debug
+Process
+    api System.ComponentServices
+    api inkobjcore suffix _InkObjCore
+IResourceManager
+    api Media.DirectShow
+    api System.DistributedTransactionCoordinator suffix _Dtc
+IID_IResourceManager
+    api Media.DirectShow
+    api System.DistributedTransactionCoordinator suffix _Dtc
+IComponent
+    api Media.DirectShow
+    api System.Mmc suffix _Mmc
+IID_IComponent
+    api Media.DirectShow
+    api System.Mmc suffix _Mmc
+IImageList
+    api UI.Controls
+    api System.Mmc suffix _Mmc
+IID_IImageList
+    api UI.Controls
+    api System.Mmc suffix _Mmc
+IRangeException
+    api System.WindowsSync
+    api Web.MsHtml suffix _MsHtml
+IID_IRangeException
+    api System.WindowsSync
+    api Web.MsHtml suffix _MsHtml
+IDENTITY_TYPE
+    api Security.Authentication.Identity.Provider
+    api NetworkManagement.NetworkPolicyServer suffix _Nps
+POLICY_ELEMENT
+    api Security.Cryptography
+    api NetworkManagement.QoS suffix _QoS
+GetDeviceID
+    api dsound
+    api tbs suffix _Tbs
