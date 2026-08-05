@@ -1,0 +1,8 @@
+{
+    "CreateWindowA": [...],
+    "CreateWindowW": [...],
+    "CreateWindowExA": [...],
+    "CreateWindowExW": [...],
+    "UpdateResourcesA": [...],
+    "UpdateResourcesW": [...],
+}
