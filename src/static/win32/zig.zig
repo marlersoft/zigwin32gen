@@ -16,15 +16,13 @@ const win32 = struct {
     const SIZE = mod_root.foundation.SIZE;
     const RECT = mod_root.foundation.RECT;
 
-    const HDC = mod_root.graphics.gdi.HDC;
-    const HGDIOBJ = mod_root.graphics.gdi.HGDIOBJ;
-    const HBRUSH = mod_root.graphics.gdi.HBRUSH;
-    const PAINTSTRUCT = mod_root.graphics.gdi.PAINTSTRUCT;
-
     const GetLastError = mod_root.kernel32.GetLastError;
     const CloseHandle = mod_root.kernel32.CloseHandle;
     const FormatMessageA = mod_root.kernel32.FormatMessageA;
 
+    const HDC = mod_root.graphics.gdi.HDC;
+    const HGDIOBJ = mod_root.gdi32.HGDIOBJ;
+    const HBRUSH = mod_root.graphics.gdi.HBRUSH;
     const DeleteObject = mod_root.gdi32.DeleteObject;
     const DeleteDC = mod_root.gdi32.DeleteDC;
     const CreateSolidBrush = mod_root.gdi32.CreateSolidBrush;
@@ -34,6 +32,7 @@ const win32 = struct {
     const GetTextExtentPoint32W = mod_root.gdi32.GetTextExtentPoint32W;
     const MESSAGEBOX_STYLE = mod_root.ui.windows_and_messaging.MESSAGEBOX_STYLE;
 
+    const PAINTSTRUCT = mod_root.user32.PAINTSTRUCT;
     const BeginPaint = mod_root.user32.BeginPaint;
     const EndPaint = mod_root.user32.EndPaint;
     const FillRect = mod_root.user32.FillRect;
