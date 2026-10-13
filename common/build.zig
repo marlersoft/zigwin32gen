@@ -4,6 +4,7 @@ const std = @import("std");
 pub fn build(_: *std.Build) void {}
 
 pub const Autoexit = enum { no, yes };
+const Subsystem = enum { console, windows };
 
 pub fn addExamples(
     b: *std.Build,
@@ -20,16 +21,52 @@ pub fn addExamples(
     };
     const examples_step = b.step("examples", "Build/run examples. Use -j1 to run one at a time");
 
-    try addExample(b, arches, optimize, win32, examples, "helloworld", .Console, examples_step, autoexit);
-    try addExample(b, arches, optimize, win32, examples, "wasapi", .Console, examples_step, autoexit);
-    try addExample(b, arches, optimize, win32, examples, "net", .Console, examples_step, autoexit);
-    try addExample(b, arches, optimize, win32, examples, "tests", .Console, examples_step, autoexit);
+    try addExample(b, arches, optimize, win32, examples, "helloworld", .console, examples_step, autoexit);
+    try addExample(b, arches, optimize, win32, examples, "wasapi", .console, examples_step, autoexit);
+    try addExample(b, arches, optimize, win32, examples, "net", .console, examples_step, autoexit);
+    try addExample(b, arches, optimize, win32, examples, "tests", .console, examples_step, autoexit);
 
-    try addExample(b, arches, optimize, win32, examples, "helloworld-window", .Windows, examples_step, autoexit);
-    try addExample(b, arches, optimize, win32, examples, "d2dcircle", .Windows, examples_step, autoexit);
-    try addExample(b, arches, optimize, win32, examples, "opendialog", .Windows, examples_step, autoexit);
-    try addExample(b, arches, optimize, win32, examples, "unionpointers", .Windows, examples_step, autoexit);
-    try addExample(b, arches, optimize, win32, examples, "testwindow", .Windows, examples_step, autoexit);
+    try addExample(b, arches, optimize, win32, examples, "helloworld-window", .windows, examples_step, autoexit);
+    try addExample(b, arches, optimize, win32, examples, "d2dcircle", .windows, examples_step, autoexit);
+    try addExample(b, arches, optimize, win32, examples, "opendialog", .windows, examples_step, autoexit);
+    try addExample(b, arches, optimize, win32, examples, "unionpointers", .windows, examples_step, autoexit);
+    try addExample(b, arches, optimize, win32, examples, "testwindow", .windows, examples_step, autoexit);
+}
+
+/// Adds the tests in the repo's test directory that work on any zig version.
+pub fn addTests(
+    b: *std.Build,
+    test_step: *std.Build.Step,
+    optimize: std.builtin.OptimizeMode,
+    win32: *std.Build.Module,
+    tests: std.Build.LazyPath,
+) void {
+    {
+        const helpers = b.addTest(.{
+            .name = "helpers",
+            .root_module = b.createModule(.{
+                .root_source_file = tests.path(b, "helpers.zig"),
+                .target = b.graph.host,
+                .optimize = optimize,
+            }),
+        });
+        helpers.root_module.addImport("win32", win32);
+        test_step.dependOn(&b.addRunArtifact(helpers).step);
+    }
+    for ([_][]const u8{ "x86_64-windows", "aarch64-windows" }) |arch_os_abi| {
+        const target_query = std.Target.Query.parse(.{ .arch_os_abi = arch_os_abi }) catch unreachable;
+        const everything = b.addTest(.{
+            .name = b.fmt("everything-{s}", .{arch_os_abi}),
+            .root_module = b.createModule(.{
+                .root_source_file = tests.path(b, "everything.zig"),
+                .target = b.resolveTargetQuery(target_query),
+                .optimize = optimize,
+            }),
+        });
+        everything.root_module.addImport("win32", win32);
+        // compile only, see test/everything.zig
+        test_step.dependOn(&everything.step);
+    }
 }
 
 fn addExample(
@@ -39,7 +76,7 @@ fn addExample(
     win32: *std.Build.Module,
     examples: std.Build.LazyPath,
     root: []const u8,
-    subsystem: std.Target.SubSystem,
+    subsystem: Subsystem,
     examples_step: *std.Build.Step,
     autoexit: Autoexit,
 ) !void {
@@ -60,7 +97,14 @@ fn addExample(
             }),
             .win32_manifest = examples.path(b, "win32.manifest"),
         });
-        exe.subsystem = subsystem;
+        // zig 0.17.0 moved std.Target.SubSystem to std.zig.Subsystem and lowercased its fields
+        exe.subsystem = if (@hasDecl(std.zig, "Subsystem")) switch (subsystem) {
+            .console => .console,
+            .windows => .windows,
+        } else switch (subsystem) {
+            .console => .Console,
+            .windows => .Windows,
+        };
         exe.root_module.addImport("win32", win32);
         examples_step.dependOn(&exe.step);
         exe.pie = true;

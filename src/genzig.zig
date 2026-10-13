@@ -1181,7 +1181,9 @@ fn writeTestBlock(sdk_file: *SdkFile, writer: *CodeWriter) !void {
         \\    // reference all the pub declarations
         \\    if (!@import("builtin").is_test) return;
         \\    inline for (comptime @import("std").meta.declarations(@This())) |decl| {
-        \\        _ = @field(@This(), decl.name);
+        \\        // zig 0.17.0 changed declarations to return names instead of Declaration structs
+        \\        const name = if (@TypeOf(decl) == [:0]const u8) decl else decl.name;
+        \\        _ = @field(@This(), name);
         \\    }
         \\}
         \\
@@ -1203,10 +1205,12 @@ fn generateFile(gen: *const Gen, module_dir: std.fs.Dir, module: *Module, api: m
     try writer.line("//--------------------------------------------------------------------------------");
     try writer.linef("// Section: Constants ({})", .{api.Constants.len});
     try writer.line("//--------------------------------------------------------------------------------");
+    var skipped_const_count: usize = 0;
     for (api.Constants) |constant| {
+        if (constants_to_skip.has(constant.Name)) skipped_const_count += 1;
         try generateConstant(gen, sdk_file, writer, constant);
     }
-    std.debug.assert(api.Constants.len == sdk_file.const_exports.items.len);
+    std.debug.assert(api.Constants.len == sdk_file.const_exports.items.len + skipped_const_count);
     try writer.line("");
     try writer.line("//--------------------------------------------------------------------------------");
     try writer.linef("// Section: Types ({})", .{api.Types.len});
@@ -1906,13 +1910,13 @@ fn emitInitStructBody(writer: *CodeWriter, su: *const metadata.StructOrUnion, nu
 }
 
 fn generateConstant(gen: *const Gen, sdk_file: *SdkFile, writer: *CodeWriter, constant: metadata.Constant) !void {
-    const name_pool = try global.symbol_pool.add(constant.Name);
-    try sdk_file.const_exports.append(name_pool);
-
     if (constants_to_skip.get(constant.Name)) |_| {
         try writer.linef("// skipped '{s}'", .{constant.Name});
         return;
     }
+
+    const name_pool = try global.symbol_pool.add(constant.Name);
+    try sdk_file.const_exports.append(name_pool);
 
     var options = TypeRefFormatter.Options.defaults(.{
         .reason = .direct_type_access,
@@ -2103,6 +2107,18 @@ fn generateType(
 
     const pool_name = try global.symbol_pool.add(renameType(t.Name));
 
+    // these types are emitted as NAME_CONFLICT_, so NAME is not exported
+    if (types_that_conflict_with_consts.get(t.Name)) |_| {
+        try writer.line("// WARNING: this type symbol conflicts with a const!");
+        try writer.linef("pub const {s}_CONFLICT_ = usize;", .{t.Name});
+        return;
+    }
+    if (types_that_conflict_with_something.get(t.Name)) |_| {
+        try writer.line("// WARNING: this type symbol conflicts with something!");
+        try writer.linef("pub const {s}_CONFLICT_ = usize;", .{t.Name});
+        return;
+    }
+
     // TODO: should I be adding this to type_exports if it's arch specific?
     //       type_exports may need to have an ArchFlags for each symbol
     if (t.Architectures.filter == null) {
@@ -2110,13 +2126,7 @@ fn generateType(
     }
     try sdk_file.type_exports.put(pool_name, {});
 
-    if (types_that_conflict_with_consts.get(t.Name)) |_| {
-        try writer.line("// WARNING: this type symbol conflicts with a const!");
-        try writer.linef("pub const {s}_CONFLICT_ = usize;", .{t.Name});
-    } else if (types_that_conflict_with_something.get(t.Name)) |_| {
-        try writer.line("// WARNING: this type symbol conflicts with something!");
-        try writer.linef("pub const {s}_CONFLICT_ = usize;", .{t.Name});
-    } else if (types_to_skip.get(t.Name)) |msg| {
+    if (types_to_skip.get(t.Name)) |msg| {
         try writer.linef("// TODO: not generating this type because {s}", .{msg});
         try writer.linef("pub const {s} = usize;", .{t.Name});
     } else if (t.Architectures.filter) |filter| {

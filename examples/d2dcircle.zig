@@ -261,11 +261,13 @@ const D2D1 = struct {
 const autoexit = struct {
     var enabled: bool = false;
     var seen: std.EnumSet(Msg) = .{};
+    // zig 0.17.0 replaced EnumSet.initFull() with EnumSet.full
+    const all: std.EnumSet(Msg) = if (@hasDecl(std.EnumSet(Msg), "full")) .full else .initFull();
     const Msg = enum { create, size, paint };
     fn noteMsg(msg: Msg) void {
         if (!enabled) return;
         seen.insert(msg);
-        if (seen.eql(std.EnumSet(Msg).initFull())) {
+        if (seen.eql(all)) {
             win32.PostQuitMessage(0);
         }
     }

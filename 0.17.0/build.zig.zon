@@ -1,0 +1,13 @@
+.{
+    .name = .zigwin32,
+    .fingerprint = 0x20443229780774c4,
+    .version = "0.0.1",
+    .minimum_zig_version = "0.17.0",
+    .dependencies = .{
+        .common = .{ .path = "../common" },
+        .win32 = .{ .path = "../zig-out" },
+        .examples = .{ .path = "../examples" },
+        .tests = .{ .path = "../test" },
+    },
+    .paths = .{ "build.zig", "build.zig.zon" },
+}

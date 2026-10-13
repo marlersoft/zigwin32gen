@@ -11,6 +11,7 @@ pub fn build(b: *std.Build) !void {
         const test_step = b.step("test", "Run all the tests (except the examples)");
         const unittest_step = b.step("unittest", "Unit test the generated bindings");
         test_step.dependOn(unittest_step);
+        common.addTests(b, test_step, optimize, win32, b.dependency("tests", .{}).path("."));
 
         // TODO: see note in ../build.zig; running requires import libs (e.g.
         // bcp47mrm) that aren't bundled with Zig.

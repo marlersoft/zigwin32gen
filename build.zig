@@ -200,6 +200,7 @@ pub fn build(b: *Build) !void {
     });
 
     buildcommon.addExamples(b, optimize, win32, b.path("examples"), if (autoexit) .yes else .no);
+    buildcommon.addTests(b, test_step, optimize, win32, b.path("test"));
 
     {
         const api_access_test = b.addTest(.{
