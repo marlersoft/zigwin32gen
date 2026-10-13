@@ -26,6 +26,9 @@ jobs:
         if: runner.os == 'Windows'
       - run: zig build test --summary all
         working-directory: 0.16.0
+        # Zig 0.16.0 doesn't work on windows-arm, skip it there.
+        if: matrix.os != 'windows-11-arm'
       - run: zig build examples -Dautoexit --summary all
         working-directory: 0.16.0
-        if: runner.os == 'Windows'
+        # Zig 0.16.0 doesn't work on windows-arm, skip it there.
+        if: runner.os == 'Windows' && matrix.os != 'windows-11-arm'
