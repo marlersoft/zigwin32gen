@@ -35,6 +35,8 @@ System.LibraryLoader Function EnumResourceLanguagesExW lpType(UnionPointer)
 System.LibraryLoader Function EnumResourceNamesW       lpType(UnionPointer)
 System.LibraryLoader Function EnumResourceNamesExW     lpType(UnionPointer)
 System.LibraryLoader Function FindResourceW            lpType(UnionPointer) lpName(UnionPointer)
+System.LibraryLoader Function GetModuleHandleExA       lpModuleName(UnionPointer)
+System.LibraryLoader Function GetModuleHandleExW       lpModuleName(UnionPointer)
 System.LibraryLoader Function FindResourceExW          lpType(UnionPointer) lpName(UnionPointer)
 System.LibraryLoader Function UpdateResourceW          lpType(UnionPointer) lpName(UnionPointer)
 
