@@ -1,3 +1,4 @@
 .zig-cache/
 zig-out/
 /diffrepo/
+zig-pkg/

@@ -14,23 +14,26 @@ const global = struct {
 var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
 const arena = arena_instance.allocator();
 
-pub fn main() !void {
-    const args = try std.process.argsAlloc(arena);
-    if (args.len != 2) {
-        std.log.err("usage: dumpwinmd <winmd-path>", .{});
-        std.process.exit(0xff);
-    }
-    try dump(args[1]);
+pub fn main(init_options: std.process.Init.Minimal) !void {
+    const winmd_path = blk: {
+        var it = try init_options.args.iterateAllocator(arena);
+        _ = it.skip(); // program name
+        const winmd_path = it.next();
+        if (winmd_path == null or it.next() != null) {
+            std.log.err("usage: dumpwinmd <winmd-path>", .{});
+            std.process.exit(0xff);
+        }
+        break :blk winmd_path.?;
+    };
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    try dump(threaded.io(), winmd_path);
 }
 
-fn dump(winmd_path: []const u8) !void {
-    const winmd_content = blk: {
-        var file = try std.fs.cwd().openFile(winmd_path, .{});
-        defer file.close();
-        const size = try file.getEndPos();
-        var reader = file.reader(&.{});
-        break :blk try reader.interface.readAlloc(arena, @intCast(size));
-    };
+fn dump(io: std.Io, winmd_path: []const u8) !void {
+    const winmd_content = std.Io.Dir.cwd().readFileAlloc(io, winmd_path, arena, .unlimited) catch |err| errExit(
+        "failed to read '{s}' with {s}",
+        .{ winmd_path, @errorName(err) },
+    );
 
     var loader = init(winmd_content);
 
@@ -42,7 +45,7 @@ fn dump(winmd_path: []const u8) !void {
     std.mem.sort([]const u8, names.items, {}, asciiLessThanIgnoreCase);
 
     var buf: [4096]u8 = undefined;
-    var out = std.fs.File.stdout().writer(&buf);
+    var out = std.Io.File.stdout().writer(io, &buf);
     const w = &out.interface;
     for (names.items) |name| {
         emitApi(w, &loader, name) catch return out.err.?;
@@ -166,12 +169,12 @@ fn enforce(cond: bool, comptime fmt: []const u8, args: anytype) void {
 const ApiTypeDefs = struct {
     // The special "Apis" type whose fields are constants and methods are functions
     apis_type_def_index: ?u32 = null,
-    type_defs: std.ArrayListUnmanaged(u32) = .{},
+    type_defs: std.ArrayListUnmanaged(u32) = .empty,
 };
 
 const sigs = struct {
-    const PSTR = [_]u8{@intFromEnum(winmd.ElementType.u1)};
-    const PWSTR = [_]u8{@intFromEnum(winmd.ElementType.char)};
+    const PSTR = [_]u8{@backingInt(winmd.ElementType.u1)};
+    const PWSTR = [_]u8{@backingInt(winmd.ElementType.char)};
 };
 
 fn getChildSig(md: *const Metadata, sig: []const u8) []const u8 {
@@ -183,7 +186,7 @@ fn getChildSig(md: *const Metadata, sig: []const u8) []const u8 {
             if (token_bytes.len == 0) @panic("truncated");
             const token_len = winmd.decodeSigUnsignedLen(token_bytes[0]);
             if (token_bytes.len < token_len.int(usize)) @panic("truncated token");
-            const token_encoded: winmd.TypeToken = @enumFromInt(winmd.decodeSigUnsigned(token_bytes[0..token_len.int(usize)]));
+            const token_encoded: winmd.TypeToken = @fromBackingInt(@intCast(winmd.decodeSigUnsigned(token_bytes[0..token_len.int(usize)])));
             const token = token_encoded.decode() catch @panic("invalid type token");
             switch (token.table) {
                 .TypeDef => @panic("todo: a"),
@@ -345,7 +348,7 @@ fn writeConstValue(writer: *std.Io.Writer, comptime T: type, bytes: []const u8) 
     switch (@typeInfo(T)) {
         .int => try writer.print("{d}", .{std.mem.readInt(T, bytes[0..@sizeOf(T)], .little)}),
         .float => {
-            const Int = @Type(.{ .int = .{ .bits = 8 * @sizeOf(T), .signedness = .unsigned } });
+            const Int = @Int(.unsigned, 8 * @sizeOf(T));
             const value: T = @bitCast(std.mem.readInt(Int, bytes[0..@sizeOf(T)], .little));
             if (withinFixedPointRange(T, value)) {
                 try writer.print("{d}", .{value});
@@ -553,7 +556,7 @@ fn decodeCustomAttr(
         if (!std.mem.eql(u8, arg.name, "BytesParamIndex")) {
             @panic("expected BytesParamIndex named arg");
         }
-        if (arg.elem_type != @intFromEnum(winmd.ElementType.i2)) {
+        if (arg.elem_type != @backingInt(winmd.ElementType.i2)) {
             @panic("Expected BytesParamIndex to be of type i2");
         }
         const bytes_param_index = it.readI16(arg.value_offset);
@@ -594,19 +597,19 @@ fn decodeCustomAttr(
         while (it.next()) |arg| {
             if (std.mem.eql(u8, arg.name, "CountConst")) {
                 if (count_const != null) @panic("duplicate CountConst named argument");
-                if (arg.elem_type != @intFromEnum(winmd.ElementType.i4)) {
+                if (arg.elem_type != @backingInt(winmd.ElementType.i4)) {
                     @panic("Expected CountConst to be of type i4");
                 }
                 count_const = it.readI32(arg.value_offset);
             } else if (std.mem.eql(u8, arg.name, "CountParamIndex")) {
                 if (count_param_index != null) @panic("duplicate CountParamIndex named argument");
-                if (arg.elem_type != @intFromEnum(winmd.ElementType.i2)) {
+                if (arg.elem_type != @backingInt(winmd.ElementType.i2)) {
                     @panic("Expected CountParamIndex to be of type i2");
                 }
                 count_param_index = it.readI16(arg.value_offset);
             } else if (std.mem.eql(u8, arg.name, "CountFieldName")) {
                 if (count_field_name != null) @panic("duplicate CountFieldName named argument");
-                if (arg.elem_type != @intFromEnum(winmd.ElementType.string)) {
+                if (arg.elem_type != @backingInt(winmd.ElementType.string)) {
                     @panic("Expected CountFieldName to be of type string");
                 }
                 count_field_name = it.readString(arg.value_offset);
@@ -727,7 +730,7 @@ fn decodeCustomAttr(
 
 fn decodeString(value: []const u8) struct { bytes: []const u8, end: usize } {
     std.debug.assert(value.len >= 1);
-    const unsigned_len: usize = @intFromEnum(winmd.decodeSigUnsignedLen(value[0]));
+    const unsigned_len: usize = @backingInt(winmd.decodeSigUnsignedLen(value[0]));
     const string_len = winmd.decodeSigUnsigned(value[0..unsigned_len]);
     const remaining = value[unsigned_len..];
     std.debug.assert(remaining.len >= string_len);
@@ -914,7 +917,7 @@ fn countTypeSigBytes(sig: []const u8) !usize {
         .valuetype, .class => {
             if (sig.len < 2) return error.SigTruncated;
             const token_len = winmd.decodeSigUnsignedLen(sig[1]);
-            return 1 + @intFromEnum(token_len);
+            return 1 + @backingInt(token_len);
         },
         // Array: 1 byte + element type + array shape
         .array => {
@@ -931,7 +934,7 @@ fn countTypeSigBytes(sig: []const u8) !usize {
             for (0..num_sizes) |_| {
                 if (offset >= sig.len) return error.SigTruncated;
                 const size_len = winmd.decodeSigUnsignedLen(sig[offset]);
-                offset += @intFromEnum(size_len);
+                offset += @backingInt(size_len);
             }
 
             // Skip NumLoBounds and LoBounds
@@ -942,7 +945,7 @@ fn countTypeSigBytes(sig: []const u8) !usize {
             for (0..num_lo_bounds) |_| {
                 if (offset >= sig.len) return error.SigTruncated;
                 const lo_bound_len = winmd.decodeSigUnsignedLen(sig[offset]);
-                offset += @intFromEnum(lo_bound_len);
+                offset += @backingInt(lo_bound_len);
             }
 
             return offset;
@@ -1347,7 +1350,7 @@ fn emitTypeRefSig(w: *std.Io.Writer, md: *const Metadata, api_name: []const u8, 
             if (token_bytes.len == 0) @panic("truncated");
             const token_len = winmd.decodeSigUnsignedLen(token_bytes[0]);
             if (token_bytes.len < token_len.int(usize)) @panic("truncated token");
-            const token_encoded: winmd.TypeToken = @enumFromInt(winmd.decodeSigUnsigned(token_bytes[0..token_len.int(usize)]));
+            const token_encoded: winmd.TypeToken = @fromBackingInt(@intCast(winmd.decodeSigUnsigned(token_bytes[0..token_len.int(usize)])));
             const token = token_encoded.decode() catch @panic("invalid type token");
             try emitTypeDefOrRef(w, md, api_name, .{
                 .table = switch (token.table) {
@@ -1368,13 +1371,13 @@ fn emitTypeRefSig(w: *std.Io.Writer, md: *const Metadata, api_name: []const u8, 
             if (num_sizes != 1) @panic("expected num_sizes==1");
             var offset = shape_start + 2;
             const size_len = winmd.decodeSigUnsignedLen(sig[offset]);
-            const size = winmd.decodeSigUnsigned(sig[offset..][0..@intFromEnum(size_len)]);
-            offset += @intFromEnum(size_len);
+            const size = winmd.decodeSigUnsigned(sig[offset..][0..@backingInt(size_len)]);
+            offset += @backingInt(size_len);
             const num_lo_bounds = sig[offset];
             offset += 1;
             for (0..num_lo_bounds) |_| {
                 const lo_bound_len = winmd.decodeSigUnsignedLen(sig[offset]);
-                offset += @intFromEnum(lo_bound_len);
+                offset += @backingInt(lo_bound_len);
             }
             if (size == 1) try w.writeAll("[]") else try w.print("[{d}]", .{size});
             const child_len = try emitTypeRefSig(w, md, api_name, sig[1..]);
@@ -1787,7 +1790,13 @@ fn emitCom(w: *std.Io.Writer, md: *const Metadata, api_name: []const u8, type_de
     try w.print("com {s}", .{name});
     if (attrs.guid) |g| try w.print(" guid={s}", .{guidStr(g)});
     if (attrs.is_agile) try w.writeAll(" agile");
-    if (md.interface_map.get(type_def_index)) |interface| {
+    var interface_it = md.interface_map.getIterator(type_def_index);
+    if (interface_it.next()) |interface_impl_index| {
+        if (interface_it.next() != null) std.debug.panic(
+            "com type '{s}' has multiple InterfaceImpl entries",
+            .{name},
+        );
+        const interface = md.tables.row(.InterfaceImpl, interface_impl_index).interface;
         try w.writeAll(" interface=");
         try emitTypeDefOrRef(w, md, api_name, .{
             .table = switch (interface.table) {

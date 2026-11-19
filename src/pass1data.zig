@@ -4,8 +4,8 @@
 const std = @import("std");
 const metadata = @import("metadata.zig");
 
-pub const Root = std.StringArrayHashMap(TypeMap);
-pub const TypeMap = std.StringArrayHashMap(Type);
+pub const Root = std.StringArrayHashMapUnmanaged(TypeMap);
+pub const TypeMap = std.StringArrayHashMapUnmanaged(Type);
 
 pub const TypeKind = enum {
     Integral,

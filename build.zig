@@ -6,7 +6,7 @@ const Step = std.Build.Step;
 const CrossTarget = std.zig.CrossTarget;
 
 comptime {
-    const required_zig = "0.15.2";
+    const required_zig = "0.17.1";
     const v = std.SemanticVersion.parse(required_zig) catch unreachable;
     if (builtin.zig_version.order(v) != .eq) @compileError(
         "zig version " ++ required_zig ++ " is required to ensure zigwin32 output is always the same",
@@ -23,7 +23,7 @@ pub fn build(b: *Build) !void {
     const test_step = b.step("test", "Run all the tests (except the examples)");
     const unittest_step = b.step("unittest", "Unit test the generated bindings");
     test_step.dependOn(unittest_step);
-    const desc_line_prefix = [_]u8{' '} ** 31;
+    const desc_line_prefix: [31]u8 = @splat(' ');
     const diff_step = b.step(
         "diff",
         ("Updates 'diffrepo' then installs the latest generated\n" ++
@@ -83,12 +83,12 @@ pub fn build(b: *Build) !void {
             b.step("install-dumpwinmd", "").dependOn(&install.step);
             const run = b.addRunArtifact(exe);
             run.step.dependOn(&install.step);
-            if (b.args) |a| run.addArgs(a);
+            run.addPassthruArgs();
             b.step("dumpwinmd", "").dependOn(&run.step);
         }
         const run = b.addRunArtifact(exe);
         run.addFileArg(winmd);
-        break :blk_winmd_text run.captureStdOut();
+        break :blk_winmd_text run.captureStdOut(.{});
     };
 
     const zigexports = blk: {
@@ -131,15 +131,30 @@ pub fn build(b: *Build) !void {
         break :blk out_dir;
     };
 
-    b.step(
-        "show-path",
-        "Print the zigwin32 cache directory",
-    ).dependOn(&PrintLazyPath.create(b, gen_out_dir).step);
+    {
+        const printpath = b.addExecutable(.{
+            .name = "printpath",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/printpath.zig"),
+                .target = b.graph.host,
+            }),
+        });
+        const show_path = b.addRunArtifact(printpath);
+        show_path.has_side_effects = true;
+        show_path.addDirectoryArg2(gen_out_dir, .{ .make_absolute = true });
+        b.step(
+            "show-path",
+            "Print the zigwin32 cache directory",
+        ).dependOn(&show_path.step);
 
-    b.step(
-        "show-dump-path",
-        "Print the cache path of the dumpwinmd text output",
-    ).dependOn(&PrintLazyPath.create(b, winmd_text).step);
+        const show_dump_path = b.addRunArtifact(printpath);
+        show_dump_path.has_side_effects = true;
+        show_dump_path.addFileArg2(winmd_text, .{ .make_absolute = true });
+        b.step(
+            "show-dump-path",
+            "Print the cache path of the dumpwinmd text output",
+        ).dependOn(&show_dump_path.step);
+    }
 
     b.installDirectory(.{
         .source_dir = gen_out_dir,
@@ -161,13 +176,12 @@ pub fn build(b: *Build) !void {
         // of the 'diffrepo' subdirectory so definitely has side effects
         diff.has_side_effects = true;
         diff.addArg("--zigbuild");
-        // make this a normal string arg, we don't want the build system
-        // trying to hash this as an input or something
-        diff.addArg(b.pathFromRoot("diffrepo"));
+        // make this a normal string arg (relative to the build root), we
+        // don't want the build system trying to hash this as an input
+        diff.setCwd(b.path("."));
+        diff.addArg("diffrepo");
         diff.addDirectoryArg(gen_out_dir);
-        if (b.args) |args| {
-            diff.addArgs(args);
-        }
+        diff.addPassthruArgs();
         diff_step.dependOn(&diff.step);
     }
 
@@ -259,36 +273,6 @@ pub fn build(b: *Build) !void {
         test_step.dependOn(&compile.step);
     }
 }
-
-const PrintLazyPath = struct {
-    step: Step,
-    lazy_path: Build.LazyPath,
-    pub fn create(
-        b: *Build,
-        lazy_path: Build.LazyPath,
-    ) *PrintLazyPath {
-        const print = b.allocator.create(PrintLazyPath) catch unreachable;
-        print.* = .{
-            .step = Step.init(.{
-                .id = .custom,
-                .name = "print the given lazy path",
-                .owner = b,
-                .makeFn = make,
-            }),
-            .lazy_path = lazy_path,
-        };
-        lazy_path.addStepDependencies(&print.step);
-        return print;
-    }
-    fn make(step: *Step, opt: std.Build.Step.MakeOptions) !void {
-        _ = opt;
-        const print: *PrintLazyPath = @fieldParentPtr("step", step);
-
-        const stdout = std.fs.File.stdout();
-        var writer = stdout.writer(&.{});
-        try writer.interface.print("{s}\n", .{print.lazy_path.getPath(step.owner)});
-    }
-};
 
 fn addDefaultStepDeps(b: *std.Build, default_steps: []const u8) void {
     var it = std.mem.tokenizeScalar(u8, default_steps, ' ');

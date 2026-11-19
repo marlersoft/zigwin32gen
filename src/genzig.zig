@@ -41,7 +41,7 @@ const Gen = struct {
         generate_time_millis: i64 = 0,
         found_win32_error: bool = false,
         dll_modules: StringPool.HashMapUnmanaged(*DllModule) = .{},
-        missing_com_overloads: std.ArrayListUnmanaged(MissingOverload) = .{},
+        missing_com_overloads: std.ArrayListUnmanaged(MissingOverload) = .empty,
     };
     mut: *Mutable,
     root_module: *Module,
@@ -164,7 +164,7 @@ const ApiImport = struct {
 };
 
 fn StringPoolArrayHashMap(comptime T: type) type {
-    return std.ArrayHashMap(StringPool.Val, T, StringPool.ArrayHashContext, false);
+    return std.ArrayHashMapUnmanaged(StringPool.Val, T, StringPool.ArrayHashContext, false);
 }
 
 const SdkFile = struct {
@@ -220,25 +220,36 @@ const SdkFile = struct {
     }
 };
 
-pub fn main() !u8 {
-    const main_start_millis = std.time.milliTimestamp();
+pub fn main(init_options: std.process.Init.Minimal) !u8 {
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    const io = threaded.io();
+
+    const main_start: std.Io.Clock.Timestamp = .now(io, .awake);
     var mut: Gen.Mutable = .{};
     var print_time_summary = false;
     defer {
         if (print_time_summary) {
-            var total_millis = std.time.milliTimestamp() - main_start_millis;
+            var total_millis = main_start.untilNow(io).raw.toMilliseconds();
             if (total_millis == 0) total_millis = 1; // prevent divide by 0
             std.debug.print("Gen Time  : {} millis ({}%)\n", .{ mut.generate_time_millis, @divTrunc(100 * mut.generate_time_millis, total_millis) });
             std.debug.print("Total Time: {} millis\n", .{total_millis});
         }
     }
-    const all_args = try std.process.argsAlloc(global.arena);
-    // don't care about freeing args
 
-    const cmd_args = all_args[1..];
-    if (cmd_args.len != 6) {
-        std.log.err("expected 6 cmdline arguments but got {}", .{cmd_args.len});
-        return 1;
+    const cmd_arg_count = 6;
+    var cmd_args: [cmd_arg_count][:0]const u8 = undefined;
+    {
+        var it = try init_options.args.iterateAllocator(global.arena);
+        // don't care about freeing args
+        _ = it.skip(); // program name
+        var count: usize = 0;
+        while (it.next()) |arg| : (count += 1) {
+            if (count < cmd_arg_count) cmd_args[count] = arg;
+        }
+        if (count != cmd_arg_count) {
+            std.log.err("expected {} cmdline arguments but got {}", .{ cmd_arg_count, count });
+            return 1;
+        }
     }
     const extra_filename = cmd_args[0];
     const text_path = cmd_args[1];
@@ -255,13 +266,7 @@ pub fn main() !u8 {
     // The generator consumes the line-based text produced by dumpwinmd
     // (winmd -> text). text must stay alive: the parsed model references slices
     // into it.
-    const text = blk: {
-        var file = try std.fs.cwd().openFile(text_path, .{});
-        defer file.close();
-        const size = try file.getEndPos();
-        var reader = file.reader(&.{});
-        break :blk try reader.interface.readAlloc(global.arena, @intCast(size));
-    };
+    const text = readFileAlloc(io, text_path);
     const parsed = textparse.parseAll(global.arena, text);
 
     const api_list: []StringPool.Val = blk: {
@@ -304,22 +309,18 @@ pub fn main() !u8 {
         break :blk api_set;
     };
 
-    const extra_content = blk: {
-        var file = try std.fs.cwd().openFile(extra_filename, .{});
-        defer file.close();
-        break :blk try file.readToEndAlloc(global.arena, std.math.maxInt(usize));
-    };
+    const extra_content = readFileAlloc(io, extra_filename);
     // no need to free extra_content
     const extra_api_map = extra.read(api_set, &global.symbol_pool, global.arena, extra_filename, extra_content);
     // no need to free
     var com_overload_map: StringPool.HashMapUnmanaged(ComTypeMap) = .{};
-    try readComOverloads(api_set, &com_overload_map, com_overloads_filename);
-    const everything_conflicts = try readEverythingConflicts(everything_conflicts_filename);
+    try readComOverloads(io, api_set, &com_overload_map, com_overloads_filename);
+    const everything_conflicts = try readEverythingConflicts(io, everything_conflicts_filename);
 
-    try cleanDir(std.fs.cwd(), zigwin32_out_path);
-    var out_dir = try std.fs.cwd().openDir(zigwin32_out_path, .{});
-    defer out_dir.close();
-    try out_dir.makeDir("win32");
+    try cleanDir(io, std.Io.Dir.cwd(), zigwin32_out_path);
+    var out_dir = try std.Io.Dir.cwd().openDir(io, zigwin32_out_path, .{});
+    defer out_dir.close(io);
+    try out_dir.createDir(io, "win32", .default_dir);
 
     const static_zig_files = [_][]const u8{
         "zig",
@@ -327,7 +328,7 @@ pub fn main() !u8 {
     };
 
     inline for (static_zig_files) |name| {
-        try installStaticFile(out_dir, "win32/" ++ name ++ ".zig");
+        try installStaticFile(io, out_dir, "win32/" ++ name ++ ".zig");
     }
 
     const static_files = [_][]const u8{
@@ -338,7 +339,7 @@ pub fn main() !u8 {
         "zig.mod",
     };
     inline for (static_files) |name| {
-        try installStaticFile(out_dir, name);
+        try installStaticFile(io, out_dir, name);
     }
 
     const gen: Gen = .{
@@ -355,12 +356,12 @@ pub fn main() !u8 {
         std.debug.print("-----------------------------------------------------------------------\n", .{});
         std.debug.print("generating {} apis...\n", .{api_list.len});
 
-        var out_win32_dir = try out_dir.openDir("win32", .{});
-        defer out_win32_dir.close();
+        var out_win32_dir = try out_dir.openDir(io, "win32", .{});
+        defer out_win32_dir.close(io);
 
         for (api_list, apis, 0..) |api_name, api, api_index| {
             std.debug.print("{}/{}: generating '{f}'\n", .{ api_index + 1, api_list.len, api_name });
-            try generateApiModule(&gen, out_win32_dir, api_name, api);
+            try generateApiModule(io, &gen, out_win32_dir, api_name, api);
         }
         std.debug.assert(gen.mut.found_win32_error);
 
@@ -370,7 +371,7 @@ pub fn main() !u8 {
                 .{gen.mut.missing_com_overloads.items.len},
             );
             var stderr_buf: [4096]u8 = undefined;
-            var stderr = std.fs.File.stderr().writer(&stderr_buf);
+            var stderr = std.Io.File.stderr().writer(io, &stderr_buf);
             for (gen.mut.missing_com_overloads.items) |overload| {
                 try stderr.interface.print(
                     "{f} {s} {s} {d} TODO_FILL_IN_SUFFIX\n",
@@ -393,17 +394,17 @@ pub fn main() !u8 {
             try gen.root_module.children.put(submodule, try Module.alloc(gen.root_module, submodule));
         }
 
-        try writeDllModules(&gen.mut.dll_modules, out_dir);
+        try writeDllModules(io, &gen.mut.dll_modules, out_dir);
 
-        try generateContainerModules(&gen.mut.dll_modules, out_dir, gen.root_module);
-        try generateEverythingModule(&gen, out_win32_dir);
+        try generateContainerModules(io, &gen.mut.dll_modules, out_dir, gen.root_module);
+        try generateEverythingModule(io, &gen, out_win32_dir);
     }
 
     {
-        var zon = try out_dir.createFile("build.zig.zon", .{});
-        defer zon.close();
+        var zon = try out_dir.createFile(io, "build.zig.zon", .{});
+        defer zon.close(io);
         var out_buf: [4096]u8 = undefined;
-        var file_writer = zon.writer(&out_buf);
+        var file_writer = zon.writer(io, &out_buf);
         const w = &file_writer.interface;
         try w.writeAll(".{\n");
         try w.writeAll("    .name = .win32,\n");
@@ -433,14 +434,17 @@ fn stripDotDir(path: []const u8) []const u8 {
     return path;
 }
 
-fn installStaticFile(out_dir: std.fs.Dir, comptime name: []const u8) !void {
-    const file = try out_dir.createFile(name, .{});
-    defer file.close();
-    // unbuffered because we are writing only one big continuous slice
-    var writer = file.writer(&.{});
+fn readFileAlloc(io: std.Io, path: []const u8) []u8 {
+    return std.Io.Dir.cwd().readFileAlloc(io, path, global.arena, .unlimited) catch |err| fatal(
+        "failed to read '{s}' with {s}",
+        .{ path, @errorName(err) },
+    );
+}
+
+fn installStaticFile(io: std.Io, out_dir: std.Io.Dir, comptime name: []const u8) !void {
     // NOTE: it's important that we use @embedFile here so that the genzig
     //       executable tracks changes to these files
-    try writer.interface.writeAll(@embedFile("static/" ++ name));
+    try out_dir.writeFile(io, .{ .sub_path = name, .data = @embedFile("static/" ++ name) });
 }
 
 const ComSuffixMap = std.AutoHashMapUnmanaged(u16, []const u8);
@@ -448,13 +452,12 @@ const ComMethodMap = std.StringHashMapUnmanaged(ComSuffixMap);
 const ComTypeMap = std.StringHashMapUnmanaged(ComMethodMap);
 
 fn readComOverloads(
+    io: std.Io,
     api_name_set: StringPool.HashMapUnmanaged(void),
     api_map: *StringPool.HashMapUnmanaged(ComTypeMap),
     filename: []const u8,
 ) !void {
-    var file = try std.fs.cwd().openFile(filename, .{});
-    defer file.close();
-    const content = try file.readToEndAlloc(global.arena, std.math.maxInt(usize));
+    const content = readFileAlloc(io, filename);
     // don't free, we'll keep the strings around
     var lines = std.mem.splitScalar(u8, content, '\n');
     var line_number: u32 = 1;
@@ -523,19 +526,17 @@ const EverythingConflicts = struct {
     }
 };
 
-fn readEverythingConflicts(filename: []const u8) !EverythingConflicts {
-    var file = try std.fs.cwd().openFile(filename, .{});
-    defer file.close();
-    const content = try file.readToEndAlloc(global.arena, std.math.maxInt(usize));
+fn readEverythingConflicts(io: std.Io, filename: []const u8) !EverythingConflicts {
+    const content = readFileAlloc(io, filename);
     // don't free, api/suffix slices point into content
 
-    var entries: std.ArrayListUnmanaged(ConflictEntry) = .{};
+    var entries: std.ArrayListUnmanaged(ConflictEntry) = .empty;
     var by_symbol: StringPool.HashMapUnmanaged(EverythingConflicts.Range) = .{};
     var current: ?*EverythingConflicts.Range = null;
     var lines = std.mem.splitScalar(u8, content, '\n');
     var line_number: u32 = 1;
     while (lines.next()) |raw| : (line_number += 1) {
-        const line = std.mem.trimRight(u8, raw, "\r");
+        const line = std.mem.trimEnd(u8, raw, "\r");
         if (line.len == 0 or line[0] == '#') continue;
         if (line[0] == ' ') {
             const range = current orelse fatal("{s} line {}: entry before any symbol", .{ filename, line_number });
@@ -604,11 +605,11 @@ fn everythingEmit(
         try writer.print("pub const {s} = zig.{s};\n", .{ alias.slice, name.slice });
 }
 
-fn generateEverythingModule(gen: *const Gen, out_win32_dir: std.fs.Dir) !void {
-    var everything_file = try out_win32_dir.createFile("everything.zig", .{});
-    defer everything_file.close();
+fn generateEverythingModule(io: std.Io, gen: *const Gen, out_win32_dir: std.Io.Dir) !void {
+    var everything_file = try out_win32_dir.createFile(io, "everything.zig", .{});
+    defer everything_file.close(io);
     var buffer: [4096]u8 = undefined;
-    var file_writer = everything_file.writer(&buffer);
+    var file_writer = everything_file.writer(io, &buffer);
     const writer = &file_writer.interface;
     try writer.writeAll(&comptime removeCr(autogen_header ++
         \\//! This module contains aliases to ALL symbols inside the Win32 SDK.  It allows
@@ -687,25 +688,24 @@ fn moduleLessThan(context: void, lhs: *Module, rhs: *Module) bool {
 }
 
 fn generateContainerModules(
+    io: std.Io,
     dll_modules: *const StringPool.HashMapUnmanaged(*DllModule),
-    dir: std.fs.Dir,
+    dir: std.Io.Dir,
     module: *Module,
 ) anyerror!void {
     if (module.children.count() == 0) {
         return;
     }
 
-    var file = blk: {
-        if (module.file) |_| {
-            const file = try dir.openFile(module.zig_basename, .{ .mode = .write_only });
-            try file.seekFromEnd(0);
-            break :blk file;
-        }
-        break :blk try dir.createFile(module.zig_basename, .{});
-    };
-    defer file.close();
+    const file = if (module.file) |_|
+        try dir.openFile(io, module.zig_basename, .{ .mode = .write_only })
+    else
+        try dir.createFile(io, module.zig_basename, .{});
+    defer file.close(io);
     var buffer: [4096]u8 = undefined;
-    var file_writer = file.writerStreaming(&buffer);
+    var file_writer = file.writer(io, &buffer);
+    // append to the existing sdk file
+    if (module.file) |_| try file_writer.seekTo(try file.length(io));
     const writer = &file_writer.interface;
 
     const children = try common.allocMapValues(global.arena, *Module, module.children);
@@ -762,19 +762,20 @@ fn generateContainerModules(
         ));
     }
 
-    var next_dir = try dir.openDir(module.name.slice, .{});
-    defer next_dir.close();
+    var next_dir = try dir.openDir(io, module.name.slice, .{});
+    defer next_dir.close(io);
 
     for (children) |child| {
-        try generateContainerModules(dll_modules, next_dir, child);
+        try generateContainerModules(io, dll_modules, next_dir, child);
     }
 
     try writer.flush();
 }
 
 fn generateApiModule(
+    io: std.Io,
     gen: *const Gen,
-    out_dir: std.fs.Dir,
+    out_dir: std.Io.Dir,
     api_name: StringPool.Val,
     api_root: metadata.Api,
 ) !void {
@@ -782,7 +783,7 @@ fn generateApiModule(
     errdefer global.arena.free(zig_name);
 
     var module_dir = out_dir;
-    defer if (module_dir.fd != out_dir.fd) module_dir.close();
+    defer if (module_dir.handle != out_dir.handle) module_dir.close(io);
 
     var module: *Module = gen.root_module;
     var depth: u2 = 0;
@@ -793,11 +794,11 @@ fn generateApiModule(
             if (module != gen.root_module) {
                 depth += 1;
                 if (module.children.count() == 0) {
-                    try module_dir.makeDir(module.name.slice);
+                    try module_dir.createDir(io, module.name.slice, .default_dir);
                 }
-                const next_dir = try module_dir.openDir(module.name.slice, .{});
-                if (module_dir.fd != out_dir.fd)
-                    module_dir.close();
+                const next_dir = try module_dir.openDir(io, module.name.slice, .{});
+                if (module_dir.handle != out_dir.handle)
+                    module_dir.close(io);
                 module_dir = next_dir;
             }
 
@@ -830,8 +831,8 @@ fn generateApiModule(
         .const_exports = std.array_list.Managed(StringPool.Val).init(global.arena),
         .uses_guid = false,
         .top_level_api_imports = StringPool.HashMap(ApiImport).init(global.arena),
-        .type_exports = StringPoolArrayHashMap(void).init(global.arena),
-        .func_exports = StringPoolArrayHashMap(void).init(global.arena),
+        .type_exports = .empty,
+        .func_exports = .empty,
         .tmp_func_ptr_workaround_list = std.array_list.Managed(StringPool.Val).init(global.arena),
         .method_conflict_map = getMethodConflictMap(api_name.slice),
         .param_conflict_map = getParamConflictMap(api_name.slice),
@@ -842,9 +843,9 @@ fn generateApiModule(
         .com_type_overloads = gen.com_overload_map.get(api_name),
     };
 
-    const generate_start_millis = std.time.milliTimestamp();
-    try generateFile(gen, module_dir, module, api_root);
-    gen.mut.generate_time_millis += std.time.milliTimestamp() - generate_start_millis;
+    const generate_start: std.Io.Clock.Timestamp = .now(io, .awake);
+    try generateFile(io, gen, module_dir, module, api_root);
+    gen.mut.generate_time_millis += generate_start.untilNow(io).raw.toMilliseconds();
 }
 
 fn ArchSpecificMap(comptime T: type) type {
@@ -863,7 +864,7 @@ const DllModule = struct {
     module: *Module,
     // each entry is one already-generated function (arch-agnostic decl or the
     // whole arch `switch` group); emitted sorted by name in phase 2.
-    funcs: std.ArrayListUnmanaged(DllFuncText) = .{},
+    funcs: std.ArrayListUnmanaged(DllFuncText) = .empty,
     virtual_namespace: ?VirtualDllNamespace = null,
 };
 
@@ -987,8 +988,8 @@ fn getDllModule(gen: *const Gen, dll_import: []const u8) *DllModule {
         .const_exports = std.array_list.Managed(StringPool.Val).init(global.arena),
         .uses_guid = false,
         .top_level_api_imports = StringPool.HashMap(ApiImport).init(global.arena),
-        .type_exports = StringPoolArrayHashMap(void).init(global.arena),
-        .func_exports = StringPoolArrayHashMap(void).init(global.arena),
+        .type_exports = .empty,
+        .func_exports = .empty,
         .tmp_func_ptr_workaround_list = std.array_list.Managed(StringPool.Val).init(global.arena),
         .method_conflict_map = getMethodConflictMap(canon),
         .param_conflict_map = getParamConflictMap(canon),
@@ -1008,44 +1009,44 @@ fn getDllModule(gen: *const Gen, dll_import: []const u8) *DllModule {
     return dm;
 }
 
-fn writeDllModules(dll_modules: *const StringPool.HashMapUnmanaged(*DllModule), out_dir: std.fs.Dir) !void {
-    out_dir.makeDir("dll") catch |e| switch (e) {
+fn writeDllModules(io: std.Io, dll_modules: *const StringPool.HashMapUnmanaged(*DllModule), out_dir: std.Io.Dir) !void {
+    out_dir.createDir(io, "dll", .default_dir) catch |e| switch (e) {
         error.PathAlreadyExists => {},
         else => return e,
     };
-    var dll_dir = try out_dir.openDir("dll", .{});
-    defer dll_dir.close();
+    var dll_dir = try out_dir.openDir(io, "dll", .{});
+    defer dll_dir.close(io);
 
     const virtual_dll_modules = collectVirtualDllModules(global.arena, dll_modules);
     defer global.arena.free(virtual_dll_modules);
 
-    var virtual_dll_dir: ?std.fs.Dir = null;
-    defer if (virtual_dll_dir) |*d| d.close();
+    var virtual_dll_dir: ?std.Io.Dir = null;
+    defer if (virtual_dll_dir) |d| d.close(io);
     if (virtual_dll_modules.len > 0) {
         const subdir = @tagName(virtual_dll_modules[0].virtual_namespace.?);
-        dll_dir.makeDir(subdir) catch |e| switch (e) {
+        dll_dir.createDir(io, subdir, .default_dir) catch |e| switch (e) {
             error.PathAlreadyExists => {},
             else => return e,
         };
-        virtual_dll_dir = try dll_dir.openDir(subdir, .{});
+        virtual_dll_dir = try dll_dir.openDir(io, subdir, .{});
     }
 
     var it = dll_modules.iterator();
     while (it.next()) |entry| {
         const dm = entry.value_ptr.*;
         const dir = if (dm.virtual_namespace != null) virtual_dll_dir.? else dll_dir;
-        try writeDllModuleFile(dir, dm);
+        try writeDllModuleFile(io, dir, dm);
     }
 
-    if (virtual_dll_modules.len > 0) try writeVirtualDllContainer(dll_dir, virtual_dll_modules);
+    if (virtual_dll_modules.len > 0) try writeVirtualDllContainer(io, dll_dir, virtual_dll_modules);
 }
 
-fn writeDllModuleFile(dir: std.fs.Dir, dm: *DllModule) !void {
+fn writeDllModuleFile(io: std.Io, dir: std.Io.Dir, dm: *DllModule) !void {
     const sdk_file = &dm.module.file.?;
-    var out_file = try dir.createFile(dm.module.zig_basename, .{});
-    defer out_file.close();
+    var out_file = try dir.createFile(io, dm.module.zig_basename, .{});
+    defer out_file.close(io);
     var buffer: [4096]u8 = undefined;
-    var file_writer = out_file.writer(&buffer);
+    var file_writer = out_file.writer(io, &buffer);
     var code_writer = CodeWriter{ .writer = &file_writer.interface, .depth = 0, .midline = false };
     const writer: *CodeWriter = &code_writer;
     try writer.writeBlock(autogen_header);
@@ -1065,14 +1066,14 @@ fn virtualDllModuleLessThan(_: void, a: *DllModule, b: *DllModule) bool {
     return std.mem.lessThan(u8, a.module.name.slice, b.module.name.slice);
 }
 
-fn writeVirtualDllContainer(dll_dir: std.fs.Dir, virtual_dll_modules: []const *DllModule) !void {
+fn writeVirtualDllContainer(io: std.Io, dll_dir: std.Io.Dir, virtual_dll_modules: []const *DllModule) !void {
     const ns = virtual_dll_modules[0].virtual_namespace.?;
     var name_buf: [max_dll_module_name]u8 = undefined;
     const file_name = std.fmt.bufPrint(&name_buf, "{t}.zig", .{ns}) catch unreachable;
-    var out_file = try dll_dir.createFile(file_name, .{});
-    defer out_file.close();
+    var out_file = try dll_dir.createFile(io, file_name, .{});
+    defer out_file.close(io);
     var buffer: [4096]u8 = undefined;
-    var file_writer = out_file.writer(&buffer);
+    var file_writer = out_file.writer(io, &buffer);
     const writer = &file_writer.interface;
     try writer.writeAll(&comptime removeCr(autogen_header));
     for (virtual_dll_modules) |dm| {
@@ -1096,8 +1097,8 @@ fn writeImportsSection(sdk_file: *SdkFile, writer: *CodeWriter) !void {
         try writer.linef("const Guid = @import(\"{s}zig.zig\").Guid;", .{sdk_file.getWin32DirImportPrefix()});
     }
     {
-        var arch_specific_imports = ArchSpecificMap(StringPool.Val).init(global.arena);
-        defer arch_specific_imports.deinit();
+        var arch_specific_imports: ArchSpecificMap(StringPool.Val) = .empty;
+        defer arch_specific_imports.deinit(global.arena);
 
         const NamedApiImport = struct {
             name: StringPool.Val,
@@ -1190,13 +1191,13 @@ fn writeTestBlock(sdk_file: *SdkFile, writer: *CodeWriter) !void {
     ));
 }
 
-fn generateFile(gen: *const Gen, module_dir: std.fs.Dir, module: *Module, api: metadata.Api) !void {
+fn generateFile(io: std.Io, gen: *const Gen, module_dir: std.Io.Dir, module: *Module, api: metadata.Api) !void {
     const sdk_file = &module.file.?;
 
-    var out_file = try module_dir.createFile(module.zig_basename, .{});
-    defer out_file.close();
+    var out_file = try module_dir.createFile(io, module.zig_basename, .{});
+    defer out_file.close(io);
     var buffer: [4096]u8 = undefined;
-    var file_writer = out_file.writer(&buffer);
+    var file_writer = out_file.writer(io, &buffer);
     var code_writer = CodeWriter{ .writer = &file_writer.interface, .depth = 0, .midline = false };
     // need to specify type explicitly because of https://github.com/ziglang/zig/issues/12795
     const writer: *CodeWriter = &code_writer;
@@ -1216,8 +1217,8 @@ fn generateFile(gen: *const Gen, module_dir: std.fs.Dir, module: *Module, api: m
     try writer.linef("// Section: Types ({})", .{api.Types.len});
     try writer.line("//--------------------------------------------------------------------------------");
     {
-        var arch_specific_types = ArchSpecificMap(metadata.Type).init(global.arena);
-        defer arch_specific_types.deinit();
+        var arch_specific_types: ArchSpecificMap(metadata.Type) = .empty;
+        defer arch_specific_types.deinit(global.arena);
         var enum_alias_conflicts = StringPool.HashMap(StringPool.Val).init(global.arena);
         defer enum_alias_conflicts.deinit();
         for (api.Types) |t| {
@@ -1260,13 +1261,13 @@ fn generateFile(gen: *const Gen, module_dir: std.fs.Dir, module: *Module, api: m
         func: *const metadata.Function,
         next: ?FuncNodeIndex = null,
     };
-    var arch_func_nodes: std.ArrayListUnmanaged(FuncNode) = .{};
+    var arch_func_nodes: std.ArrayListUnmanaged(FuncNode) = .empty;
     var arch_func_map: StringPool.HashMapUnmanaged(ArchFunction) = .{};
     for (api.Functions) |*function| {
         if (function.Architectures.filter != null) {
             const name_pool = try global.symbol_pool.add(function.Name);
             const entry = arch_func_map.getOrPut(global.arena, name_pool) catch |e| oom(e);
-            const new_func_node_index: FuncNodeIndex = @enumFromInt(arch_func_nodes.items.len);
+            const new_func_node_index: FuncNodeIndex = @fromBackingInt(@intCast(arch_func_nodes.items.len));
             arch_func_nodes.append(global.arena, .{
                 .func = function,
                 .next = if (entry.found_existing) entry.value_ptr.root_node_index else null,
@@ -1309,7 +1310,7 @@ fn generateFile(gen: *const Gen, module_dir: std.fs.Dir, module: *Module, api: m
 
             var node_index = entry.value_ptr.root_node_index;
             while (true) {
-                const node = arch_func_nodes.items[@intFromEnum(node_index)];
+                const node = arch_func_nodes.items[@backingInt(node_index)];
 
                 arches_handled = arches_handled.unionWith(node.func.Architectures);
                 var buf: [40]u8 = undefined;
@@ -1820,7 +1821,7 @@ const ConstValueFormatter = struct {
         if (self.value_type == .String) {
             switch (self.value) {
                 .null => try writer.writeAll("null"),
-                .string => |s| try writer.print("\"{f}\"", .{std.zig.fmtString(s)}),
+                .string => |s| try writer.print("\"{f}\"", .{fmtString(s)}),
                 else => std.debug.panic("unhandled string value '{t}'", .{self.value}),
             }
             return;
@@ -2034,7 +2035,7 @@ const CodeWriter = struct {
             }
             self.midline = true;
         }
-        if (@typeInfo(@TypeOf(args)).@"struct".fields.len == 0) {
+        if (@typeInfo(@TypeOf(args)).@"struct".field_names.len == 0) {
             try self.writer.writeAll(fmt ++ (if (opt.nl) "\n" else ""));
         } else {
             try self.writer.print(fmt ++ (if (opt.nl) "\n" else ""), args);
@@ -2066,7 +2067,7 @@ pub fn addArchSpecific(
         var objects = ArchSpecificObjects(T){};
         objects.object_array[0] = .{ .filter = filter, .obj = obj };
         objects.object_count = 1;
-        try arch_specific.put(pool_name, objects);
+        try arch_specific.put(global.arena, pool_name, objects);
     }
 }
 
@@ -2124,7 +2125,7 @@ fn generateType(
     if (t.Architectures.filter == null) {
         std.debug.assert(sdk_file.type_exports.get(pool_name) == null);
     }
-    try sdk_file.type_exports.put(pool_name, {});
+    try sdk_file.type_exports.put(global.arena, pool_name, {});
 
     if (types_to_skip.get(t.Name)) |msg| {
         try writer.linef("// TODO: not generating this type because {s}", .{msg});
@@ -2447,6 +2448,24 @@ fn generateStructOrUnionDef(
     }
 }
 
+fn fmtString(bytes: []const u8) FmtString {
+    return .{ .bytes = bytes };
+}
+const FmtString = struct {
+    bytes: []const u8,
+    pub fn format(self: FmtString, writer: *std.Io.Writer) error{WriteFailed}!void {
+        for (self.bytes) |byte| switch (byte) {
+            '\n' => try writer.writeAll("\\n"),
+            '\r' => try writer.writeAll("\\r"),
+            '\t' => try writer.writeAll("\\t"),
+            '\\' => try writer.writeAll("\\\\"),
+            '"' => try writer.writeAll("\\\""),
+            '\'', ' ', '!', '#'...'&', '('...'[', ']'...'~' => try writer.writeByte(byte),
+            else => try writer.print("\\x{x:0>2}", .{byte}),
+        };
+    }
+};
+
 // forwards to std.zig.fmtIdP but, can add exceptions for certain cases to enable outputing
 // code that can support multiple zig versions
 fn fmtIdP(bytes: []const u8) FmtIdP {
@@ -2705,7 +2724,7 @@ fn generateEnum(
             }
         }
     }
-    var flag_map = [1]?*EnumValue{null} ** 64;
+    var flag_map: [64]?*EnumValue = @splat(null);
 
     const enum_type = if (type_enum.Flags) "packed struct" else "enum";
 
@@ -2736,7 +2755,7 @@ fn generateEnum(
                 if (val.conflict_index) |_| continue;
                 try writer.linef("        .{f} => \"{f}\",", .{
                     fmtIdP(val.short_name),
-                    std.zig.fmtString(val.short_name),
+                    fmtString(val.short_name),
                 });
             }
             try writer.line("        else => null,");
@@ -3246,7 +3265,7 @@ const ConflictSuffix = struct {
 const ParamModifierSet = struct {
     const max_params = 30;
     ret: extra.TypeModifier = .{},
-    params: [max_params]extra.TypeModifier = [_]extra.TypeModifier{.{}} ** max_params,
+    params: [max_params]extra.TypeModifier = @splat(.{}),
 };
 
 fn findParam(
@@ -3418,7 +3437,7 @@ fn generateFunction(
     const params = func.Params();
 
     switch (func) {
-        .dll => |dll| sdk_file.func_exports.put(try global.symbol_pool.add(dll.Name), {}) catch |e| oom(e),
+        .dll => |dll| sdk_file.func_exports.put(global.arena, try global.symbol_pool.add(dll.Name), {}) catch |e| oom(e),
         .com => {},
         .ptr => {},
     }
@@ -3526,18 +3545,17 @@ fn generateParams(
 }
 
 pub fn formatArchesCase(filter: metadata.Architectures.Filter, buf: []u8) !usize {
-    var fbs = std.io.fixedBufferStream(buf);
-    const arch_writer = fbs.writer();
+    var arch_writer: std.Io.Writer = .fixed(buf);
     var case_prefix: []const u8 = "";
-    inline for (std.meta.fields(metadata.Architectures.Filter)) |arch_field| {
-        const enabled = @field(filter, arch_field.name);
+    inline for (@typeInfo(metadata.Architectures.Filter).@"struct".field_names) |arch_field_name| {
+        const enabled = @field(filter, arch_field_name);
         if (enabled) {
-            try arch_writer.print("{s}.{s}", .{ case_prefix, arch_field.name });
+            try arch_writer.print("{s}.{s}", .{ case_prefix, arch_field_name });
             case_prefix = ", ";
         }
     }
     try arch_writer.writeAll(" => ");
-    return fbs.pos;
+    return arch_writer.end;
 }
 
 const ArchCount = 3;
@@ -3737,9 +3755,9 @@ fn removeCr(comptime s: []const u8) [withoutCrLen(s):0]u8 {
     }
 }
 
-fn cleanDir(dir: std.fs.Dir, sub_path: []const u8) !void {
+fn cleanDir(io: std.Io, dir: std.Io.Dir, sub_path: []const u8) !void {
     std.log.info("cleandir '{s}'", .{sub_path});
-    try dir.deleteTree(sub_path);
+    try dir.deleteTree(io, sub_path);
     const MAX_ATTEMPTS = 30;
     var attempt: u32 = 1;
     while (true) : (attempt += 1) {
@@ -3747,7 +3765,7 @@ fn cleanDir(dir: std.fs.Dir, sub_path: []const u8) !void {
             fatal("failed to delete '{s}' after {} attempts", .{ sub_path, MAX_ATTEMPTS });
 
         // ERROR: windows.OpenFile is not handling error.Unexpected NTSTATUS=0xc0000056
-        dir.makeDir(sub_path) catch |e| switch (e) {
+        dir.createDir(io, sub_path, .default_dir) catch |e| switch (e) {
             else => {
                 std.debug.print("[DEBUG] makedir failed with {}\n", .{e});
                 //std.process.exit(0xff);

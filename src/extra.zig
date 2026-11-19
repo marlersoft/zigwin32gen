@@ -25,13 +25,7 @@ pub fn oom(e: error{OutOfMemory}) noreturn {
     @panic(@errorName(e));
 }
 fn parseError(filename: []const u8, lineno: u32, comptime fmt: []const u8, args: anytype) noreturn {
-    var buf: [1000]u8 = undefined;
-    var stderr = std.fs.File.stderr();
-    var file_writer = stderr.writer(&buf);
-    const writer = &file_writer.interface;
-    writer.print("{s}:{}: parse error: ", .{ filename, lineno }) catch |e| std.debug.panic("write to stderr failed with {s}", .{@errorName(e)});
-    writer.print(fmt, args) catch |e| std.debug.panic("write to stderr failed with {s}", .{@errorName(e)});
-    writer.flush() catch |e| std.debug.panic("flush stderr failed with {s}", .{@errorName(e)});
+    std.debug.print("{s}:{}: parse error: " ++ fmt, .{ filename, lineno } ++ args);
     std.process.exit(0xff);
 }
 

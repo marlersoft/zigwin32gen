@@ -2,16 +2,16 @@
     .name = .zigwin32gen,
     .version = "0.0.0",
     .fingerprint = 0xab047bbd59488dae,
-    .minimum_zig_version = "0.15.2",
+    .minimum_zig_version = "0.17.1",
     .dependencies = .{
         .common = .{ .path = "common" },
         .winmd = .{
-            .url = "git+https://github.com/marler8997/winmd-zig#d0d8daff01b4fb1a6324c79a855c34ced5bbc8d2",
-            .hash = "winmd-0.0.0-2QIrG4MpAQCCh0ReC0jZKAps9Frn3jbbR--W7szyGAOS",
+            .url = "git+https://github.com/marler8997/winmd-zig#5d81477445de455d7e9ae2abf47c74c4c01be932",
+            .hash = "winmd-0.0.0-2QIrG5glAQBGJDnqySITJ1wu77TxujYtPBlseDDq_Yu1",
         },
         .zipcmdline = .{
-            .url = "git+https://github.com/marler8997/zipcmdline#a6de65875023c52d2f56f21a31c6487266f8105f",
-            .hash = "zipcmdline-0.0.0-DFii07hmAwCFNhtMpml64Pj_hr8kN4WesClygZErQHsk",
+            .url = "git+https://github.com/marler8997/zipcmdline#91c3e14fb36347d7ef952b8ab74e95caa246b772",
+            .hash = "zipcmdline-0.0.0-DFii0-7PAAAXtEEiGPMCElsh9ADun8-EedbgyGKyUfCe",
         },
     },
     .paths = .{"build.zig.zon"},

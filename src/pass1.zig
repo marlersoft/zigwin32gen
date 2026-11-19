@@ -14,14 +14,14 @@ const oom = common.oom;
 /// Builds the whole pass1 index directly from the loaded api models. `names[i]`
 /// is the api name for `apis[i]`. Everything is allocated on `arena`.
 pub fn buildIndex(arena: std.mem.Allocator, names: []const []const u8, apis: []const metadata.Api) pass1data.Root {
-    var root = std.StringArrayHashMap(pass1data.TypeMap).init(arena);
+    var root: pass1data.Root = .empty;
     for (names, apis) |name, api| {
-        var type_map = std.StringArrayHashMap(pass1data.Type).init(arena);
+        var type_map: pass1data.TypeMap = .empty;
         for (api.Types) |t| {
             const entry = classifyType(t) orelse continue; // ComClassID has no pass1 entry
-            type_map.put(t.Name, entry) catch |e| oom(e);
+            type_map.put(arena, t.Name, entry) catch |e| oom(e);
         }
-        root.put(name, type_map) catch |e| oom(e);
+        root.put(arena, name, type_map) catch |e| oom(e);
     }
     return root;
 }
