@@ -2454,7 +2454,7 @@ fn fmtIdP(bytes: []const u8) FmtIdP {
 }
 const FmtIdP = struct {
     bytes: []const u8,
-    pub fn format(self: FmtIdP, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    pub fn format(self: FmtIdP, writer: *std.Io.Writer) error{WriteFailed}!void {
         const @"support_0.14" = true;
         if (@"support_0.14") {
             if (std.mem.eql(u8, self.bytes, "async")) {
@@ -2769,7 +2769,7 @@ fn generateEnum(
                 try writer.line("    try writer.print(\"{s}({})\", .{self.value.tagName() orelse \"?\", @intFromEnum(self.value)});");
             }
             try writer.line("}");
-            try writer.linef("fn formatNew(self: {f}, writer: *@import(\"std\").Io.Writer) @import(\"std\").Io.Writer.Error!void {{", .{pool_name});
+            try writer.linef("fn formatNew(self: {f}, writer: *@import(\"std\").Io.Writer) error{{WriteFailed}}!void {{", .{pool_name});
             if (is_win32_error) {
                 try writer.line("    try @import(\"zig.zig\").fmtError(@intFromEnum(self)).format(writer);");
             } else {
